@@ -9,6 +9,8 @@ import {
 } from "lucide-react";
 import type { ReactNode } from "react";
 import type { ClosureType, SelectablePart } from "../domain/model";
+import { getMagnetSupportOption } from "../domain/magnetSupport";
+import { getConnectorSurfaceLabel, getFaceLabel } from "../domain/placements";
 import { useDesignerStore } from "../store/designerStore";
 import { getAntennaDefinition, getConnectorDefinition } from "../libraries/components";
 
@@ -62,7 +64,7 @@ export function AssemblyTree() {
   const objectCount =
     4 +
     Number(parameters.panelEnabled) +
-    Number(parameters.typeCPortEnabled) +
+    parameters.connectorPlacements.length +
     Number(parameters.antennaEnabled);
 
   return (
@@ -84,14 +86,31 @@ export function AssemblyTree() {
           }
           depth={1}
         />
-        <TreeItem id="base" icon={<Box size={16} />} label="下壳" detail="参数零件" depth={1} />
+        <TreeItem
+          id="base"
+          icon={<Box size={16} />}
+          label="下壳"
+          detail={
+            parameters.closureType === "magnet"
+              ? getMagnetSupportOption(parameters.magnetSupportType).name
+              : "参数零件"
+          }
+          depth={1}
+        />
         <TreeItem id="lid" icon={<SquareStack size={16} />} label="顶盖" detail={CLOSURE_LABELS[parameters.closureType]} depth={1} />
         {parameters.panelEnabled ? (
-          <TreeItem id="panel" icon={<PanelTop size={16} />} label="可更换面板" detail={`${parameters.panelThickness} mm · ${PANEL_MOUNTING_LABELS[parameters.panelMountingType]}`} depth={1} />
+          <TreeItem id="panel" icon={<PanelTop size={16} />} label="可更换面板" detail={`${getFaceLabel(parameters.panelFace)} · ${parameters.panelThickness} mm · ${PANEL_MOUNTING_LABELS[parameters.panelMountingType]}`} depth={1} />
         ) : null}
-        {parameters.typeCPortEnabled ? (
-          <TreeItem id="connector" icon={<Cable size={16} />} label={getConnectorDefinition(parameters.connectorDefinitionId).name} detail="前侧接口" depth={2} />
-        ) : null}
+        {parameters.connectorPlacements.map((placement) => (
+          <TreeItem
+            key={placement.id}
+            id="connector"
+            icon={<Cable size={16} />}
+            label={getConnectorDefinition(placement.definitionId).name}
+            detail={getConnectorSurfaceLabel(placement.surface, parameters)}
+            depth={2}
+          />
+        ))}
         {parameters.antennaEnabled ? (
           <TreeItem
             id="antenna"

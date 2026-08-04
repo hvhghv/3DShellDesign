@@ -18,4 +18,26 @@ describe("panel DXF exporter", () => {
     });
     expect(dxf).not.toContain("\r\nCIRCLE\r\n");
   });
+
+  it("includes circular and rounded connector cutouts mounted to the panel", () => {
+    const connector = DEFAULT_PARAMETERS.connectorPlacements[0];
+    const dxf = createPanelDxf({
+      ...DEFAULT_PARAMETERS,
+      connectorPlacements: [
+        { ...connector, surface: "panel" },
+        {
+          ...connector,
+          id: "connector-2",
+          definitionId: "dc-5521-jack",
+          surface: "panel",
+          offsetU: 18,
+          cutoutWidth: 9,
+          cutoutHeight: 9,
+        },
+      ],
+    });
+
+    expect(dxf.match(/\r\nLWPOLYLINE\r\n/g)).toHaveLength(2);
+    expect(dxf.match(/\r\nCIRCLE\r\n/g)).toHaveLength(5);
+  });
 });

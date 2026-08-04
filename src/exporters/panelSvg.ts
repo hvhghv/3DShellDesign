@@ -1,6 +1,8 @@
 import { deriveEnclosureDimensions, getPanelMountingPoints } from "../domain/enclosure";
 import { getMaterial } from "../domain/materials";
 import type { DesignerParameters } from "../domain/model";
+import { getRotatedCutoutSize } from "../domain/placements";
+import { getConnectorDefinition } from "../libraries/components";
 
 function format(value: number): string {
   return Number(value.toFixed(3)).toString();
@@ -41,6 +43,18 @@ export function createPanelSvg(parameters: DesignerParameters): string {
           const radius = parameters.panelMountingType === "screw" ? 1.3 : 2.15;
           return `  <circle cx="${format(x + width / 2)}" cy="${format(height / 2 - y)}" r="${format(radius)}" fill="none" stroke="#000000" stroke-width="0.1" vector-effect="non-scaling-stroke"/>`;
         });
+  const connectorCutouts = parameters.connectorPlacements
+    .filter((placement) => placement.surface === "panel")
+    .map((placement) => {
+      const definition = getConnectorDefinition(placement.definitionId);
+      const [cutoutWidth, cutoutHeight] = getRotatedCutoutSize(placement);
+      const centerX = placement.offsetU + width / 2;
+      const centerY = height / 2 - placement.offsetV;
+      if (definition.panelCutout.shape === "circle") {
+        return `  <circle cx="${format(centerX)}" cy="${format(centerY)}" r="${format(cutoutWidth / 2)}" fill="none" stroke="#000000" stroke-width="0.1" vector-effect="non-scaling-stroke"/>`;
+      }
+      return `  <rect x="${format(centerX - cutoutWidth / 2)}" y="${format(centerY - cutoutHeight / 2)}" width="${format(cutoutWidth)}" height="${format(cutoutHeight)}" rx="${format(Math.min(definition.panelCutout.cornerRadius, cutoutWidth / 2, cutoutHeight / 2))}" fill="none" stroke="#000000" stroke-width="0.1" vector-effect="non-scaling-stroke"/>`;
+    });
 
   return [
     '<?xml version="1.0" encoding="UTF-8"?>',
@@ -49,6 +63,7 @@ export function createPanelSvg(parameters: DesignerParameters): string {
     `  <desc>${escapeXml(material.name)}, ${format(parameters.panelThickness)} mm</desc>`,
     `  <path d="${path}" fill="none" stroke="#000000" stroke-width="0.1" vector-effect="non-scaling-stroke"/>`,
     ...mountingHoles,
+    ...connectorCutouts,
     "</svg>",
     "",
   ].join("\n");

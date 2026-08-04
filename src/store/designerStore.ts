@@ -1,6 +1,11 @@
 import { create } from "zustand";
-import { clampParameter, DEFAULT_PARAMETERS } from "../domain/enclosure";
+import {
+  clampParameter,
+  DEFAULT_PARAMETERS,
+  normalizeDesignerParameters,
+} from "../domain/enclosure";
 import type {
+  ConnectorPlacement,
   DesignerParameters,
   InspectorTab,
   PcbReference,
@@ -8,6 +13,7 @@ import type {
   SelectablePart,
   StepPreview,
 } from "../domain/model";
+import { createConnectorPlacement } from "../domain/placements";
 import { getAntennaDefinition, getConnectorDefinition } from "../libraries/components";
 import { getEnclosureTemplate } from "../libraries/templates";
 import { queueProjectCache, readProjectCache } from "./projectCache";
@@ -32,7 +38,13 @@ interface DesignerState {
     key: Key,
     value: DesignerParameters[Key],
   ) => void;
-  setConnectorDefinition: (id: string) => void;
+  addConnectorPlacement: () => void;
+  updateConnectorPlacement: (
+    id: string,
+    changes: Partial<Omit<ConnectorPlacement, "id">>,
+  ) => void;
+  setConnectorDefinition: (placementId: string, definitionId: string) => void;
+  removeConnectorPlacement: (id: string) => void;
   setAntennaDefinition: (id: string) => void;
   setEnclosureTemplate: (id: string) => void;
   setSelectedPart: (part: SelectablePart) => void;
@@ -52,7 +64,7 @@ interface DesignerState {
 
 function isPartAvailable(part: SelectablePart, parameters: DesignerParameters): boolean {
   if (part === "panel") return parameters.panelEnabled;
-  if (part === "connector") return parameters.typeCPortEnabled;
+  if (part === "connector") return parameters.connectorPlacements.length > 0;
   if (part === "antenna") return parameters.antennaEnabled;
   return true;
 }
@@ -79,7 +91,7 @@ function loadPersistedProject(): Pick<
     return {
       projectName:
         typeof snapshot.name === "string" ? snapshot.name : fallback.projectName,
-      parameters: { ...DEFAULT_PARAMETERS, ...snapshot.parameters },
+      parameters: normalizeDesignerParameters(snapshot.parameters),
       pcbReference: snapshot.pcbReference ?? null,
       cachedAt: typeof snapshot.updatedAt === "string" ? snapshot.updatedAt : null,
     };
@@ -162,14 +174,15 @@ export const useDesignerStore = create<DesignerState>((set) => ({
         cacheStatus: "saving",
       };
     }),
-  setConnectorDefinition: (connectorDefinitionId) =>
+  addConnectorPlacement: () =>
     set((state) => {
-      const definition = getConnectorDefinition(connectorDefinitionId);
+      const id = `connector-${Date.now().toString(36)}-${state.parameters.connectorPlacements.length + 1}`;
       const parameters = {
         ...state.parameters,
-        connectorDefinitionId: definition.id,
-        typeCPortWidth: definition.panelCutout.width,
-        typeCPortHeight: definition.panelCutout.height,
+        connectorPlacements: [
+          ...state.parameters.connectorPlacements,
+          createConnectorPlacement("usb-c-receptacle", id),
+        ],
       };
       const snapshot = persistSnapshot(
         state.projectName,
@@ -181,6 +194,108 @@ export const useDesignerStore = create<DesignerState>((set) => ({
         parameters,
         selectedPart: "connector",
         focusedPart: state.focusedPart ? "connector" : null,
+        cachedAt: snapshot.updatedAt,
+        cacheStatus: "saving",
+      };
+    }),
+  updateConnectorPlacement: (id, changes) =>
+    set((state) => {
+      const parameters = {
+        ...state.parameters,
+        connectorPlacements: state.parameters.connectorPlacements.map((placement) =>
+          placement.id === id
+            ? {
+                ...placement,
+                ...changes,
+                offsetU: Math.min(
+                  300,
+                  Math.max(-300, changes.offsetU ?? placement.offsetU),
+                ),
+                offsetV: Math.min(
+                  300,
+                  Math.max(-300, changes.offsetV ?? placement.offsetV),
+                ),
+                cutoutWidth: Math.min(
+                  60,
+                  Math.max(1, changes.cutoutWidth ?? placement.cutoutWidth),
+                ),
+                cutoutHeight: Math.min(
+                  60,
+                  Math.max(1, changes.cutoutHeight ?? placement.cutoutHeight),
+                ),
+              }
+            : placement,
+        ),
+      };
+      const snapshot = persistSnapshot(
+        state.projectName,
+        parameters,
+        state.pcbReference,
+        state.stepPreview,
+      );
+      return {
+        parameters,
+        selectedPart: "connector",
+        focusedPart: state.focusedPart ? "connector" : null,
+        cachedAt: snapshot.updatedAt,
+        cacheStatus: "saving",
+      };
+    }),
+  setConnectorDefinition: (placementId, connectorDefinitionId) =>
+    set((state) => {
+      const definition = getConnectorDefinition(connectorDefinitionId);
+      const parameters = {
+        ...state.parameters,
+        connectorPlacements: state.parameters.connectorPlacements.map((placement) =>
+          placement.id === placementId
+            ? {
+                ...placement,
+                definitionId: definition.id,
+                cutoutWidth: definition.panelCutout.width,
+                cutoutHeight: definition.panelCutout.height,
+              }
+            : placement,
+        ),
+      };
+      const snapshot = persistSnapshot(
+        state.projectName,
+        parameters,
+        state.pcbReference,
+        state.stepPreview,
+      );
+      return {
+        parameters,
+        selectedPart: "connector",
+        focusedPart: state.focusedPart ? "connector" : null,
+        cachedAt: snapshot.updatedAt,
+        cacheStatus: "saving",
+      };
+    }),
+  removeConnectorPlacement: (id) =>
+    set((state) => {
+      const parameters = {
+        ...state.parameters,
+        connectorPlacements: state.parameters.connectorPlacements.filter(
+          (placement) => placement.id !== id,
+        ),
+      };
+      const snapshot = persistSnapshot(
+        state.projectName,
+        parameters,
+        state.pcbReference,
+        state.stepPreview,
+      );
+      const hasConnectors = parameters.connectorPlacements.length > 0;
+      return {
+        parameters,
+        selectedPart:
+          state.selectedPart === "connector" && !hasConnectors
+            ? "project"
+            : state.selectedPart,
+        focusedPart:
+          state.focusedPart === "connector" && !hasConnectors
+            ? null
+            : state.focusedPart,
         cachedAt: snapshot.updatedAt,
         cacheStatus: "saving",
       };
@@ -331,7 +446,7 @@ export const useDesignerStore = create<DesignerState>((set) => ({
       };
     }),
   loadProject: (snapshot) => {
-    const parameters = { ...DEFAULT_PARAMETERS, ...snapshot.parameters };
+    const parameters = normalizeDesignerParameters(snapshot.parameters);
     const pcbReference = snapshot.pcbReference ?? null;
     const persisted = persistSnapshot(snapshot.name, parameters, pcbReference, null);
     set({
@@ -359,7 +474,7 @@ export const useDesignerStore = create<DesignerState>((set) => ({
         }
         return {
           projectName: cached.snapshot.name,
-          parameters: { ...DEFAULT_PARAMETERS, ...cached.snapshot.parameters },
+          parameters: normalizeDesignerParameters(cached.snapshot.parameters),
           pcbReference: cached.snapshot.pcbReference ?? null,
           stepPreview: cached.stepPreview,
           focusedPart: null,

@@ -17,8 +17,7 @@ export interface ConnectorDefinition {
     height: number;
     cornerRadius: number;
   };
-  placementAnchor: {
-    face: "front";
+  boardAlignment: {
     heightAboveBoardCenter: number;
   };
   keepoutVolumes: Array<{
@@ -92,7 +91,7 @@ export const CONNECTOR_DEFINITIONS: ConnectorDefinition[] = [
     category: "usb",
     visualGeometry: { shape: "rounded-rectangle", width: 10, height: 3.6, depth: 8, color: "#9ca5a2" },
     panelCutout: { shape: "rounded-rectangle", width: 12, height: 7, cornerRadius: 2.4 },
-    placementAnchor: { face: "front", heightAboveBoardCenter: 2.3 },
+    boardAlignment: { heightAboveBoardCenter: 2.3 },
     keepoutVolumes: [{ role: "plug", width: 16, height: 11, depth: 28 }],
     toleranceRules: { xyClearance: 0.35, description: "开孔已包含常规 FDM 装配余量" },
     metadata: { bomName: "USB-C receptacle", notes: "适合常见中置贴片母座，具体沉板高度需按封装复核。" },
@@ -103,7 +102,7 @@ export const CONNECTOR_DEFINITIONS: ConnectorDefinition[] = [
     category: "usb",
     visualGeometry: { shape: "rounded-rectangle", width: 13.2, height: 5.8, depth: 14, color: "#a6adab" },
     panelCutout: { shape: "rounded-rectangle", width: 15, height: 7.5, cornerRadius: 1.2 },
-    placementAnchor: { face: "front", heightAboveBoardCenter: 3.4 },
+    boardAlignment: { heightAboveBoardCenter: 3.4 },
     keepoutVolumes: [{ role: "plug", width: 20, height: 13, depth: 36 }],
     toleranceRules: { xyClearance: 0.4, description: "开孔为通用包络，需按具体外壳尺寸复核" },
     metadata: { bomName: "USB-A receptacle", notes: "覆盖常见卧式 USB-A，固定脚与屏蔽壳尺寸因型号而异。" },
@@ -114,7 +113,7 @@ export const CONNECTOR_DEFINITIONS: ConnectorDefinition[] = [
     category: "usb",
     visualGeometry: { shape: "rounded-rectangle", width: 7.6, height: 3, depth: 6, color: "#9ca5a2" },
     panelCutout: { shape: "rounded-rectangle", width: 9, height: 4.5, cornerRadius: 1.2 },
-    placementAnchor: { face: "front", heightAboveBoardCenter: 1.8 },
+    boardAlignment: { heightAboveBoardCenter: 1.8 },
     keepoutVolumes: [{ role: "plug", width: 13, height: 9, depth: 24 }],
     toleranceRules: { xyClearance: 0.3, description: "适用于常见 Micro-B 插拔包络" },
     metadata: { bomName: "Micro USB receptacle", notes: "母座沉板和外壳台阶需按具体器件确认。" },
@@ -125,7 +124,7 @@ export const CONNECTOR_DEFINITIONS: ConnectorDefinition[] = [
     category: "power",
     visualGeometry: { shape: "circle", width: 8, height: 8, depth: 14, color: "#323836" },
     panelCutout: { shape: "circle", width: 9, height: 9, cornerRadius: 4.5 },
-    placementAnchor: { face: "front", heightAboveBoardCenter: 4.5 },
+    boardAlignment: { heightAboveBoardCenter: 4.5 },
     keepoutVolumes: [{ role: "plug", width: 14, height: 14, depth: 32 }],
     toleranceRules: { xyClearance: 0.4, description: "圆孔按通用 5.5 mm 电源座外径预留" },
     metadata: { bomName: "DC-005 5.5/2.1 jack", notes: "仅表示插孔包络，螺纹面板座需改用对应直径。" },
@@ -136,7 +135,7 @@ export const CONNECTOR_DEFINITIONS: ConnectorDefinition[] = [
     category: "network",
     visualGeometry: { shape: "rounded-rectangle", width: 16, height: 13.5, depth: 21, color: "#777f7b" },
     panelCutout: { shape: "rounded-rectangle", width: 17.2, height: 15, cornerRadius: 1.2 },
-    placementAnchor: { face: "front", heightAboveBoardCenter: 7.5 },
+    boardAlignment: { heightAboveBoardCenter: 7.5 },
     keepoutVolumes: [{ role: "plug", width: 24, height: 20, depth: 46 }],
     toleranceRules: { xyClearance: 0.5, description: "包含水晶头卡扣活动空间" },
     metadata: { bomName: "RJ45 receptacle", notes: "带灯、带磁和屏蔽型号高度不同，需按器件图校核。" },
@@ -147,7 +146,7 @@ export const CONNECTOR_DEFINITIONS: ConnectorDefinition[] = [
     category: "terminal",
     visualGeometry: { shape: "rounded-rectangle", width: 10.5, height: 8.2, depth: 10, color: "#397b4a" },
     panelCutout: { shape: "rounded-rectangle", width: 11.5, height: 9.5, cornerRadius: 0.8 },
-    placementAnchor: { face: "front", heightAboveBoardCenter: 5 },
+    boardAlignment: { heightAboveBoardCenter: 5 },
     keepoutVolumes: [{ role: "tool", width: 16, height: 18, depth: 30 }],
     toleranceRules: { xyClearance: 0.45, description: "为导线与螺丝刀操作预留包络" },
     metadata: { bomName: "5.08 mm 2-pin terminal", notes: "端子开口方向和螺丝刀角度需结合装配方向检查。" },
@@ -158,7 +157,7 @@ export const CONNECTOR_DEFINITIONS: ConnectorDefinition[] = [
     category: "fpc",
     visualGeometry: { shape: "rounded-rectangle", width: 13.5, height: 2.2, depth: 5.5, color: "#d7c7a4" },
     panelCutout: { shape: "rounded-rectangle", width: 15, height: 4, cornerRadius: 0.8 },
-    placementAnchor: { face: "front", heightAboveBoardCenter: 1.5 },
+    boardAlignment: { heightAboveBoardCenter: 1.5 },
     keepoutVolumes: [{ role: "wiring", width: 18, height: 8, depth: 35 }],
     toleranceRules: { xyClearance: 0.3, description: "仅为软排线穿出包络，不代替锁扣操作校核" },
     metadata: { bomName: "0.5 mm 20-pin FPC connector", notes: "FPC 通常不直接贴壳，建议优先使用独立排线槽。" },

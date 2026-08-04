@@ -117,19 +117,18 @@ export function ManufacturingExport() {
                 process: getMaterial(parameters.panelMaterialId).process,
                 thickness: parameters.panelThickness,
                 size: [dimensions.panelLength, dimensions.panelWidth],
+                face: parameters.panelFace,
+                offset: [parameters.panelOffsetU, parameters.panelOffsetV],
               }
             : null,
           closure: parameters.closureType,
           template: parameters.enclosureTemplateId,
           panelMounting: parameters.panelMountingType,
           ventPattern: parameters.ventPattern,
-          connector: parameters.typeCPortEnabled
-            ? {
-                definition: getConnectorDefinition(parameters.connectorDefinitionId),
-                cutoutSize: [parameters.typeCPortWidth, parameters.typeCPortHeight],
-                offset: parameters.typeCPortOffset,
-              }
-            : null,
+          connectors: parameters.connectorPlacements.map((placement) => ({
+            ...placement,
+            definition: getConnectorDefinition(placement.definitionId),
+          })),
           antenna: parameters.antennaEnabled
             ? {
                 definition: getAntennaDefinition(parameters.antennaDefinitionId),

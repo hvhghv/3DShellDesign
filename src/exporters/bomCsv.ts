@@ -1,5 +1,7 @@
 import { getMaterial } from "../domain/materials";
 import type { DesignerParameters } from "../domain/model";
+import { getMagnetSupportOption } from "../domain/magnetSupport";
+import { getConnectorSurfaceLabel, getFaceLabel } from "../domain/placements";
 import {
   getAntennaDefinition,
   getConnectorDefinition,
@@ -29,7 +31,7 @@ export function createBomCsv(
       1,
       panel.name,
       panel.process,
-      `${parameters.panelThickness} mm / ${parameters.panelMountingType}`,
+      `${parameters.panelThickness} mm / ${getFaceLabel(parameters.panelFace)} / ${parameters.panelMountingType}`,
     ]);
     rows.push([
       projectName,
@@ -40,15 +42,15 @@ export function createBomCsv(
       "",
     ]);
   }
-  if (parameters.typeCPortEnabled) {
-    const connector = getConnectorDefinition(parameters.connectorDefinitionId);
+  for (const placement of parameters.connectorPlacements) {
+    const connector = getConnectorDefinition(placement.definitionId);
     rows.push([
       projectName,
       connector.name,
       1,
       connector.metadata.bomName,
       "PCB 装配",
-      connector.toleranceRules.description,
+      `${getConnectorSurfaceLabel(placement.surface, parameters)}；${connector.toleranceRules.description}`,
     ]);
   }
   if (parameters.antennaEnabled) {
@@ -73,7 +75,14 @@ export function createBomCsv(
       fastener.metadata.notes,
     ]);
   } else if (parameters.closureType === "magnet") {
-    rows.push([projectName, "圆形磁铁", 8, "直径 6 mm", "胶粘装配", "装配前确认磁极"]);
+    rows.push([
+      projectName,
+      "圆形磁铁",
+      8,
+      "直径 6 x 1.8 mm",
+      "胶粘装配",
+      `${getMagnetSupportOption(parameters.magnetSupportType).name}；装配前确认磁极`,
+    ]);
   } else if (parameters.closureType === "hinge") {
     rows.push([projectName, "铰链销轴", 1, "直径 2.5 mm", "装配", "按打印公差校准"]);
   }

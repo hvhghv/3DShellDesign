@@ -1,5 +1,7 @@
 import { deriveEnclosureDimensions, getPanelMountingPoints } from "../domain/enclosure";
 import type { DesignerParameters } from "../domain/model";
+import { getRotatedCutoutSize } from "../domain/placements";
+import { getConnectorDefinition } from "../libraries/components";
 
 function format(value: number): string {
   return Number(value.toFixed(5)).toString();
@@ -9,22 +11,42 @@ function pair(code: number, value: string | number): string[] {
   return [String(code), String(value)];
 }
 
+function appendRoundedPolyline(
+  lines: string[],
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+  radius: number,
+): void {
+  const safeRadius = Math.min(radius, width / 2, height / 2);
+  const vertices: Array<[number, number, number]> = [
+    [x + safeRadius, y, 0],
+    [x + width - safeRadius, y, Math.SQRT2 - 1],
+    [x + width, y + safeRadius, 0],
+    [x + width, y + height - safeRadius, Math.SQRT2 - 1],
+    [x + width - safeRadius, y + height, 0],
+    [x + safeRadius, y + height, Math.SQRT2 - 1],
+    [x, y + height - safeRadius, 0],
+    [x, y + safeRadius, Math.SQRT2 - 1],
+  ];
+  lines.push(
+    ...pair(0, "LWPOLYLINE"),
+    ...pair(8, "CUT"),
+    ...pair(90, vertices.length),
+    ...pair(70, 1),
+  );
+  for (const [pointX, pointY, bulge] of vertices) {
+    lines.push(...pair(10, format(pointX)), ...pair(20, format(pointY)));
+    if (bulge !== 0) lines.push(...pair(42, format(bulge)));
+  }
+}
+
 export function createPanelDxf(parameters: DesignerParameters): string {
   if (!parameters.panelEnabled) throw new Error("当前设计未启用独立面板");
   const dimensions = deriveEnclosureDimensions(parameters);
   const width = dimensions.panelLength;
   const height = dimensions.panelWidth;
-  const radius = Math.min(3.2, width / 2, height / 2);
-  const vertices: Array<[number, number, number]> = [
-    [radius, 0, 0],
-    [width - radius, 0, Math.SQRT2 - 1],
-    [width, radius, 0],
-    [width, height - radius, Math.SQRT2 - 1],
-    [width - radius, height, 0],
-    [radius, height, Math.SQRT2 - 1],
-    [0, height - radius, 0],
-    [0, radius, Math.SQRT2 - 1],
-  ];
   const lines = [
     ...pair(0, "SECTION"),
     ...pair(2, "HEADER"),
@@ -33,15 +55,8 @@ export function createPanelDxf(parameters: DesignerParameters): string {
     ...pair(0, "ENDSEC"),
     ...pair(0, "SECTION"),
     ...pair(2, "ENTITIES"),
-    ...pair(0, "LWPOLYLINE"),
-    ...pair(8, "CUT"),
-    ...pair(90, vertices.length),
-    ...pair(70, 1),
   ];
-  for (const [x, y, bulge] of vertices) {
-    lines.push(...pair(10, format(x)), ...pair(20, format(y)));
-    if (bulge !== 0) lines.push(...pair(42, format(bulge)));
-  }
+  appendRoundedPolyline(lines, 0, 0, width, height, 3.2);
   if (parameters.panelMountingType !== "slide") {
     const radiusValue = parameters.panelMountingType === "screw" ? 1.3 : 2.15;
     for (const [x, y] of getPanelMountingPoints(parameters)) {
@@ -51,6 +66,31 @@ export function createPanelDxf(parameters: DesignerParameters): string {
         ...pair(10, format(x + width / 2)),
         ...pair(20, format(y + height / 2)),
         ...pair(40, format(radiusValue)),
+      );
+    }
+  }
+  for (const placement of parameters.connectorPlacements) {
+    if (placement.surface !== "panel") continue;
+    const definition = getConnectorDefinition(placement.definitionId);
+    const [cutoutWidth, cutoutHeight] = getRotatedCutoutSize(placement);
+    const centerX = placement.offsetU + width / 2;
+    const centerY = placement.offsetV + height / 2;
+    if (definition.panelCutout.shape === "circle") {
+      lines.push(
+        ...pair(0, "CIRCLE"),
+        ...pair(8, "CUT"),
+        ...pair(10, format(centerX)),
+        ...pair(20, format(centerY)),
+        ...pair(40, format(cutoutWidth / 2)),
+      );
+    } else {
+      appendRoundedPolyline(
+        lines,
+        centerX - cutoutWidth / 2,
+        centerY - cutoutHeight / 2,
+        cutoutWidth,
+        cutoutHeight,
+        definition.panelCutout.cornerRadius,
       );
     }
   }

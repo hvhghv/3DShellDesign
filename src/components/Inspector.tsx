@@ -6,14 +6,31 @@ import {
   Info,
   Magnet,
   PanelTop,
+  Plus,
+  Trash2,
   UnfoldVertical,
   Wrench,
   X,
 } from "lucide-react";
 import { useMemo } from "react";
 import { deriveEnclosureDimensions, validateDesign } from "../domain/enclosure";
+import {
+  getMagnetSupportOption,
+  MAGNET_SUPPORT_OPTIONS,
+} from "../domain/magnetSupport";
 import { getMaterial, PANEL_MATERIALS, SHELL_MATERIALS } from "../domain/materials";
-import type { InspectorTab, SelectablePart, ValidationIssue } from "../domain/model";
+import type {
+  ConnectorSurface,
+  EnclosureFace,
+  InspectorTab,
+  PlacementRotation,
+  SelectablePart,
+  ValidationIssue,
+} from "../domain/model";
+import {
+  ENCLOSURE_FACE_OPTIONS,
+  PLACEMENT_ROTATIONS,
+} from "../domain/placements";
 import {
   ANTENNA_DEFINITIONS,
   CONNECTOR_DEFINITIONS,
@@ -108,7 +125,7 @@ const PART_LABELS: Record<SelectablePart, string> = {
   base: "下壳参数",
   lid: "顶盖参数",
   panel: "面板参数",
-  connector: "面板接口",
+  connector: "接口放置",
   antenna: "天线与射频空间",
 };
 
@@ -126,7 +143,10 @@ export function Inspector() {
   const inspectorTab = useDesignerStore((state) => state.inspectorTab);
   const setInspectorTab = useDesignerStore((state) => state.setInspectorTab);
   const setParameter = useDesignerStore((state) => state.setParameter);
+  const addConnectorPlacement = useDesignerStore((state) => state.addConnectorPlacement);
+  const updateConnectorPlacement = useDesignerStore((state) => state.updateConnectorPlacement);
   const setConnectorDefinition = useDesignerStore((state) => state.setConnectorDefinition);
+  const removeConnectorPlacement = useDesignerStore((state) => state.removeConnectorPlacement);
   const setAntennaDefinition = useDesignerStore((state) => state.setAntennaDefinition);
   const setEnclosureTemplate = useDesignerStore((state) => state.setEnclosureTemplate);
   const setSelectedPart = useDesignerStore((state) => state.setSelectedPart);
@@ -264,12 +284,52 @@ export function Inspector() {
                   <p className="material-note">{getFastenerDefinition(parameters.closureFastenerId).metadata.notes}</p>
                 </>
               ) : null}
+              {parameters.closureType === "magnet" ? (
+                <>
+                  <label className="select-field">
+                    <span>磁铁承托</span>
+                    <select
+                      aria-label="磁铁承托方式"
+                      value={parameters.magnetSupportType}
+                      onChange={(event) =>
+                        setParameter(
+                          "magnetSupportType",
+                          event.currentTarget.value as typeof parameters.magnetSupportType,
+                        )
+                      }
+                    >
+                      {MAGNET_SUPPORT_OPTIONS.map((option) => (
+                        <option key={option.id} value={option.id}>{option.name}</option>
+                      ))}
+                    </select>
+                  </label>
+                  <p className="material-note">
+                    {getMagnetSupportOption(parameters.magnetSupportType).description}
+                  </p>
+                </>
+              ) : null}
             </section>
             <section className="inspector-section">
               <h2>可更换面板</h2>
-              <ToggleRow label="启用独立面板" detail="顶盖开窗并生成板材零件" checked={parameters.panelEnabled} onChange={(checked) => setParameter("panelEnabled", checked)} />
+              <ToggleRow label="启用独立面板" detail="在所选壳体表面开窗并生成板材零件" checked={parameters.panelEnabled} onChange={(checked) => setParameter("panelEnabled", checked)} />
               {parameters.panelEnabled ? (
                 <>
+                  <label className="select-field">
+                    <span>所在面</span>
+                    <select
+                      aria-label="面板所在面"
+                      value={parameters.panelFace}
+                      onChange={(event) =>
+                        setParameter("panelFace", event.currentTarget.value as EnclosureFace)
+                      }
+                    >
+                      {ENCLOSURE_FACE_OPTIONS.map((option) => (
+                        <option key={option.id} value={option.id}>{option.name}</option>
+                      ))}
+                    </select>
+                  </label>
+                  <NumberField label="横向偏移" value={parameters.panelOffsetU} min={-300} max={300} step={1} onChange={(value) => setParameter("panelOffsetU", value)} />
+                  <NumberField label="纵向偏移" value={parameters.panelOffsetV} min={-300} max={300} step={1} onChange={(value) => setParameter("panelOffsetV", value)} />
                   <label className="select-field">
                     <span>固定方式</span>
                     <select
@@ -287,43 +347,106 @@ export function Inspector() {
               ) : null}
             </section>
             <section className="inspector-section">
-              <h2>接口</h2>
-              <ToggleRow label="启用面板接口" detail="前侧开孔及插拔安全空间" checked={parameters.typeCPortEnabled} onChange={(checked) => setParameter("typeCPortEnabled", checked)} />
-              {parameters.typeCPortEnabled ? (
-                <>
+              <div className="section-heading-row">
+                <h2>接口</h2>
+                <button
+                  className="section-action-button"
+                  type="button"
+                  onClick={addConnectorPlacement}
+                >
+                  <Plus size={14} />
+                  <span>添加</span>
+                </button>
+              </div>
+              {parameters.connectorPlacements.map((placement, index) => {
+                const definition = getConnectorDefinition(placement.definitionId);
+                return (
+                  <div className="connector-placement" key={placement.id}>
+                    <div className="connector-placement-heading">
+                      <strong>接口 {index + 1}</strong>
+                      <button
+                        type="button"
+                        title="删除接口"
+                        aria-label={`删除接口 ${index + 1}`}
+                        onClick={() => removeConnectorPlacement(placement.id)}
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    </div>
                   <label className="select-field">
                     <span>器件</span>
                     <select
-                      aria-label="接口器件"
-                      value={parameters.connectorDefinitionId}
-                      onChange={(event) => setConnectorDefinition(event.currentTarget.value)}
+                      aria-label={`接口 ${index + 1} 器件`}
+                      value={placement.definitionId}
+                      onChange={(event) =>
+                        setConnectorDefinition(placement.id, event.currentTarget.value)
+                      }
                     >
                       {CONNECTOR_DEFINITIONS.map((definition) => (
                         <option key={definition.id} value={definition.id}>{definition.name}</option>
                       ))}
                     </select>
                   </label>
-                  {getConnectorDefinition(parameters.connectorDefinitionId).panelCutout.shape === "circle" ? (
+                  <label className="select-field">
+                    <span>安装位置</span>
+                    <select
+                      aria-label={`接口 ${index + 1} 安装位置`}
+                      value={placement.surface}
+                      onChange={(event) =>
+                        updateConnectorPlacement(placement.id, {
+                          surface: event.currentTarget.value as ConnectorSurface,
+                        })
+                      }
+                    >
+                      {ENCLOSURE_FACE_OPTIONS.map((option) => (
+                        <option key={option.id} value={option.id}>{option.name}</option>
+                      ))}
+                      {parameters.panelEnabled ? (
+                        <option value="panel">可更换面板</option>
+                      ) : null}
+                    </select>
+                  </label>
+                  <label className="select-field">
+                    <span>面内旋转</span>
+                    <select
+                      aria-label={`接口 ${index + 1} 面内旋转`}
+                      value={placement.rotation}
+                      onChange={(event) =>
+                        updateConnectorPlacement(placement.id, {
+                          rotation: Number(event.currentTarget.value) as PlacementRotation,
+                        })
+                      }
+                    >
+                      {PLACEMENT_ROTATIONS.map((rotation) => (
+                        <option key={rotation} value={rotation}>{rotation}°</option>
+                      ))}
+                    </select>
+                  </label>
+                  {definition.panelCutout.shape === "circle" ? (
                     <NumberField
                       label="孔径"
-                      value={parameters.typeCPortWidth}
-                      min={6}
-                      max={30}
+                      value={placement.cutoutWidth}
+                      min={1}
+                      max={60}
                       onChange={(value) => {
-                        setParameter("typeCPortWidth", value);
-                        setParameter("typeCPortHeight", value);
+                        updateConnectorPlacement(placement.id, {
+                          cutoutWidth: value,
+                          cutoutHeight: value,
+                        });
                       }}
                     />
                   ) : (
                     <>
-                      <NumberField label="开孔宽度" value={parameters.typeCPortWidth} min={6} max={30} onChange={(value) => setParameter("typeCPortWidth", value)} />
-                      <NumberField label="开孔高度" value={parameters.typeCPortHeight} min={3} max={20} onChange={(value) => setParameter("typeCPortHeight", value)} />
+                      <NumberField label="开孔宽度" value={placement.cutoutWidth} min={1} max={60} onChange={(value) => updateConnectorPlacement(placement.id, { cutoutWidth: value })} />
+                      <NumberField label="开孔高度" value={placement.cutoutHeight} min={1} max={60} onChange={(value) => updateConnectorPlacement(placement.id, { cutoutHeight: value })} />
                     </>
                   )}
-                  <NumberField label="水平偏移" value={parameters.typeCPortOffset} min={-120} max={120} step={1} onChange={(value) => setParameter("typeCPortOffset", value)} />
-                  <p className="material-note">{getConnectorDefinition(parameters.connectorDefinitionId).metadata.notes}</p>
-                </>
-              ) : null}
+                  <NumberField label="横向偏移" value={placement.offsetU} min={-300} max={300} step={1} onChange={(value) => updateConnectorPlacement(placement.id, { offsetU: value })} />
+                  <NumberField label="纵向偏移" value={placement.offsetV} min={-300} max={300} step={1} onChange={(value) => updateConnectorPlacement(placement.id, { offsetV: value })} />
+                  <p className="material-note">{definition.metadata.notes}</p>
+                  </div>
+                );
+              })}
             </section>
             <section className="inspector-section">
               <h2>天线</h2>

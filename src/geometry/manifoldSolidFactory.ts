@@ -4,7 +4,17 @@ import type {
   SimplePolygon,
 } from "manifold-3d";
 import { deriveEnclosureDimensions, getPanelMountingPoints } from "../domain/enclosure";
-import type { DesignerParameters, PcbReference } from "../domain/model";
+import type {
+  DesignerParameters,
+  EnclosureDimensions,
+  EnclosureFace,
+  PcbReference,
+} from "../domain/model";
+import { getClosurePoints, MAGNET_GEOMETRY } from "../domain/magnetSupport";
+import {
+  getRotatedCutoutSize,
+  resolveConnectorFace,
+} from "../domain/placements";
 import { getCenteredMountingHoles } from "../domain/pcbReference";
 import { getVentPatternPoints } from "../domain/patterns";
 import {
@@ -155,19 +165,99 @@ function cubeAt(
   return translateAndDispose(cube, x, y, z);
 }
 
-function closurePoints(
-  outsideLength: number,
-  outsideWidth: number,
-  wallThickness: number,
-): Array<[number, number]> {
-  const x = outsideLength / 2 - wallThickness - 4.5;
-  const y = outsideWidth / 2 - wallThickness - 4.5;
-  return [
-    [-x, -y],
-    [x, -y],
-    [-x, y],
-    [x, y],
-  ];
+function createFaceCutter(
+  module: ManifoldToplevel,
+  face: Exclude<EnclosureFace, "top">,
+  u: number,
+  v: number,
+  width: number,
+  height: number,
+  radius: number,
+  parameters: DesignerParameters,
+  dimensions: EnclosureDimensions,
+): ManifoldSolid {
+  const thickness =
+    face === "bottom" ? parameters.bottomThickness : parameters.wallThickness;
+  const depth = thickness * 3;
+  let cutter =
+    Math.abs(width - height) < 0.001 && radius >= width / 2 - 0.01
+      ? module.Manifold.cylinder(depth, width / 2, width / 2, 32, false)
+      : extrudePlate(
+          module,
+          width,
+          height,
+          Math.min(radius, width / 2, height / 2),
+          depth,
+        );
+
+  if (face === "front") {
+    cutter = rotateAndDispose(cutter, 90, 0, 0);
+    return translateAndDispose(
+      cutter,
+      u,
+      dimensions.outsideWidth / 2 + thickness,
+      parameters.baseHeight / 2 + v,
+    );
+  }
+  if (face === "back") {
+    cutter = rotateAndDispose(cutter, -90, 0, 0);
+    return translateAndDispose(
+      cutter,
+      u,
+      -dimensions.outsideWidth / 2 - thickness,
+      parameters.baseHeight / 2 + v,
+    );
+  }
+  if (face === "right") {
+    cutter = rotateAndDispose(cutter, 90, 0, 0);
+    cutter = rotateAndDispose(cutter, 0, 0, 90);
+    return translateAndDispose(
+      cutter,
+      dimensions.outsideLength / 2 - thickness,
+      u,
+      parameters.baseHeight / 2 + v,
+    );
+  }
+  if (face === "left") {
+    cutter = rotateAndDispose(cutter, 90, 0, 0);
+    cutter = rotateAndDispose(cutter, 0, 0, -90);
+    return translateAndDispose(
+      cutter,
+      -dimensions.outsideLength / 2 + thickness,
+      u,
+      parameters.baseHeight / 2 + v,
+    );
+  }
+  return translateAndDispose(cutter, u, v, -thickness);
+}
+
+function createTopCutter(
+  module: ManifoldToplevel,
+  u: number,
+  v: number,
+  width: number,
+  height: number,
+  radius: number,
+  parameters: DesignerParameters,
+  lipHeight: number,
+): ManifoldSolid {
+  const depth = parameters.lidThickness * 3;
+  const cutter =
+    Math.abs(width - height) < 0.001 && radius >= width / 2 - 0.01
+      ? module.Manifold.cylinder(depth, width / 2, width / 2, 32, false)
+      : extrudePlate(
+          module,
+          width,
+          height,
+          Math.min(radius, width / 2, height / 2),
+          depth,
+        );
+  return translateAndDispose(
+    cutter,
+    u,
+    v,
+    lipHeight - parameters.lidThickness,
+  );
 }
 
 function addBossWithPilotHole(
@@ -207,6 +297,222 @@ function addSolidBoss(
     source,
     cylinderAt(module, outerRadius, height, x, y, z),
   );
+}
+
+function addMagnetSupports(
+  module: ManifoldToplevel,
+  source: ManifoldSolid,
+  parameters: DesignerParameters,
+  outsideLength: number,
+  outsideWidth: number,
+): ManifoldSolid {
+  const geometry = MAGNET_GEOMETRY;
+  const points = getClosurePoints(
+    outsideLength,
+    outsideWidth,
+    parameters.wallThickness,
+  );
+  const supportBottom = parameters.baseHeight - geometry.supportThickness;
+  let result = source;
+
+  if (parameters.magnetSupportType === "perimeter-flange") {
+    const edgeOffset = parameters.wallThickness - geometry.wallOverlap;
+    const outerLength = outsideLength - edgeOffset * 2;
+    const outerWidth = outsideWidth - edgeOffset * 2;
+    const innerLength = outerLength - geometry.perimeterFlangeWidth * 2;
+    const innerWidth = outerWidth - geometry.perimeterFlangeWidth * 2;
+    const flange = extrudeRing(
+      module,
+      outerLength,
+      outerWidth,
+      innerLength,
+      innerWidth,
+      Math.max(0.5, parameters.cornerRadius - edgeOffset),
+      Math.max(
+        0.5,
+        parameters.cornerRadius - edgeOffset - geometry.perimeterFlangeWidth,
+      ),
+      geometry.supportThickness,
+      supportBottom,
+    );
+    result = unionAndDispose(result, flange);
+  } else {
+    for (const [x, y] of points) {
+      let support: ManifoldSolid;
+      if (parameters.magnetSupportType === "floor-column") {
+        const columnBottom = Math.max(0, parameters.bottomThickness - 0.2);
+        support = cylinderAt(
+          module,
+          geometry.floorColumnRadius,
+          parameters.baseHeight - columnBottom,
+          x,
+          y,
+          columnBottom,
+        );
+      } else if (parameters.magnetSupportType === "wall-bracket") {
+        support = cubeAt(
+          module,
+          [
+            geometry.wallBracketWidth,
+            geometry.supportSize,
+            geometry.supportThickness,
+          ],
+          x - geometry.wallBracketWidth / 2,
+          y - geometry.supportSize / 2,
+          supportBottom,
+        );
+        const rib = cubeAt(
+          module,
+          [
+            geometry.wallBracketRibThickness,
+            geometry.supportSize,
+            geometry.supportThickness + geometry.wallBracketRibDrop,
+          ],
+          x - geometry.wallBracketRibThickness / 2,
+          y - geometry.supportSize / 2,
+          supportBottom - geometry.wallBracketRibDrop,
+        );
+        support = unionAndDispose(support, rib);
+      } else {
+        support = cubeAt(
+          module,
+          [geometry.supportSize, geometry.supportSize, geometry.supportThickness],
+          x - geometry.supportSize / 2,
+          y - geometry.supportSize / 2,
+          supportBottom,
+        );
+      }
+      result = unionAndDispose(result, support);
+    }
+  }
+
+  for (const [x, y] of points) {
+    const pocket = cylinderAt(
+      module,
+      geometry.pocketRadius,
+      geometry.basePocketDepth + 0.2,
+      x,
+      y,
+      parameters.baseHeight - geometry.basePocketDepth,
+    );
+    result = subtractAndDispose(result, pocket);
+  }
+  return result;
+}
+
+function createFaceRail(
+  module: ManifoldToplevel,
+  face: EnclosureFace,
+  u: number,
+  v: number,
+  length: number,
+  parameters: DesignerParameters,
+  dimensions: EnclosureDimensions,
+  topZ = 0,
+): ManifoldSolid {
+  let rail = module.Manifold.cube([length, 1.5, 1.2], true);
+  if (face === "front" || face === "back") {
+    rail = rotateAndDispose(rail, 90, 0, 0);
+  } else if (face === "right" || face === "left") {
+    rail = rotateAndDispose(rail, 90, 0, 0);
+    rail = rotateAndDispose(rail, 0, 0, 90);
+  }
+
+  if (face === "top") return translateAndDispose(rail, u, v, topZ + 0.4);
+  if (face === "bottom") return translateAndDispose(rail, u, v, -0.4);
+  if (face === "front") {
+    return translateAndDispose(
+      rail,
+      u,
+      dimensions.outsideWidth / 2 + 0.4,
+      parameters.baseHeight / 2 + v,
+    );
+  }
+  if (face === "back") {
+    return translateAndDispose(
+      rail,
+      u,
+      -dimensions.outsideWidth / 2 - 0.4,
+      parameters.baseHeight / 2 + v,
+    );
+  }
+  if (face === "right") {
+    return translateAndDispose(
+      rail,
+      dimensions.outsideLength / 2 + 0.4,
+      u,
+      parameters.baseHeight / 2 + v,
+    );
+  }
+  return translateAndDispose(
+    rail,
+    -dimensions.outsideLength / 2 - 0.4,
+    u,
+    parameters.baseHeight / 2 + v,
+  );
+}
+
+function applyBasePanelFeatures(
+  module: ManifoldToplevel,
+  source: ManifoldSolid,
+  parameters: DesignerParameters,
+  dimensions: EnclosureDimensions,
+): ManifoldSolid {
+  if (!parameters.panelEnabled || parameters.panelFace === "top") return source;
+  const face = parameters.panelFace;
+  let result = subtractAndDispose(
+    source,
+    createFaceCutter(
+      module,
+      face,
+      parameters.panelOffsetU,
+      parameters.panelOffsetV,
+      dimensions.panelLength - 4,
+      dimensions.panelWidth - 4,
+      3.5,
+      parameters,
+      dimensions,
+    ),
+  );
+
+  if (parameters.panelMountingType === "slide") {
+    for (const pointV of [
+      -dimensions.panelWidth / 2 - 1.2,
+      dimensions.panelWidth / 2 + 1.2,
+    ]) {
+      result = unionAndDispose(
+        result,
+        createFaceRail(
+          module,
+          face,
+          parameters.panelOffsetU,
+          parameters.panelOffsetV + pointV,
+          dimensions.panelLength + 2,
+          parameters,
+          dimensions,
+        ),
+      );
+    }
+  } else {
+    const radius = parameters.panelMountingType === "screw" ? 1.3 : 2.15;
+    for (const [pointU, pointV] of getPanelMountingPoints(parameters)) {
+      result = subtractAndDispose(
+        result,
+        createFaceCutter(
+          module,
+          face,
+          parameters.panelOffsetU + pointU,
+          parameters.panelOffsetV + pointV,
+          radius * 2,
+          radius * 2,
+          radius,
+          parameters,
+          dimensions,
+        ),
+      );
+    }
+  }
+  return result;
 }
 
 function tubeAlongX(
@@ -384,7 +690,7 @@ function buildBase(
       5,
       parameters.baseHeight - parameters.bottomThickness - 2,
     );
-    for (const [x, y] of closurePoints(
+    for (const [x, y] of getClosurePoints(
       dimensions.outsideLength,
       dimensions.outsideWidth,
       parameters.wallThickness,
@@ -430,69 +736,39 @@ function buildBase(
   }
 
   if (parameters.closureType === "magnet") {
-    for (const [x, y] of closurePoints(
+    base = addMagnetSupports(
+      module,
+      base,
+      parameters,
       dimensions.outsideLength,
       dimensions.outsideWidth,
-      parameters.wallThickness,
-    )) {
-      const support = cylinderAt(
-        module,
-        4.4,
-        3,
-        x,
-        y,
-        parameters.baseHeight - 3,
-      );
-      base = unionAndDispose(base, support);
-      const pocket = cylinderAt(
-        module,
-        3.15,
-        2,
-        x,
-        y,
-        parameters.baseHeight - 1.8,
-      );
-      base = subtractAndDispose(base, pocket);
-    }
+    );
   }
 
-  if (parameters.typeCPortEnabled) {
-    const connector = getConnectorDefinition(parameters.connectorDefinitionId);
-    const portCenterZ =
-      parameters.bottomThickness +
-      parameters.standoffHeight +
-      parameters.pcbThickness / 2 +
-      connector.placementAnchor.heightAboveBoardCenter;
-    let cutter: ManifoldSolid;
-    if (connector.panelCutout.shape === "circle") {
-      cutter = module.Manifold.cylinder(
-        parameters.wallThickness * 3,
-        parameters.typeCPortWidth / 2,
-        parameters.typeCPortWidth / 2,
-        32,
-        false,
-      );
-      cutter = rotateAndDispose(cutter, 90, 0, 0);
-      cutter = translateAndDispose(
-        cutter,
-        parameters.typeCPortOffset,
-        dimensions.outsideWidth / 2 + parameters.wallThickness,
-        portCenterZ,
-      );
-    } else {
-      cutter = cubeAt(
+  base = applyBasePanelFeatures(module, base, parameters, dimensions);
+
+  for (const placement of parameters.connectorPlacements) {
+    if (placement.surface === "panel") continue;
+    const face = resolveConnectorFace(placement, parameters);
+    if (face === "top") continue;
+    const connector = getConnectorDefinition(placement.definitionId);
+    const [width, height] = getRotatedCutoutSize(placement);
+    base = subtractAndDispose(
+      base,
+      createFaceCutter(
         module,
-        [
-          parameters.typeCPortWidth,
-          parameters.wallThickness * 3,
-          parameters.typeCPortHeight,
-        ],
-        parameters.typeCPortOffset - parameters.typeCPortWidth / 2,
-        dimensions.outsideWidth / 2 - parameters.wallThickness,
-        portCenterZ - parameters.typeCPortHeight / 2,
-      );
-    }
-    base = subtractAndDispose(base, cutter);
+        face,
+        placement.offsetU,
+        placement.offsetV,
+        width,
+        height,
+        connector.panelCutout.shape === "circle"
+          ? width / 2
+          : connector.panelCutout.cornerRadius,
+        parameters,
+        dimensions,
+      ),
+    );
   }
 
   if (parameters.antennaEnabled) {
@@ -566,7 +842,7 @@ function buildLid(
   }
 
   let plate: ManifoldSolid;
-  if (parameters.panelEnabled) {
+  if (parameters.panelEnabled && parameters.panelFace === "top") {
     const outer = new module.CrossSection(
       roundedRectangle(
         dimensions.outsideLength,
@@ -574,13 +850,18 @@ function buildLid(
         parameters.cornerRadius,
       ),
     );
-    const opening = new module.CrossSection(
+    const openingSource = new module.CrossSection(
       roundedRectangle(
         dimensions.panelLength - 4,
         dimensions.panelWidth - 4,
         3.5,
       ),
     );
+    const opening = openingSource.translate(
+      parameters.panelOffsetU,
+      parameters.panelOffsetV,
+    );
+    openingSource.delete();
     const border = outer.subtract(opening);
     outer.delete();
     opening.delete();
@@ -599,7 +880,7 @@ function buildLid(
   }
   lid = unionAndDispose(lid, plate);
 
-  if (parameters.panelEnabled) {
+  if (parameters.panelEnabled && parameters.panelFace === "top") {
     if (parameters.panelMountingType === "slide") {
       for (const y of [
         -dimensions.panelWidth / 2 - 1.2,
@@ -608,8 +889,8 @@ function buildLid(
         const rail = cubeAt(
           module,
           [dimensions.panelLength + 2, 1.2, 1.5],
-          -(dimensions.panelLength + 2) / 2,
-          y,
+          parameters.panelOffsetU - (dimensions.panelLength + 2) / 2,
+          parameters.panelOffsetV + y,
           lipHeight + parameters.lidThickness,
         );
         lid = unionAndDispose(lid, rail);
@@ -619,8 +900,8 @@ function buildLid(
         const support = cubeAt(
           module,
           [8, 8, parameters.lidThickness],
-          x - 4,
-          y - 4,
+          parameters.panelOffsetU + x - 4,
+          parameters.panelOffsetV + y - 4,
           lipHeight,
         );
         lid = unionAndDispose(lid, support);
@@ -635,13 +916,20 @@ function buildLid(
             : lipHeight + parameters.lidThickness - depth;
         lid = subtractAndDispose(
           lid,
-          cylinderAt(module, radius, depth, x, y, z),
+            cylinderAt(
+              module,
+              radius,
+              depth,
+              parameters.panelOffsetU + x,
+              parameters.panelOffsetV + y,
+              z,
+            ),
         );
       }
     }
   }
 
-  const points = closurePoints(
+  const points = getClosurePoints(
     dimensions.outsideLength,
     dimensions.outsideWidth,
     parameters.wallThickness,
@@ -660,7 +948,14 @@ function buildLid(
     }
   } else if (parameters.closureType === "magnet") {
     for (const [x, y] of points) {
-      const pocket = cylinderAt(module, 3.15, 1.9, x, y, 0);
+      const pocket = cylinderAt(
+        module,
+        MAGNET_GEOMETRY.pocketRadius,
+        MAGNET_GEOMETRY.lidPocketDepth,
+        x,
+        y,
+        0,
+      );
       lid = subtractAndDispose(lid, pocket);
     }
   } else if (parameters.closureType === "snap") {
@@ -703,6 +998,28 @@ function buildLid(
       ),
     );
   }
+
+  for (const placement of parameters.connectorPlacements) {
+    if (placement.surface === "panel") continue;
+    if (resolveConnectorFace(placement, parameters) !== "top") continue;
+    const connector = getConnectorDefinition(placement.definitionId);
+    const [width, height] = getRotatedCutoutSize(placement);
+    lid = subtractAndDispose(
+      lid,
+      createTopCutter(
+        module,
+        placement.offsetU,
+        placement.offsetV,
+        width,
+        height,
+        connector.panelCutout.shape === "circle"
+          ? width / 2
+          : connector.panelCutout.cornerRadius,
+        parameters,
+        lipHeight,
+      ),
+    );
+  }
   return lid;
 }
 
@@ -731,6 +1048,38 @@ function buildPanel(
         cylinderAt(module, radius, depth, x, y, z),
       );
     }
+  }
+  for (const placement of parameters.connectorPlacements) {
+    if (placement.surface !== "panel") continue;
+    const connector = getConnectorDefinition(placement.definitionId);
+    const [width, height] = getRotatedCutoutSize(placement);
+    let cutter =
+      connector.panelCutout.shape === "circle"
+        ? cylinderAt(
+            module,
+            width / 2,
+            parameters.panelThickness + 0.4,
+            placement.offsetU,
+            placement.offsetV,
+            -0.2,
+          )
+        : extrudePlate(
+            module,
+            width,
+            height,
+            connector.panelCutout.cornerRadius,
+            parameters.panelThickness + 0.4,
+            -0.2,
+          );
+    if (connector.panelCutout.shape !== "circle") {
+      cutter = translateAndDispose(
+        cutter,
+        placement.offsetU,
+        placement.offsetV,
+        0,
+      );
+    }
+    panel = subtractAndDispose(panel, cutter);
   }
   return panel;
 }

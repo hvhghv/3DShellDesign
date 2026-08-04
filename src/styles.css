@@ -776,7 +776,7 @@ select:focus-visible {
   justify-content: space-between;
 }
 
-.section-heading-row span {
+.section-heading-row > span {
   display: grid;
   min-width: 21px;
   height: 19px;
@@ -785,6 +785,59 @@ select:focus-visible {
   background: var(--surface-muted);
   border-radius: 4px;
   font-size: 9px;
+}
+
+.section-action-button {
+  display: inline-flex;
+  height: 27px;
+  padding: 0 8px;
+  align-items: center;
+  gap: 4px;
+  color: var(--accent-strong);
+  background: var(--accent-soft);
+  border: 1px solid #b7d0bf;
+  border-radius: 5px;
+  font-size: 10px;
+  cursor: pointer;
+}
+
+.connector-placement {
+  padding: 9px 0 5px;
+  border-top: 1px solid var(--border);
+}
+
+.connector-placement:first-of-type {
+  margin-top: 5px;
+}
+
+.connector-placement-heading {
+  display: flex;
+  min-height: 25px;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.connector-placement-heading strong {
+  color: #434c47;
+  font-size: 10px;
+}
+
+.connector-placement-heading button {
+  display: grid;
+  width: 25px;
+  height: 25px;
+  padding: 0;
+  place-items: center;
+  color: var(--muted);
+  background: transparent;
+  border: 0;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.connector-placement-heading button:hover {
+  color: var(--error);
+  background: #f8e9e7;
 }
 
 .issue-list {

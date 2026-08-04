@@ -22,4 +22,28 @@ describe("panel SVG exporter", () => {
       createPanelSvg({ ...DEFAULT_PARAMETERS, panelEnabled: false }),
     ).toThrow("未启用独立面板");
   });
+
+  it("includes connector cutouts mounted to the panel", () => {
+    const connector = DEFAULT_PARAMETERS.connectorPlacements[0];
+    const svg = createPanelSvg({
+      ...DEFAULT_PARAMETERS,
+      connectorPlacements: [
+        { ...connector, surface: "panel", rotation: 90 },
+        {
+          ...connector,
+          id: "connector-2",
+          definitionId: "dc-5521-jack",
+          surface: "panel",
+          offsetU: 18,
+          offsetV: 0,
+          cutoutWidth: 9,
+          cutoutHeight: 9,
+        },
+      ],
+    });
+
+    expect(svg.match(/<rect /g)).toHaveLength(1);
+    expect(svg.match(/<circle /g)).toHaveLength(5);
+    expect(svg).toContain('width="7" height="12"');
+  });
 });

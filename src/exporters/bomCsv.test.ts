@@ -22,4 +22,15 @@ describe("BOM CSV exporter", () => {
     expect(csv).toContain("SMA 穿板棒状天线,1,SMA female bulkhead + whip antenna");
     expect(csv).toContain("2.4 GHz / 5.8 GHz");
   });
+
+  it("records the selected magnet support structure", () => {
+    const csv = createBomCsv("磁吸外壳", {
+      ...DEFAULT_PARAMETERS,
+      closureType: "magnet",
+      magnetSupportType: "perimeter-flange",
+    });
+
+    expect(csv).toContain("圆形磁铁,8,直径 6 x 1.8 mm");
+    expect(csv).toContain("四周内翻边；装配前确认磁极");
+  });
 });

@@ -52,11 +52,29 @@ async function readScreenshotPixels(page: Page, canvas: Locator) {
 function readStlDimensions(stl: Uint8Array): {
   triangleCount: number;
   dimensions: [number, number, number];
+  connectedComponents: number;
 } {
   const view = new DataView(stl.buffer, stl.byteOffset, stl.byteLength);
   const triangleCount = view.getUint32(80, true);
   const minimum = [Infinity, Infinity, Infinity];
   const maximum = [-Infinity, -Infinity, -Infinity];
+  const parents = Array.from({ length: triangleCount }, (_, index) => index);
+  const owners = new Map<string, number>();
+  const find = (index: number): number => {
+    let root = index;
+    while (parents[root] !== root) root = parents[root];
+    while (parents[index] !== index) {
+      const parent = parents[index];
+      parents[index] = root;
+      index = parent;
+    }
+    return root;
+  };
+  const union = (first: number, second: number): void => {
+    const firstRoot = find(first);
+    const secondRoot = find(second);
+    if (firstRoot !== secondRoot) parents[secondRoot] = firstRoot;
+  };
 
   for (let triangle = 0; triangle < triangleCount; triangle += 1) {
     const triangleOffset = 84 + triangle * 50;
@@ -67,6 +85,12 @@ function readStlDimensions(stl: Uint8Array): {
         minimum[axis] = Math.min(minimum[axis], value);
         maximum[axis] = Math.max(maximum[axis], value);
       }
+      const key = [0, 1, 2]
+        .map((axis) => view.getFloat32(vertexOffset + axis * 4, true).toFixed(5))
+        .join(",");
+      const owner = owners.get(key);
+      if (owner === undefined) owners.set(key, triangle);
+      else union(triangle, owner);
     }
   }
 
@@ -77,6 +101,9 @@ function readStlDimensions(stl: Uint8Array): {
       maximum[1] - minimum[1],
       maximum[2] - minimum[2],
     ],
+    connectedComponents: new Set(
+      Array.from({ length: triangleCount }, (_, index) => find(index)),
+    ).size,
   };
 }
 
@@ -102,7 +129,10 @@ test("desktop workbench renders a nonblank interactive enclosure", async ({ page
   expect(pixels.colorCount).toBeGreaterThan(20);
   expect(pixels.luminanceRange).toBeGreaterThan(35);
 
-  await page.locator(".tree-nav").getByRole("button", { name: /顶盖/ }).click();
+  await page
+    .locator(".tree-nav")
+    .getByRole("button", { name: /^顶盖 / })
+    .click();
   await page.getByRole("button", { name: "聚焦选中零件" }).click();
   await expect(page.locator(".viewport-canvas")).toHaveAttribute(
     "data-focused-part",
@@ -124,8 +154,19 @@ test("desktop workbench renders a nonblank interactive enclosure", async ({ page
   await page.getByRole("tab", { name: "结构" }).click();
   await page.getByRole("button", { name: "磁吸", exact: true }).click();
   await expect(page.getByText("磁吸固定", { exact: true })).toBeVisible();
+  const magnetSupportSelect = page.getByRole("combobox", { name: "磁铁承托方式" });
+  await expect(magnetSupportSelect).toHaveValue("corner-shelf");
+  await magnetSupportSelect.selectOption("perimeter-flange");
+  await expect(
+    page.locator(".tree-nav").getByText("四周内翻边", { exact: true }),
+  ).toBeVisible();
+  await magnetSupportSelect.selectOption("corner-shelf");
   await page.getByRole("button", { name: "装配或爆炸视图" }).click();
   await page.waitForTimeout(300);
+  await page.screenshot({
+    path: testInfo.outputPath("magnet-corner-shelf.png"),
+    fullPage: true,
+  });
 
   const exportSelect = page.getByRole("combobox", { name: "制造导出格式" });
   await exportSelect.selectOption("layout-3mf");
@@ -168,7 +209,48 @@ test("desktop workbench renders a nonblank interactive enclosure", async ({ page
     parsed.dimensions.forEach((dimension, axis) => {
       expect(dimension).toBeCloseTo(exportCase.size[axis], 1);
     });
+    if (exportCase.option === "base-stl") {
+      expect(parsed.connectedComponents).toBe(1);
+    }
   }
+
+  for (const supportType of ["wall-bracket", "perimeter-flange"] as const) {
+    await magnetSupportSelect.selectOption(supportType);
+    await exportSelect.selectOption("base-stl");
+    const supportDownloadPromise = page.waitForEvent("download", {
+      timeout: 60_000,
+    });
+    await page.locator(".manufacturing-export button").click();
+    const supportPath = await (await supportDownloadPromise).path();
+    expect(supportPath).not.toBeNull();
+    expect(
+      readStlDimensions(await readFile(supportPath!)).connectedComponents,
+    ).toBe(1);
+  }
+
+  await page.getByRole("tab", { name: "尺寸" }).click();
+  const boardClearanceInput = page
+    .locator(".field-row")
+    .filter({ hasText: "板边间隙" })
+    .locator("input");
+  await boardClearanceInput.fill("10");
+  await page.getByRole("tab", { name: "结构" }).click();
+  await magnetSupportSelect.selectOption("floor-column");
+  await exportSelect.selectOption("base-stl");
+  const columnDownloadPromise = page.waitForEvent("download", {
+    timeout: 60_000,
+  });
+  await page.locator(".manufacturing-export button").click();
+  const columnPath = await (await columnDownloadPromise).path();
+  expect(columnPath).not.toBeNull();
+  expect(
+    readStlDimensions(await readFile(columnPath!)).connectedComponents,
+  ).toBe(1);
+  await magnetSupportSelect.selectOption("corner-shelf");
+  await page.getByRole("tab", { name: "尺寸" }).click();
+  await boardClearanceInput.fill("2");
+  await page.getByRole("tab", { name: "结构" }).click();
+
   await expect(page.getByText(/三角面/)).toBeVisible();
 
   await page.getByRole("checkbox", { name: /启用天线/ }).check();
@@ -199,18 +281,19 @@ test("desktop workbench renders a nonblank interactive enclosure", async ({ page
   expect(bomPath).not.toBeNull();
   const bom = (await readFile(bomPath!)).toString("utf8");
   expect(bom).toContain("USB Type-C 母座");
-  expect(bom).toContain("圆形磁铁,8,直径 6 mm");
+  expect(bom).toContain("圆形磁铁,8,直径 6 x 1.8 mm");
+  expect(bom).toContain("双壁角托；装配前确认磁极");
   expect(bom).toContain("SMA 穿板棒状天线");
 
   await page.getByRole("button", { name: "螺丝", exact: true }).click();
   await page.getByRole("combobox", { name: "紧固件规格" }).selectOption(
     "m3-heat-set",
   );
-  await page.getByRole("combobox", { name: "接口器件" }).selectOption(
+  await page.getByRole("combobox", { name: "接口 1 器件" }).selectOption(
     "dc-5521-jack",
   );
   await expect(
-    page.getByRole("button", { name: "DC 5.5/2.1 母座 前侧接口" }),
+    page.getByRole("button", { name: "DC 5.5/2.1 母座 前壁" }),
   ).toBeVisible();
   await exportSelect.selectOption("base-stl");
   const libraryDownloadPromise = page.waitForEvent("download", { timeout: 60_000 });
@@ -222,6 +305,126 @@ test("desktop workbench renders a nonblank interactive enclosure", async ({ page
   expect(libraryStl.triangleCount).toBeGreaterThan(100);
   expect(libraryStl.dimensions[0]).toBeCloseTo(108, 1);
   expect(libraryStl.dimensions[1]).toBeCloseTo(78, 1);
+
+  await page.getByRole("button", { name: "添加", exact: true }).click();
+  const secondConnector = page.locator(".connector-placement").nth(1);
+  await page
+    .getByRole("combobox", { name: "接口 2 安装位置" })
+    .selectOption("right");
+  await page
+    .getByRole("combobox", { name: "接口 2 面内旋转" })
+    .selectOption("90");
+  await secondConnector
+    .locator(".field-row")
+    .filter({ hasText: "纵向偏移" })
+    .locator("input")
+    .fill("0");
+  await expect(
+    page.getByRole("button", { name: "USB Type-C 母座 右壁" }),
+  ).toBeVisible();
+  await exportSelect.selectOption("base-stl");
+  const multiConnectorDownloadPromise = page.waitForEvent("download", {
+    timeout: 60_000,
+  });
+  await page.locator(".manufacturing-export button").click();
+  const multiConnectorPath = await (await multiConnectorDownloadPromise).path();
+  expect(multiConnectorPath).not.toBeNull();
+  const multiConnectorStl = readStlDimensions(
+    await readFile(multiConnectorPath!),
+  );
+  expect(multiConnectorStl.connectedComponents).toBe(1);
+  expect(multiConnectorStl.triangleCount).toBeGreaterThan(libraryStl.triangleCount);
+
+  await page.getByRole("combobox", { name: "面板所在面" }).selectOption("back");
+  await expect(page.locator(".tree-nav").getByText(/后壁 · 2 mm/)).toBeVisible();
+  await exportSelect.selectOption("base-stl");
+  const sidePanelBasePromise = page.waitForEvent("download", { timeout: 60_000 });
+  await page.locator(".manufacturing-export button").click();
+  const sidePanelBasePath = await (await sidePanelBasePromise).path();
+  expect(sidePanelBasePath).not.toBeNull();
+  expect(
+    readStlDimensions(await readFile(sidePanelBasePath!)).connectedComponents,
+  ).toBe(1);
+
+  await page
+    .getByRole("combobox", { name: "接口 2 安装位置" })
+    .selectOption("panel");
+  await page
+    .getByRole("combobox", { name: "接口 2 面内旋转" })
+    .selectOption("0");
+  await secondConnector
+    .locator(".field-row")
+    .filter({ hasText: "纵向偏移" })
+    .locator("input")
+    .fill("0");
+  await exportSelect.selectOption("panel-stl");
+  const panelConnectorPromise = page.waitForEvent("download", { timeout: 60_000 });
+  await page.locator(".manufacturing-export button").click();
+  const panelConnectorPath = await (await panelConnectorPromise).path();
+  expect(panelConnectorPath).not.toBeNull();
+  expect(
+    readStlDimensions(await readFile(panelConnectorPath!)).connectedComponents,
+  ).toBe(1);
+  await exportSelect.selectOption("panel-dxf");
+  const panelConnectorDxfPromise = page.waitForEvent("download");
+  await page.locator(".manufacturing-export button").click();
+  const panelConnectorDxfPath = await (await panelConnectorDxfPromise).path();
+  expect(panelConnectorDxfPath).not.toBeNull();
+  const panelConnectorDxf = (await readFile(panelConnectorDxfPath!)).toString(
+    "utf8",
+  );
+  expect(panelConnectorDxf.match(/\r\nLWPOLYLINE\r\n/g)).toHaveLength(2);
+
+  await page
+    .getByRole("combobox", { name: "接口 2 安装位置" })
+    .selectOption("top");
+  await exportSelect.selectOption("lid-stl");
+  const topConnectorPromise = page.waitForEvent("download", { timeout: 60_000 });
+  await page.locator(".manufacturing-export button").click();
+  const topConnectorPath = await (await topConnectorPromise).path();
+  expect(topConnectorPath).not.toBeNull();
+  expect(
+    readStlDimensions(await readFile(topConnectorPath!)).connectedComponents,
+  ).toBe(1);
+
+  await page.getByRole("combobox", { name: "面板所在面" }).selectOption("right");
+  for (const connectorFace of ["back", "left", "bottom"] as const) {
+    await page
+      .getByRole("combobox", { name: "接口 2 安装位置" })
+      .selectOption(connectorFace);
+    await exportSelect.selectOption("base-stl");
+    const faceConnectorPromise = page.waitForEvent("download", {
+      timeout: 60_000,
+    });
+    await page.locator(".manufacturing-export button").click();
+    const faceConnectorPath = await (await faceConnectorPromise).path();
+    expect(faceConnectorPath).not.toBeNull();
+    expect(
+      readStlDimensions(await readFile(faceConnectorPath!)).connectedComponents,
+    ).toBe(1);
+  }
+
+  await page.getByRole("button", { name: "删除接口 2" }).click();
+  await page
+    .getByRole("combobox", { name: "接口 1 安装位置" })
+    .selectOption("top");
+  for (const panelFace of ["front", "back", "left", "right", "bottom"] as const) {
+    await page.getByRole("combobox", { name: "面板所在面" }).selectOption(panelFace);
+    await exportSelect.selectOption("base-stl");
+    const facePanelPromise = page.waitForEvent("download", { timeout: 60_000 });
+    await page.locator(".manufacturing-export button").click();
+    const facePanelPath = await (await facePanelPromise).path();
+    expect(facePanelPath).not.toBeNull();
+    expect(
+      readStlDimensions(await readFile(facePanelPath!)).connectedComponents,
+    ).toBe(1);
+  }
+  await page.getByRole("combobox", { name: "面板所在面" }).selectOption("front");
+  await page.screenshot({
+    path: testInfo.outputPath("surface-placement.png"),
+    fullPage: true,
+  });
+  await page.getByRole("combobox", { name: "面板所在面" }).selectOption("back");
 
   await page.getByRole("combobox", { name: "镂空阵列类型" }).selectOption(
     "honeycomb",
@@ -351,6 +554,11 @@ test("project parameters survive an immediate page reload", async ({ page }) => 
   await expect(lengthInput).toHaveValue("123");
   await page.getByRole("tab", { name: "结构" }).click();
   await page.getByRole("checkbox", { name: /启用天线/ }).check();
+  await page.getByRole("button", { name: "添加", exact: true }).click();
+  await page
+    .getByRole("combobox", { name: "接口 2 安装位置" })
+    .selectOption("right");
+  await page.getByRole("combobox", { name: "面板所在面" }).selectOption("left");
 
   await page.reload();
 
@@ -360,6 +568,13 @@ test("project parameters survive an immediate page reload", async ({ page }) => 
   await expect(
     page.locator(".tree-nav").getByRole("button", { name: /SMA 穿板棒状天线/ }),
   ).toBeVisible();
+  await page.getByRole("tab", { name: "结构" }).click();
+  await expect(
+    page.getByRole("combobox", { name: "接口 2 安装位置" }),
+  ).toHaveValue("right");
+  await expect(page.getByRole("combobox", { name: "面板所在面" })).toHaveValue(
+    "left",
+  );
 });
 
 test("narrow workbench stays framed and keeps the 3D canvas visible", async ({ page }, testInfo) => {

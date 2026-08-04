@@ -1,6 +1,25 @@
 export type ClosureType = "screw" | "magnet" | "snap" | "slide" | "hinge";
+export type MagnetSupportType =
+  | "corner-shelf"
+  | "wall-bracket"
+  | "perimeter-flange"
+  | "floor-column";
 export type VentPattern = "none" | "circle" | "slot" | "honeycomb";
 export type PanelMountingType = "screw" | "magnet" | "slide";
+export type EnclosureFace = "top" | "bottom" | "front" | "back" | "left" | "right";
+export type ConnectorSurface = EnclosureFace | "panel";
+export type PlacementRotation = 0 | 90 | 180 | 270;
+
+export interface ConnectorPlacement {
+  id: string;
+  definitionId: string;
+  surface: ConnectorSurface;
+  offsetU: number;
+  offsetV: number;
+  rotation: PlacementRotation;
+  cutoutWidth: number;
+  cutoutHeight: number;
+}
 
 export type InspectorTab = "dimensions" | "structure" | "materials";
 
@@ -27,16 +46,16 @@ export interface DesignerParameters {
   standoffHeight: number;
   lidThickness: number;
   closureType: ClosureType;
+  magnetSupportType: MagnetSupportType;
   shellMaterialId: string;
   panelEnabled: boolean;
   panelMaterialId: string;
   panelThickness: number;
   panelMountingType: PanelMountingType;
-  typeCPortEnabled: boolean;
-  connectorDefinitionId: string;
-  typeCPortWidth: number;
-  typeCPortHeight: number;
-  typeCPortOffset: number;
+  panelFace: EnclosureFace;
+  panelOffsetU: number;
+  panelOffsetV: number;
+  connectorPlacements: ConnectorPlacement[];
   antennaEnabled: boolean;
   antennaDefinitionId: string;
   antennaOffset: number;

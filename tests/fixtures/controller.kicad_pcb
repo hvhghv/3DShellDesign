@@ -1,0 +1,35 @@
+(kicad_pcb
+  (version 20240108)
+  (generator pcbnew)
+  (general
+    (thickness 1.2)
+  )
+  (gr_rect
+    (start 10 10)
+    (end 90 60)
+    (stroke (width 0.05) (type default))
+    (fill none)
+    (layer "Edge.Cuts")
+  )
+  (footprint "MountingHole_3.2mm"
+    (layer "F.Cu")
+    (at 15 15)
+    (pad "" np_thru_hole circle
+      (at 0 0)
+      (size 3.2 3.2)
+      (drill 3.2)
+      (layers "*.Cu" "*.Mask")
+    )
+  )
+  (footprint "MountingHole_3.2mm"
+    (layer "F.Cu")
+    (at 85 55)
+    (pad "" np_thru_hole circle
+      (at 0 0)
+      (size 3.2 3.2)
+      (drill 3.2)
+      (layers "*.Cu" "*.Mask")
+    )
+  )
+)
+

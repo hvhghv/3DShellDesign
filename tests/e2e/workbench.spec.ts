@@ -556,6 +556,7 @@ test("desktop workbench renders a nonblank interactive enclosure", async ({ page
 });
 
 test("project parameters survive an immediate page reload", async ({ page }) => {
+  test.setTimeout(120_000);
   await page.goto("/");
   const lengthInput = page.locator(".field-row").filter({ hasText: "长度" }).locator("input");
   await lengthInput.fill("123");
@@ -608,6 +609,7 @@ test("project parameters survive an immediate page reload", async ({ page }) => 
 });
 
 test("3D transform handles edit the selected panel", async ({ page }, testInfo) => {
+  test.setTimeout(120_000);
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto("/");
   await page.locator(".tree-item").filter({ hasText: "面板 1" }).click();

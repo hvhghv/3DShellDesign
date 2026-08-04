@@ -1,4 +1,4 @@
-import { useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import { CircleAlert, CircleCheck, Ruler, Save } from "lucide-react";
 import { AssemblyTree } from "./components/AssemblyTree";
 import { Inspector } from "./components/Inspector";
@@ -36,11 +36,12 @@ export default function App() {
   const parameters = useDesignerStore((state) => state.parameters);
   const pcbReference = useDesignerStore((state) => state.pcbReference);
   const selectedPart = useDesignerStore((state) => state.selectedPart);
-  const savedAt = useDesignerStore((state) => state.savedAt);
+  const cachedAt = useDesignerStore((state) => state.cachedAt);
+  const cacheStatus = useDesignerStore((state) => state.cacheStatus);
   const loadProject = useDesignerStore((state) => state.loadProject);
   const setPcbReference = useDesignerStore((state) => state.setPcbReference);
   const setStepReference = useDesignerStore((state) => state.setStepReference);
-  const markSaved = useDesignerStore((state) => state.markSaved);
+  const restoreCachedProject = useDesignerStore((state) => state.restoreCachedProject);
   const dimensions = useMemo(() => deriveEnclosureDimensions(parameters), [parameters]);
   const issues = useMemo(
     () => validateDesign(parameters, pcbReference),
@@ -48,10 +49,13 @@ export default function App() {
   );
   const errorCount = issues.filter((issue) => issue.level === "error").length;
 
+  useEffect(() => {
+    void restoreCachedProject();
+  }, [restoreCachedProject]);
+
   const exportProject = () => {
     const snapshot = createProjectSnapshot(projectName, parameters, pcbReference);
     downloadJson("3dshelldesigner-project.json", snapshot);
-    markSaved(snapshot.updatedAt);
   };
 
   const importProject = async (file: File | undefined) => {
@@ -189,7 +193,18 @@ export default function App() {
       </div>
 
       <footer className="status-bar">
-        <span className="status-item"><Save size={13} />{savedAt ? "已导出" : "本地自动保存"}</span>
+        <span className="status-item" title="项目参数和 STEP 预览保存在当前浏览器中">
+          <Save size={13} />
+          {cacheStatus === "restoring"
+            ? "正在恢复项目"
+            : cacheStatus === "saving"
+              ? "正在缓存"
+              : cacheStatus === "error"
+                ? "参数已缓存，STEP 缓存受限"
+                : cachedAt
+                  ? `已缓存 ${new Date(cachedAt).toLocaleTimeString("zh-CN", { hour12: false })}`
+                  : "缓存已就绪"}
+        </span>
         <span className="status-divider" />
         <span className="status-item">选择：{selectedPart}</span>
         <span className="status-divider" />

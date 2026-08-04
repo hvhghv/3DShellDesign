@@ -9,7 +9,11 @@ import type {
 } from "../domain/model";
 import { getCenteredMountingHoles } from "../domain/pcbReference";
 import { getVentPatternPoints } from "../domain/patterns";
-import { getConnectorDefinition, getFastenerDefinition } from "../libraries/components";
+import {
+  getAntennaDefinition,
+  getConnectorDefinition,
+  getFastenerDefinition,
+} from "../libraries/components";
 
 const EDGE_COLOR = 0x333936;
 
@@ -295,6 +299,7 @@ export function buildPreviewModel(
   exploded: boolean,
   pcbReference: PcbReference | null,
   stepPreview: StepPreview | null = null,
+  focusedPart: SelectablePart | null = null,
 ): THREE.Group {
   const root = new THREE.Group();
   root.name = "enclosure-preview";
@@ -652,6 +657,112 @@ export function buildPreviewModel(
     }
   }
 
+  if (parameters.antennaEnabled) {
+    const antenna = getAntennaDefinition(parameters.antennaDefinitionId);
+    const antennaY = boardY + antenna.heightAboveBoardCenter;
+    const antennaMaterial = standardMaterial(
+      antenna.visualGeometry.color,
+      selectedPart === "antenna",
+      {
+        metalness: antenna.placement === "rear-bulkhead" ? 0.66 : 0.12,
+        roughness: 0.32,
+        ...(selectedPart === "antenna" && antenna.placement !== "rear-bulkhead"
+          ? { depthTest: false, transparent: true, opacity: 0.92 }
+          : {}),
+      },
+    );
+    let antennaCenterZ: number;
+
+    if (antenna.placement === "rear-bulkhead") {
+      const bodyGeometry = new THREE.CylinderGeometry(
+        antenna.visualGeometry.width / 2,
+        antenna.visualGeometry.width / 2,
+        antenna.visualGeometry.depth,
+        28,
+      ).rotateX(Math.PI / 2);
+      antennaCenterZ =
+        -dimensions.outsideWidth / 2 - antenna.visualGeometry.depth / 2 + 1.2;
+      addMesh(
+        root,
+        bodyGeometry,
+        antennaMaterial,
+        "antenna",
+        [parameters.antennaOffset, antennaY, antennaCenterZ],
+      );
+
+      const radiatorLength = antenna.visualGeometry.radiatorLength ?? 0;
+      if (radiatorLength > 0) {
+        const radiatorGeometry = new THREE.CylinderGeometry(
+          (antenna.visualGeometry.radiatorDiameter ?? 3) / 2,
+          (antenna.visualGeometry.radiatorDiameter ?? 3) / 2,
+          radiatorLength,
+          20,
+        ).rotateX(Math.PI / 2);
+        addMesh(
+          root,
+          radiatorGeometry,
+          standardMaterial(0x303533, selectedPart === "antenna", { roughness: 0.78 }),
+          "antenna",
+          [
+            parameters.antennaOffset,
+            antennaY,
+            -dimensions.outsideWidth / 2 - antenna.visualGeometry.depth + 1.2 - radiatorLength / 2,
+          ],
+        );
+      }
+
+      const opening = addMesh(
+        root,
+        new THREE.CircleGeometry((antenna.enclosureCutout?.diameter ?? 0) / 2, 32).rotateY(
+          Math.PI,
+        ),
+        standardMaterial(0x202725, selectedPart === "antenna", { roughness: 0.8 }),
+        "antenna",
+        [parameters.antennaOffset, antennaY, -dimensions.outsideWidth / 2 - 0.04],
+        false,
+      );
+      opening.renderOrder = 4;
+    } else {
+      antennaCenterZ =
+        antenna.placement === "inner-rear-wall"
+          ? -dimensions.insideWidth / 2 + antenna.visualGeometry.depth / 2
+          : -parameters.pcbWidth / 2 + antenna.visualGeometry.depth / 2;
+      addMesh(
+        root,
+        new THREE.BoxGeometry(
+          antenna.visualGeometry.width,
+          antenna.visualGeometry.height,
+          antenna.visualGeometry.depth,
+        ),
+        antennaMaterial,
+        "antenna",
+        [parameters.antennaOffset, antennaY, antennaCenterZ],
+      );
+    }
+
+    if (selectedPart === "antenna") {
+      const keepout = antenna.keepoutVolume;
+      const keepoutCenterZ =
+        antenna.placement === "rear-bulkhead"
+          ? -dimensions.outsideWidth / 2 - keepout.depth / 2
+          : antennaCenterZ + keepout.depth / 2;
+      const keepoutMesh = addMesh(
+        root,
+        new THREE.BoxGeometry(keepout.width, keepout.height, keepout.depth),
+        standardMaterial(0xe0b83e, true, {
+          transparent: true,
+          opacity: 0.17,
+          depthWrite: false,
+          depthTest: false,
+        }),
+        "antenna",
+        [parameters.antennaOffset, antennaY, keepoutCenterZ],
+        false,
+      );
+      keepoutMesh.renderOrder = 6;
+    }
+  }
+
   addClosureFeatures(
     root,
     parameters,
@@ -660,6 +771,15 @@ export function buildPreviewModel(
     dimensions.outsideLength,
     dimensions.outsideWidth,
   );
+
+  if (focusedPart) {
+    for (const child of [...root.children]) {
+      if (child.userData.partId !== focusedPart) {
+        root.remove(child);
+        disposePreviewModel(child);
+      }
+    }
+  }
 
   return root;
 }

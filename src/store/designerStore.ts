@@ -8,10 +8,12 @@ import type {
   SelectablePart,
   StepPreview,
 } from "../domain/model";
-import { getConnectorDefinition } from "../libraries/components";
+import { getAntennaDefinition, getConnectorDefinition } from "../libraries/components";
 import { getEnclosureTemplate } from "../libraries/templates";
+import { queueProjectCache, readProjectCache } from "./projectCache";
 
 const STORAGE_KEY = "3dshell-designer.project.v1";
+type CacheStatus = "restoring" | "saving" | "saved" | "error";
 
 interface DesignerState {
   projectName: string;
@@ -19,18 +21,23 @@ interface DesignerState {
   pcbReference: PcbReference | null;
   stepPreview: StepPreview | null;
   selectedPart: SelectablePart;
+  focusedPart: SelectablePart | null;
   inspectorTab: InspectorTab;
   showGrid: boolean;
   exploded: boolean;
   cameraResetToken: number;
-  savedAt: string | null;
+  cachedAt: string | null;
+  cacheStatus: CacheStatus;
   setParameter: <Key extends keyof DesignerParameters>(
     key: Key,
     value: DesignerParameters[Key],
   ) => void;
   setConnectorDefinition: (id: string) => void;
+  setAntennaDefinition: (id: string) => void;
   setEnclosureTemplate: (id: string) => void;
   setSelectedPart: (part: SelectablePart) => void;
+  focusSelectedPart: () => void;
+  showAllParts: () => void;
   setInspectorTab: (tab: InspectorTab) => void;
   toggleGrid: () => void;
   toggleExploded: () => void;
@@ -40,17 +47,25 @@ interface DesignerState {
   setStepReference: (reference: PcbReference, preview: StepPreview) => void;
   clearPcbReference: () => void;
   loadProject: (snapshot: ProjectSnapshot) => void;
-  markSaved: (savedAt: string) => void;
+  restoreCachedProject: () => Promise<void>;
+}
+
+function isPartAvailable(part: SelectablePart, parameters: DesignerParameters): boolean {
+  if (part === "panel") return parameters.panelEnabled;
+  if (part === "connector") return parameters.typeCPortEnabled;
+  if (part === "antenna") return parameters.antennaEnabled;
+  return true;
 }
 
 function loadPersistedProject(): Pick<
   DesignerState,
-  "projectName" | "parameters" | "pcbReference"
+  "projectName" | "parameters" | "pcbReference" | "cachedAt"
 > {
   const fallback = {
     projectName: "PCB 控制器外壳",
     parameters: DEFAULT_PARAMETERS,
     pcbReference: null,
+    cachedAt: null,
   };
   if (typeof window === "undefined") return fallback;
 
@@ -66,6 +81,7 @@ function loadPersistedProject(): Pick<
         typeof snapshot.name === "string" ? snapshot.name : fallback.projectName,
       parameters: { ...DEFAULT_PARAMETERS, ...snapshot.parameters },
       pcbReference: snapshot.pcbReference ?? null,
+      cachedAt: typeof snapshot.updatedAt === "string" ? snapshot.updatedAt : null,
     };
   } catch {
     return fallback;
@@ -76,8 +92,8 @@ function persistSnapshot(
   projectName: string,
   parameters: DesignerParameters,
   pcbReference: PcbReference | null,
-): void {
-  if (typeof window === "undefined") return;
+  stepPreview: StepPreview | null,
+): ProjectSnapshot {
   const snapshot: ProjectSnapshot = {
     schemaVersion: 1,
     name: projectName,
@@ -85,7 +101,25 @@ function persistSnapshot(
     parameters,
     pcbReference,
   };
-  window.localStorage.setItem(STORAGE_KEY, JSON.stringify(snapshot));
+  if (typeof window !== "undefined") {
+    try {
+      window.localStorage.setItem(STORAGE_KEY, JSON.stringify(snapshot));
+    } catch {
+      // IndexedDB remains available as the larger, asynchronous fallback.
+    }
+    void queueProjectCache(snapshot, stepPreview)
+      .then(() => {
+        if (useDesignerStore.getState().cachedAt === snapshot.updatedAt) {
+          useDesignerStore.setState({ cacheStatus: "saved" });
+        }
+      })
+      .catch(() => {
+        if (useDesignerStore.getState().cachedAt === snapshot.updatedAt) {
+          useDesignerStore.setState({ cacheStatus: "error" });
+        }
+      });
+  }
+  return snapshot;
 }
 
 const persistedProject = loadPersistedProject();
@@ -96,19 +130,37 @@ export const useDesignerStore = create<DesignerState>((set) => ({
   pcbReference: persistedProject.pcbReference,
   stepPreview: null,
   selectedPart: "project",
+  focusedPart: null,
   inspectorTab: "dimensions",
   showGrid: true,
   exploded: false,
   cameraResetToken: 0,
-  savedAt: null,
+  cachedAt: persistedProject.cachedAt,
+  cacheStatus: "restoring",
   setParameter: (key, value) =>
     set((state) => {
       const nextParameters = {
         ...state.parameters,
         [key]: clampParameter(key, value) as DesignerParameters[typeof key],
       };
-      persistSnapshot(state.projectName, nextParameters, state.pcbReference);
-      return { parameters: nextParameters, savedAt: null };
+      const snapshot = persistSnapshot(
+        state.projectName,
+        nextParameters,
+        state.pcbReference,
+        state.stepPreview,
+      );
+      return {
+        parameters: nextParameters,
+        selectedPart: isPartAvailable(state.selectedPart, nextParameters)
+          ? state.selectedPart
+          : "project",
+        focusedPart:
+          state.focusedPart && isPartAvailable(state.focusedPart, nextParameters)
+            ? state.focusedPart
+            : null,
+        cachedAt: snapshot.updatedAt,
+        cacheStatus: "saving",
+      };
     }),
   setConnectorDefinition: (connectorDefinitionId) =>
     set((state) => {
@@ -119,8 +171,40 @@ export const useDesignerStore = create<DesignerState>((set) => ({
         typeCPortWidth: definition.panelCutout.width,
         typeCPortHeight: definition.panelCutout.height,
       };
-      persistSnapshot(state.projectName, parameters, state.pcbReference);
-      return { parameters, selectedPart: "connector", savedAt: null };
+      const snapshot = persistSnapshot(
+        state.projectName,
+        parameters,
+        state.pcbReference,
+        state.stepPreview,
+      );
+      return {
+        parameters,
+        selectedPart: "connector",
+        focusedPart: state.focusedPart ? "connector" : null,
+        cachedAt: snapshot.updatedAt,
+        cacheStatus: "saving",
+      };
+    }),
+  setAntennaDefinition: (antennaDefinitionId) =>
+    set((state) => {
+      const antenna = getAntennaDefinition(antennaDefinitionId);
+      const parameters = {
+        ...state.parameters,
+        antennaDefinitionId: antenna.id,
+      };
+      const snapshot = persistSnapshot(
+        state.projectName,
+        parameters,
+        state.pcbReference,
+        state.stepPreview,
+      );
+      return {
+        parameters,
+        selectedPart: "antenna",
+        focusedPart: state.focusedPart ? "antenna" : null,
+        cachedAt: snapshot.updatedAt,
+        cacheStatus: "saving",
+      };
     }),
   setEnclosureTemplate: (enclosureTemplateId) =>
     set((state) => {
@@ -137,26 +221,49 @@ export const useDesignerStore = create<DesignerState>((set) => ({
             }
           : {}),
       };
-      persistSnapshot(state.projectName, parameters, state.pcbReference);
-      return { parameters, selectedPart: "project", savedAt: null };
+      const snapshot = persistSnapshot(
+        state.projectName,
+        parameters,
+        state.pcbReference,
+        state.stepPreview,
+      );
+      return {
+        parameters,
+        selectedPart: "project",
+        focusedPart: null,
+        cachedAt: snapshot.updatedAt,
+        cacheStatus: "saving",
+      };
     }),
-  setSelectedPart: (selectedPart) => set({ selectedPart }),
+  setSelectedPart: (selectedPart) =>
+    set((state) => ({
+      selectedPart,
+      focusedPart:
+        selectedPart === "project" ? null : state.focusedPart ? selectedPart : null,
+    })),
+  focusSelectedPart: () =>
+    set((state) => ({
+      focusedPart: state.selectedPart === "project" ? null : state.selectedPart,
+    })),
+  showAllParts: () => set({ focusedPart: null }),
   setInspectorTab: (inspectorTab) => set({ inspectorTab }),
   toggleGrid: () => set((state) => ({ showGrid: !state.showGrid })),
   toggleExploded: () => set((state) => ({ exploded: !state.exploded })),
   resetCamera: () =>
     set((state) => ({ cameraResetToken: state.cameraResetToken + 1 })),
   resetProject: () => {
-    persistSnapshot("PCB 控制器外壳", DEFAULT_PARAMETERS, null);
+    const snapshot = persistSnapshot("PCB 控制器外壳", DEFAULT_PARAMETERS, null, null);
     set({
       projectName: "PCB 控制器外壳",
       parameters: DEFAULT_PARAMETERS,
       pcbReference: null,
       stepPreview: null,
       selectedPart: "project",
+      focusedPart: null,
       inspectorTab: "dimensions",
       exploded: false,
-      savedAt: null,
+      cachedAt: snapshot.updatedAt,
+      cacheStatus: "saving",
     });
   },
   setPcbReference: (pcbReference) =>
@@ -171,13 +278,15 @@ export const useDesignerStore = create<DesignerState>((set) => ({
         ),
         pcbThickness: pcbReference.thickness,
       };
-      persistSnapshot(state.projectName, parameters, pcbReference);
+      const snapshot = persistSnapshot(state.projectName, parameters, pcbReference, null);
       return {
         parameters,
         pcbReference,
         stepPreview: null,
         selectedPart: "pcb",
-        savedAt: null,
+        focusedPart: state.focusedPart ? "pcb" : null,
+        cachedAt: snapshot.updatedAt,
+        cacheStatus: "saving",
       };
     }),
   setStepReference: (pcbReference, stepPreview) =>
@@ -195,34 +304,73 @@ export const useDesignerStore = create<DesignerState>((set) => ({
           Number((pcbReference.overallHeight ?? 0).toFixed(3)),
         ),
       };
-      persistSnapshot(state.projectName, parameters, pcbReference);
+      const snapshot = persistSnapshot(
+        state.projectName,
+        parameters,
+        pcbReference,
+        stepPreview,
+      );
       return {
         parameters,
         pcbReference,
         stepPreview,
         selectedPart: "pcb",
-        savedAt: null,
+        focusedPart: state.focusedPart ? "pcb" : null,
+        cachedAt: snapshot.updatedAt,
+        cacheStatus: "saving",
       };
     }),
   clearPcbReference: () =>
     set((state) => {
-      persistSnapshot(state.projectName, state.parameters, null);
-      return { pcbReference: null, stepPreview: null, savedAt: null };
+      const snapshot = persistSnapshot(state.projectName, state.parameters, null, null);
+      return {
+        pcbReference: null,
+        stepPreview: null,
+        cachedAt: snapshot.updatedAt,
+        cacheStatus: "saving",
+      };
     }),
   loadProject: (snapshot) => {
     const parameters = { ...DEFAULT_PARAMETERS, ...snapshot.parameters };
     const pcbReference = snapshot.pcbReference ?? null;
-    persistSnapshot(snapshot.name, parameters, pcbReference);
+    const persisted = persistSnapshot(snapshot.name, parameters, pcbReference, null);
     set({
       projectName: snapshot.name,
       parameters,
       pcbReference,
       stepPreview: null,
       selectedPart: "project",
-      savedAt: snapshot.updatedAt,
+      focusedPart: null,
+      cachedAt: persisted.updatedAt,
+      cacheStatus: "saving",
     });
   },
-  markSaved: (savedAt) => set({ savedAt }),
+  restoreCachedProject: async () => {
+    try {
+      const cached = await readProjectCache();
+      set((state) => {
+        if (!cached || !isProjectSnapshot(cached.snapshot)) {
+          return { cacheStatus: "saved" };
+        }
+        const cachedTime = Date.parse(cached.snapshot.updatedAt);
+        const currentTime = state.cachedAt ? Date.parse(state.cachedAt) : 0;
+        if (!Number.isFinite(cachedTime) || cachedTime < currentTime) {
+          return { cacheStatus: "saved" };
+        }
+        return {
+          projectName: cached.snapshot.name,
+          parameters: { ...DEFAULT_PARAMETERS, ...cached.snapshot.parameters },
+          pcbReference: cached.snapshot.pcbReference ?? null,
+          stepPreview: cached.stepPreview,
+          focusedPart: null,
+          cachedAt: cached.snapshot.updatedAt,
+          cacheStatus: "saved",
+        };
+      });
+    } catch {
+      set({ cacheStatus: "error" });
+    }
+  },
 }));
 
 export function createProjectSnapshot(

@@ -1,5 +1,5 @@
 import { getMaterial } from "./materials";
-import { getConnectorDefinition } from "../libraries/components";
+import { getAntennaDefinition, getConnectorDefinition } from "../libraries/components";
 import { getVentPatternPoints } from "./patterns";
 import type {
   DesignerParameters,
@@ -32,6 +32,9 @@ export const DEFAULT_PARAMETERS: DesignerParameters = {
   typeCPortWidth: 12,
   typeCPortHeight: 7,
   typeCPortOffset: 0,
+  antennaEnabled: false,
+  antennaDefinitionId: "sma-bulkhead-whip",
+  antennaOffset: 20,
   closureFastenerId: "m3-self-tapping",
   ventPattern: "none",
   ventRows: 3,
@@ -170,6 +173,45 @@ export function validateDesign(
     }
   }
 
+  if (parameters.antennaEnabled) {
+    const antenna = getAntennaDefinition(parameters.antennaDefinitionId);
+    const mountingWidth = Math.max(
+      antenna.visualGeometry.width,
+      antenna.enclosureCutout?.diameter ?? 0,
+    );
+    const edgeDistance =
+      (dimensions.outsideLength - parameters.cornerRadius * 2) / 2 -
+      Math.abs(parameters.antennaOffset) -
+      mountingWidth / 2;
+    if (edgeDistance < parameters.wallThickness * 2) {
+      issues.push({
+        id: "antenna-edge-distance",
+        level: "error",
+        title: `${antenna.name}距边缘过近`,
+        detail: `当前剩余 ${Math.max(0, edgeDistance).toFixed(1)} mm，需要保留壁厚和圆角区域`,
+        part: "antenna",
+      });
+    }
+
+    const antennaCenterHeight =
+      parameters.bottomThickness +
+      parameters.standoffHeight +
+      parameters.pcbThickness / 2 +
+      antenna.heightAboveBoardCenter;
+    if (
+      antennaCenterHeight + antenna.visualGeometry.height / 2 >
+      parameters.baseHeight - parameters.wallThickness
+    ) {
+      issues.push({
+        id: "antenna-height",
+        level: "error",
+        title: `${antenna.name}安装高度不足`,
+        detail: "提高下壳高度或选择更紧凑的天线",
+        part: "antenna",
+      });
+    }
+  }
+
   if (parameters.ventPattern !== "none") {
     const points = getVentPatternPoints(parameters);
     const maximumX = Math.max(...points.map((point) => Math.abs(point.x) + point.width / 2));
@@ -243,6 +285,7 @@ export function clampParameter(
     typeCPortWidth: [6, 30],
     typeCPortHeight: [3, 20],
     typeCPortOffset: [-120, 120],
+    antennaOffset: [-120, 120],
     ventRows: [1, 12],
     ventColumns: [1, 16],
     ventHoleSize: [1.5, 12],

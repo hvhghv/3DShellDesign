@@ -37,6 +37,37 @@ export interface ConnectorDefinition {
   };
 }
 
+export type AntennaPlacement = "rear-bulkhead" | "inner-rear-wall" | "pcb-rear-edge";
+
+export interface AntennaDefinition {
+  id: string;
+  name: string;
+  placement: AntennaPlacement;
+  visualGeometry: {
+    width: number;
+    height: number;
+    depth: number;
+    color: string;
+    radiatorLength?: number;
+    radiatorDiameter?: number;
+  };
+  enclosureCutout: {
+    diameter: number;
+    description: string;
+  } | null;
+  heightAboveBoardCenter: number;
+  keepoutVolume: {
+    width: number;
+    height: number;
+    depth: number;
+  };
+  metadata: {
+    bomName: string;
+    frequencyBand: string;
+    notes: string;
+  };
+}
+
 export type FastenerRecess = "pilot" | "heat-set" | "hex-nut";
 
 export interface FastenerDefinition {
@@ -134,6 +165,79 @@ export const CONNECTOR_DEFINITIONS: ConnectorDefinition[] = [
   },
 ];
 
+export const ANTENNA_DEFINITIONS: AntennaDefinition[] = [
+  {
+    id: "sma-bulkhead-whip",
+    name: "SMA 穿板棒状天线",
+    placement: "rear-bulkhead",
+    visualGeometry: {
+      width: 8,
+      height: 8,
+      depth: 11,
+      color: "#c6a15b",
+      radiatorLength: 52,
+      radiatorDiameter: 3.2,
+    },
+    enclosureCutout: { diameter: 6.8, description: "后壁 6.8 mm 圆孔，适配常见 SMA 穿板座" },
+    heightAboveBoardCenter: 6,
+    keepoutVolume: { width: 18, height: 18, depth: 70 },
+    metadata: {
+      bomName: "SMA female bulkhead + whip antenna",
+      frequencyBand: "2.4 GHz / 5.8 GHz",
+      notes: "外部棒状天线，孔径和防松垫片空间需按实际 SMA 座复核。",
+    },
+  },
+  {
+    id: "rp-sma-bulkhead-whip",
+    name: "RP-SMA 穿板棒状天线",
+    placement: "rear-bulkhead",
+    visualGeometry: {
+      width: 8.2,
+      height: 8.2,
+      depth: 12,
+      color: "#b99754",
+      radiatorLength: 72,
+      radiatorDiameter: 3.6,
+    },
+    enclosureCutout: { diameter: 6.8, description: "后壁 6.8 mm 圆孔，适配常见 RP-SMA 穿板座" },
+    heightAboveBoardCenter: 6,
+    keepoutVolume: { width: 20, height: 20, depth: 92 },
+    metadata: {
+      bomName: "RP-SMA female bulkhead + whip antenna",
+      frequencyBand: "868 MHz / 915 MHz / 2.4 GHz",
+      notes: "适合外置可更换天线，装配前确认公母针定义和同轴线弯折半径。",
+    },
+  },
+  {
+    id: "adhesive-fpc-antenna",
+    name: "内贴 FPC 天线",
+    placement: "inner-rear-wall",
+    visualGeometry: { width: 35, height: 10, depth: 0.5, color: "#d0a63d" },
+    enclosureCutout: null,
+    heightAboveBoardCenter: 7,
+    keepoutVolume: { width: 45, height: 18, depth: 8 },
+    metadata: {
+      bomName: "Adhesive FPC antenna with coax lead",
+      frequencyBand: "2.4 GHz / 5 GHz",
+      notes: "贴于非金属后壁内侧，黄色禁入区内避免铜箔、电池和屏蔽罩。",
+    },
+  },
+  {
+    id: "pcb-edge-antenna",
+    name: "PCB 板边天线",
+    placement: "pcb-rear-edge",
+    visualGeometry: { width: 25, height: 1, depth: 8, color: "#d7b24c" },
+    enclosureCutout: null,
+    heightAboveBoardCenter: 0.8,
+    keepoutVolume: { width: 32, height: 12, depth: 16 },
+    metadata: {
+      bomName: "PCB edge antenna keepout",
+      frequencyBand: "2.4 GHz",
+      notes: "表示 PCB 板边净空区，不生成外壳开孔；实际匹配网络需通过射频测试确认。",
+    },
+  },
+];
+
 export const FASTENER_DEFINITIONS: FastenerDefinition[] = [
   {
     id: "m2-machine",
@@ -194,6 +298,10 @@ export const FASTENER_DEFINITIONS: FastenerDefinition[] = [
 
 export function getConnectorDefinition(id: string): ConnectorDefinition {
   return CONNECTOR_DEFINITIONS.find((definition) => definition.id === id) ?? CONNECTOR_DEFINITIONS[0];
+}
+
+export function getAntennaDefinition(id: string): AntennaDefinition {
+  return ANTENNA_DEFINITIONS.find((definition) => definition.id === id) ?? ANTENNA_DEFINITIONS[0];
 }
 
 export function getFastenerDefinition(id: string): FastenerDefinition {

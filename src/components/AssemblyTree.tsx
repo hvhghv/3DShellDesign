@@ -1,4 +1,5 @@
 import {
+  Antenna as AntennaIcon,
   Box,
   Cable,
   CircuitBoard,
@@ -9,7 +10,7 @@ import {
 import type { ReactNode } from "react";
 import type { ClosureType, SelectablePart } from "../domain/model";
 import { useDesignerStore } from "../store/designerStore";
-import { getConnectorDefinition } from "../libraries/components";
+import { getAntennaDefinition, getConnectorDefinition } from "../libraries/components";
 
 const CLOSURE_LABELS: Record<ClosureType, string> = {
   screw: "螺丝固定",
@@ -35,11 +36,12 @@ interface TreeItemProps {
 
 function TreeItem({ id, icon, label, detail, depth = 0 }: TreeItemProps) {
   const selectedPart = useDesignerStore((state) => state.selectedPart);
+  const focusedPart = useDesignerStore((state) => state.focusedPart);
   const setSelectedPart = useDesignerStore((state) => state.setSelectedPart);
 
   return (
     <button
-      className={`tree-item ${selectedPart === id ? "is-selected" : ""}`}
+      className={`tree-item ${selectedPart === id ? "is-selected" : ""} ${focusedPart && focusedPart !== id ? "is-context-hidden" : ""}`}
       style={{ paddingLeft: 12 + depth * 15 }}
       type="button"
       onClick={() => setSelectedPart(id)}
@@ -57,12 +59,17 @@ function TreeItem({ id, icon, label, detail, depth = 0 }: TreeItemProps) {
 export function AssemblyTree() {
   const parameters = useDesignerStore((state) => state.parameters);
   const pcbReference = useDesignerStore((state) => state.pcbReference);
+  const objectCount =
+    4 +
+    Number(parameters.panelEnabled) +
+    Number(parameters.typeCPortEnabled) +
+    Number(parameters.antennaEnabled);
 
   return (
     <aside className="assembly-panel" aria-label="装配体和特征树">
       <div className="panel-heading">
         <span>装配体</span>
-        <small>6 个对象</small>
+        <small>{objectCount} 个对象</small>
       </div>
       <nav className="tree-nav">
         <TreeItem id="project" icon={<FolderKanban size={16} />} label="PCB 控制器外壳" detail="项目" />
@@ -84,6 +91,15 @@ export function AssemblyTree() {
         ) : null}
         {parameters.typeCPortEnabled ? (
           <TreeItem id="connector" icon={<Cable size={16} />} label={getConnectorDefinition(parameters.connectorDefinitionId).name} detail="前侧接口" depth={2} />
+        ) : null}
+        {parameters.antennaEnabled ? (
+          <TreeItem
+            id="antenna"
+            icon={<AntennaIcon size={16} />}
+            label={getAntennaDefinition(parameters.antennaDefinitionId).name}
+            detail={getAntennaDefinition(parameters.antennaDefinitionId).metadata.frequencyBand}
+            depth={2}
+          />
         ) : null}
       </nav>
     </aside>

@@ -10,7 +10,8 @@ export type SelectablePart =
   | "base"
   | "lid"
   | "panel"
-  | "connector";
+  | "connector"
+  | "antenna";
 
 export interface DesignerParameters {
   enclosureTemplateId: string;
@@ -36,6 +37,9 @@ export interface DesignerParameters {
   typeCPortWidth: number;
   typeCPortHeight: number;
   typeCPortOffset: number;
+  antennaEnabled: boolean;
+  antennaDefinitionId: string;
+  antennaOffset: number;
   closureFastenerId: string;
   ventPattern: VentPattern;
   ventRows: number;

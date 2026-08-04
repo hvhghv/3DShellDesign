@@ -11,4 +11,15 @@ describe("BOM CSV exporter", () => {
     expect(csv).toContain("顶盖紧固件,4,M3 self-tapping screw");
     expect(csv).toContain("面板固定件,4,screw");
   });
+
+  it("includes the selected antenna and frequency band", () => {
+    const csv = createBomCsv("射频控制器", {
+      ...DEFAULT_PARAMETERS,
+      antennaEnabled: true,
+      antennaDefinitionId: "sma-bulkhead-whip",
+    });
+
+    expect(csv).toContain("SMA 穿板棒状天线,1,SMA female bulkhead + whip antenna");
+    expect(csv).toContain("2.4 GHz / 5.8 GHz");
+  });
 });

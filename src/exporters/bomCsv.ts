@@ -1,6 +1,10 @@
 import { getMaterial } from "../domain/materials";
 import type { DesignerParameters } from "../domain/model";
-import { getConnectorDefinition, getFastenerDefinition } from "../libraries/components";
+import {
+  getAntennaDefinition,
+  getConnectorDefinition,
+  getFastenerDefinition,
+} from "../libraries/components";
 
 function csv(value: string | number): string {
   const text = String(value);
@@ -45,6 +49,17 @@ export function createBomCsv(
       connector.metadata.bomName,
       "PCB 装配",
       connector.toleranceRules.description,
+    ]);
+  }
+  if (parameters.antennaEnabled) {
+    const antenna = getAntennaDefinition(parameters.antennaDefinitionId);
+    rows.push([
+      projectName,
+      antenna.name,
+      1,
+      antenna.metadata.bomName,
+      antenna.enclosureCutout ? "穿板装配" : "内部装配",
+      `${antenna.metadata.frequencyBand}；${antenna.metadata.notes}`,
     ]);
   }
   if (parameters.closureType === "screw") {

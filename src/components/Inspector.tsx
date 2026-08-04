@@ -1,4 +1,5 @@
 import {
+  Antenna as AntennaIcon,
   AlertTriangle,
   ArrowRightLeft,
   CheckCircle2,
@@ -14,8 +15,10 @@ import { deriveEnclosureDimensions, validateDesign } from "../domain/enclosure";
 import { getMaterial, PANEL_MATERIALS, SHELL_MATERIALS } from "../domain/materials";
 import type { InspectorTab, SelectablePart, ValidationIssue } from "../domain/model";
 import {
+  ANTENNA_DEFINITIONS,
   CONNECTOR_DEFINITIONS,
   FASTENER_DEFINITIONS,
+  getAntennaDefinition,
   getConnectorDefinition,
   getFastenerDefinition,
 } from "../libraries/components";
@@ -106,6 +109,7 @@ const PART_LABELS: Record<SelectablePart, string> = {
   lid: "顶盖参数",
   panel: "面板参数",
   connector: "面板接口",
+  antenna: "天线与射频空间",
 };
 
 function IssueIcon({ issue }: { issue: ValidationIssue }) {
@@ -123,6 +127,7 @@ export function Inspector() {
   const setInspectorTab = useDesignerStore((state) => state.setInspectorTab);
   const setParameter = useDesignerStore((state) => state.setParameter);
   const setConnectorDefinition = useDesignerStore((state) => state.setConnectorDefinition);
+  const setAntennaDefinition = useDesignerStore((state) => state.setAntennaDefinition);
   const setEnclosureTemplate = useDesignerStore((state) => state.setEnclosureTemplate);
   const setSelectedPart = useDesignerStore((state) => state.setSelectedPart);
   const clearPcbReference = useDesignerStore((state) => state.clearPcbReference);
@@ -317,6 +322,51 @@ export function Inspector() {
                   )}
                   <NumberField label="水平偏移" value={parameters.typeCPortOffset} min={-120} max={120} step={1} onChange={(value) => setParameter("typeCPortOffset", value)} />
                   <p className="material-note">{getConnectorDefinition(parameters.connectorDefinitionId).metadata.notes}</p>
+                </>
+              ) : null}
+            </section>
+            <section className="inspector-section">
+              <h2>天线</h2>
+              <ToggleRow
+                label="启用天线"
+                detail="外置天线开孔或内置射频禁入空间"
+                checked={parameters.antennaEnabled}
+                onChange={(checked) => setParameter("antennaEnabled", checked)}
+              />
+              {parameters.antennaEnabled ? (
+                <>
+                  <label className="select-field">
+                    <span>天线类型</span>
+                    <select
+                      aria-label="天线类型"
+                      value={parameters.antennaDefinitionId}
+                      onChange={(event) => setAntennaDefinition(event.currentTarget.value)}
+                    >
+                      {ANTENNA_DEFINITIONS.map((definition) => (
+                        <option key={definition.id} value={definition.id}>{definition.name}</option>
+                      ))}
+                    </select>
+                  </label>
+                  <NumberField
+                    label="水平偏移"
+                    value={parameters.antennaOffset}
+                    min={-120}
+                    max={120}
+                    step={1}
+                    onChange={(value) => setParameter("antennaOffset", value)}
+                  />
+                  <div className="material-summary">
+                    <AntennaIcon className="antenna-summary-icon" size={18} />
+                    <span>
+                      <strong>{getAntennaDefinition(parameters.antennaDefinitionId).metadata.frequencyBand}</strong>
+                      <small>
+                        {getAntennaDefinition(parameters.antennaDefinitionId).enclosureCutout?.description ?? "内置安装，不生成外壳开孔"}
+                      </small>
+                    </span>
+                  </div>
+                  <p className="material-note">
+                    {getAntennaDefinition(parameters.antennaDefinitionId).metadata.notes}
+                  </p>
                 </>
               ) : null}
             </section>

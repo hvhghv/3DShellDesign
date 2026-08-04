@@ -1,4 +1,5 @@
 import { useEffect, useRef } from "react";
+import { Eye, Focus } from "lucide-react";
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { buildPreviewModel, disposePreviewModel } from "../geometry/buildPreviewModel";
@@ -35,11 +36,15 @@ export function Viewport() {
   const modelRef = useRef<THREE.Group | null>(null);
   const gridRef = useRef<THREE.GridHelper | null>(null);
   const didInitialFit = useRef(false);
+  const previousFocus = useRef<SelectablePart | null>(null);
   const parameters = useDesignerStore((state) => state.parameters);
   const pcbReference = useDesignerStore((state) => state.pcbReference);
   const stepPreview = useDesignerStore((state) => state.stepPreview);
   const selectedPart = useDesignerStore((state) => state.selectedPart);
+  const focusedPart = useDesignerStore((state) => state.focusedPart);
   const setSelectedPart = useDesignerStore((state) => state.setSelectedPart);
+  const focusSelectedPart = useDesignerStore((state) => state.focusSelectedPart);
+  const showAllParts = useDesignerStore((state) => state.showAllParts);
   const showGrid = useDesignerStore((state) => state.showGrid);
   const exploded = useDesignerStore((state) => state.exploded);
   const cameraResetToken = useDesignerStore((state) => state.cameraResetToken);
@@ -200,14 +205,20 @@ export function Viewport() {
       exploded,
       pcbReference,
       stepPreview,
+      focusedPart,
     );
     scene.add(model);
     modelRef.current = model;
 
-    if (!didInitialFit.current && cameraRef.current && controlsRef.current) {
+    if (
+      (!didInitialFit.current || previousFocus.current !== focusedPart) &&
+      cameraRef.current &&
+      controlsRef.current
+    ) {
       fitCamera(cameraRef.current, controlsRef.current, model);
       didInitialFit.current = true;
     }
+    previousFocus.current = focusedPart;
 
     return () => {
       if (modelRef.current === model) {
@@ -216,7 +227,7 @@ export function Viewport() {
         modelRef.current = null;
       }
     };
-  }, [exploded, parameters, pcbReference, selectedPart, stepPreview]);
+  }, [exploded, focusedPart, parameters, pcbReference, selectedPart, stepPreview]);
 
   useEffect(() => {
     if (gridRef.current) gridRef.current.visible = showGrid;
@@ -229,5 +240,37 @@ export function Viewport() {
     }
   }, [cameraResetToken]);
 
-  return <div className="viewport-canvas" ref={hostRef} />;
+  return (
+    <>
+      <div
+        className="viewport-canvas"
+        data-focused-part={focusedPart ?? "all"}
+        data-reference-kind={stepPreview ? "step" : pcbReference ? pcbReference.format : "parametric"}
+        ref={hostRef}
+      />
+      <div className="viewport-focus-controls" role="group" aria-label="零件显示">
+        <button
+          className={`icon-button ${focusedPart ? "is-active" : ""}`}
+          type="button"
+          disabled={selectedPart === "project"}
+          onClick={focusSelectedPart}
+          title="聚焦选中零件"
+          aria-label="聚焦选中零件"
+          aria-pressed={focusedPart !== null}
+        >
+          <Focus size={17} />
+        </button>
+        <button
+          className="icon-button"
+          type="button"
+          disabled={!focusedPart}
+          onClick={showAllParts}
+          title="显示全部零件"
+          aria-label="显示全部零件"
+        >
+          <Eye size={17} />
+        </button>
+      </div>
+    </>
+  );
 }

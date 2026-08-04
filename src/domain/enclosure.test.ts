@@ -51,5 +51,18 @@ describe("enclosure domain", () => {
 
     expect(blockingIssues).toHaveLength(0);
   });
-});
 
+  it("checks antenna edge distance", () => {
+    const issues = validateDesign({
+      ...DEFAULT_PARAMETERS,
+      antennaEnabled: true,
+      antennaOffset: 52,
+    });
+
+    expect(issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: "antenna-edge-distance", part: "antenna" }),
+      ]),
+    );
+  });
+});

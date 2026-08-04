@@ -7,7 +7,11 @@ import { deriveEnclosureDimensions, getPanelMountingPoints } from "../domain/enc
 import type { DesignerParameters, PcbReference } from "../domain/model";
 import { getCenteredMountingHoles } from "../domain/pcbReference";
 import { getVentPatternPoints } from "../domain/patterns";
-import { getConnectorDefinition, getFastenerDefinition } from "../libraries/components";
+import {
+  getAntennaDefinition,
+  getConnectorDefinition,
+  getFastenerDefinition,
+} from "../libraries/components";
 
 export type SolidPart = "base" | "lid" | "panel";
 
@@ -489,6 +493,32 @@ function buildBase(
       );
     }
     base = subtractAndDispose(base, cutter);
+  }
+
+  if (parameters.antennaEnabled) {
+    const antenna = getAntennaDefinition(parameters.antennaDefinitionId);
+    if (antenna.enclosureCutout) {
+      const antennaCenterZ =
+        parameters.bottomThickness +
+        parameters.standoffHeight +
+        parameters.pcbThickness / 2 +
+        antenna.heightAboveBoardCenter;
+      let cutter = module.Manifold.cylinder(
+        parameters.wallThickness * 3,
+        antenna.enclosureCutout.diameter / 2,
+        antenna.enclosureCutout.diameter / 2,
+        32,
+        false,
+      );
+      cutter = rotateAndDispose(cutter, -90, 0, 0);
+      cutter = translateAndDispose(
+        cutter,
+        parameters.antennaOffset,
+        -dimensions.outsideWidth / 2 - parameters.wallThickness,
+        antennaCenterZ,
+      );
+      base = subtractAndDispose(base, cutter);
+    }
   }
 
   return base;

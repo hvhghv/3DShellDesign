@@ -81,7 +81,7 @@ function readStlDimensions(stl: Uint8Array): {
 }
 
 test("desktop workbench renders a nonblank interactive enclosure", async ({ page }, testInfo) => {
-  test.setTimeout(180_000);
+  test.setTimeout(300_000);
   const pageErrors: string[] = [];
   page.on("pageerror", (error) => pageErrors.push(error.message));
   await page.setViewportSize({ width: 1440, height: 900 });
@@ -101,6 +101,25 @@ test("desktop workbench renders a nonblank interactive enclosure", async ({ page
   expect(pixels.height).toBeGreaterThan(500);
   expect(pixels.colorCount).toBeGreaterThan(20);
   expect(pixels.luminanceRange).toBeGreaterThan(35);
+
+  await page.locator(".tree-nav").getByRole("button", { name: /顶盖/ }).click();
+  await page.getByRole("button", { name: "聚焦选中零件" }).click();
+  await expect(page.locator(".viewport-canvas")).toHaveAttribute(
+    "data-focused-part",
+    "lid",
+  );
+  expect(await page.locator(".tree-item.is-context-hidden").count()).toBeGreaterThan(3);
+  await page.locator(".tree-nav").getByRole("button", { name: /下壳/ }).click();
+  await expect(page.locator(".viewport-canvas")).toHaveAttribute(
+    "data-focused-part",
+    "base",
+  );
+  await page.getByRole("button", { name: "显示全部零件" }).click();
+  await expect(page.locator(".viewport-canvas")).toHaveAttribute(
+    "data-focused-part",
+    "all",
+  );
+  await expect(page.locator(".tree-item.is-context-hidden")).toHaveCount(0);
 
   await page.getByRole("tab", { name: "结构" }).click();
   await page.getByRole("button", { name: "磁吸", exact: true }).click();
@@ -152,6 +171,14 @@ test("desktop workbench renders a nonblank interactive enclosure", async ({ page
   }
   await expect(page.getByText(/三角面/)).toBeVisible();
 
+  await page.getByRole("checkbox", { name: /启用天线/ }).check();
+  await page.getByRole("combobox", { name: "天线类型" }).selectOption(
+    "sma-bulkhead-whip",
+  );
+  await expect(
+    page.getByRole("button", { name: /SMA 穿板棒状天线.*2\.4 GHz/ }),
+  ).toBeVisible();
+
   await exportSelect.selectOption("panel-dxf");
   const dxfDownloadPromise = page.waitForEvent("download");
   await page.locator(".manufacturing-export button").click();
@@ -173,6 +200,7 @@ test("desktop workbench renders a nonblank interactive enclosure", async ({ page
   const bom = (await readFile(bomPath!)).toString("utf8");
   expect(bom).toContain("USB Type-C 母座");
   expect(bom).toContain("圆形磁铁,8,直径 6 mm");
+  expect(bom).toContain("SMA 穿板棒状天线");
 
   await page.getByRole("button", { name: "螺丝", exact: true }).click();
   await page.getByRole("combobox", { name: "紧固件规格" }).selectOption(
@@ -277,6 +305,21 @@ test("desktop workbench renders a nonblank interactive enclosure", async ({ page
   ).toHaveValue("10");
   const stepPixels = await readScreenshotPixels(page, canvas);
   expect(stepPixels.colorCount).toBeGreaterThan(20);
+  await expect(page.locator(".viewport-canvas")).toHaveAttribute(
+    "data-reference-kind",
+    "step",
+  );
+  await expect(page.locator(".status-bar")).toContainText("已缓存");
+
+  await page.reload();
+  await expect(page.getByText("occt-cube-mm.step", { exact: true })).toBeVisible();
+  await expect(page.locator(".viewport-canvas")).toHaveAttribute(
+    "data-reference-kind",
+    "step",
+  );
+  await expect(
+    page.locator(".tree-nav").getByRole("button", { name: /SMA 穿板棒状天线/ }),
+  ).toBeVisible();
 
   await page.getByRole("button", { name: "移除 PCB 文件关联" }).click();
   await page.getByRole("combobox", { name: "外壳模板" }).selectOption(
@@ -299,6 +342,24 @@ test("desktop workbench renders a nonblank interactive enclosure", async ({ page
     fullPage: true,
   });
   expect(pageErrors).toEqual([]);
+});
+
+test("project parameters survive an immediate page reload", async ({ page }) => {
+  await page.goto("/");
+  const lengthInput = page.locator(".field-row").filter({ hasText: "长度" }).locator("input");
+  await lengthInput.fill("123");
+  await expect(lengthInput).toHaveValue("123");
+  await page.getByRole("tab", { name: "结构" }).click();
+  await page.getByRole("checkbox", { name: /启用天线/ }).check();
+
+  await page.reload();
+
+  await expect(
+    page.locator(".field-row").filter({ hasText: "长度" }).locator("input"),
+  ).toHaveValue("123");
+  await expect(
+    page.locator(".tree-nav").getByRole("button", { name: /SMA 穿板棒状天线/ }),
+  ).toBeVisible();
 });
 
 test("narrow workbench stays framed and keeps the 3D canvas visible", async ({ page }, testInfo) => {

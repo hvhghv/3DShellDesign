@@ -8,7 +8,11 @@ import { createBomCsv } from "../exporters/bomCsv";
 import { exportPrintLayout, exportSolidPart } from "../geometry/manufacturingExport";
 import type { SolidPart } from "../geometry/manifoldSolidFactory";
 import { useDesignerStore } from "../store/designerStore";
-import { getConnectorDefinition, getFastenerDefinition } from "../libraries/components";
+import {
+  getAntennaDefinition,
+  getConnectorDefinition,
+  getFastenerDefinition,
+} from "../libraries/components";
 
 type ExportChoice =
   | "layout-3mf"
@@ -124,6 +128,12 @@ export function ManufacturingExport() {
                 definition: getConnectorDefinition(parameters.connectorDefinitionId),
                 cutoutSize: [parameters.typeCPortWidth, parameters.typeCPortHeight],
                 offset: parameters.typeCPortOffset,
+              }
+            : null,
+          antenna: parameters.antennaEnabled
+            ? {
+                definition: getAntennaDefinition(parameters.antennaDefinitionId),
+                offset: parameters.antennaOffset,
               }
             : null,
           fastener:

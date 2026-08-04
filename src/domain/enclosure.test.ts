@@ -99,13 +99,14 @@ describe("enclosure domain", () => {
   });
 
   it("sizes a panel from its selected enclosure face", () => {
-    const dimensions = deriveEnclosureDimensions({
+    const parameters = normalizeDesignerParameters({
       ...DEFAULT_PARAMETERS,
-      panelFace: "front",
+      panelPlacements: [{ id: "front-panel", face: "front" }],
     });
+    const panel = parameters.panelPlacements[0];
 
-    expect(dimensions.panelLength).toBeCloseTo(62.64, 3);
-    expect(dimensions.panelWidth).toBeCloseTo(12.48, 3);
+    expect(panel.width).toBeCloseTo(62.64, 3);
+    expect(panel.height).toBeCloseTo(12.48, 3);
   });
 
   it("migrates the legacy single front connector", () => {

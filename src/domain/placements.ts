@@ -5,6 +5,7 @@ import type {
   EnclosureDimensions,
   EnclosureFace,
   PlacementRotation,
+  PanelPlacement,
 } from "./model";
 import { getConnectorDefinition } from "../libraries/components";
 
@@ -39,12 +40,30 @@ export function getFaceLabel(face: EnclosureFace): string {
 }
 
 export function getConnectorSurfaceLabel(
-  surface: ConnectorSurface,
+  placement: ConnectorPlacement,
   parameters: DesignerParameters,
 ): string {
-  return surface === "panel"
-    ? `可更换面板（${getFaceLabel(parameters.panelFace)}）`
-    : getFaceLabel(surface);
+  if (placement.surface !== "panel") return getFaceLabel(placement.surface);
+  const panel = getPanelPlacement(parameters, placement.panelId);
+  return panel ? `可更换面板（${getFaceLabel(panel.face)}）` : "可更换面板";
+}
+
+export function getPanelPlacement(
+  parameters: DesignerParameters,
+  panelId: string | null,
+): PanelPlacement | null {
+  if (panelId) {
+    return parameters.panelPlacements.find((panel) => panel.id === panelId) ?? null;
+  }
+  return parameters.panelPlacements[0] ?? null;
+}
+
+export function getPanelLabel(
+  panel: PanelPlacement,
+  parameters: DesignerParameters,
+): string {
+  const index = parameters.panelPlacements.findIndex((item) => item.id === panel.id);
+  return `面板 ${index >= 0 ? index + 1 : 1}`;
 }
 
 export function getFaceSize(
@@ -65,7 +84,8 @@ export function resolveConnectorFace(
   placement: ConnectorPlacement,
   parameters: DesignerParameters,
 ): EnclosureFace {
-  return placement.surface === "panel" ? parameters.panelFace : placement.surface;
+  if (placement.surface !== "panel") return placement.surface;
+  return getPanelPlacement(parameters, placement.panelId)?.face ?? "top";
 }
 
 export function getConnectorSurfaceSize(
@@ -73,9 +93,11 @@ export function getConnectorSurfaceSize(
   parameters: DesignerParameters,
   dimensions: EnclosureDimensions,
 ): readonly [number, number] {
-  return placement.surface === "panel"
-    ? [dimensions.panelLength, dimensions.panelWidth]
-    : getFaceSize(placement.surface, parameters, dimensions);
+  if (placement.surface !== "panel") {
+    return getFaceSize(placement.surface, parameters, dimensions);
+  }
+  const panel = getPanelPlacement(parameters, placement.panelId);
+  return panel ? [panel.width, panel.height] : [0, 0];
 }
 
 export function getRotatedCutoutSize(
@@ -96,10 +118,53 @@ export function createConnectorPlacement(
     id,
     definitionId: definition.id,
     surface,
+    panelId: null,
     offsetU: 0,
     offsetV: surface === "front" ? -3 : 0,
     rotation: 0,
     cutoutWidth: definition.panelCutout.width,
     cutoutHeight: definition.panelCutout.height,
+  };
+}
+
+export function getDefaultPanelSize(
+  parameters: Pick<
+    DesignerParameters,
+    "pcbLength" | "pcbWidth" | "boardClearance" | "wallThickness" | "baseHeight"
+  >,
+  face: EnclosureFace,
+): readonly [number, number] {
+  const outsideLength =
+    parameters.pcbLength + parameters.boardClearance * 2 + parameters.wallThickness * 2;
+  const outsideWidth =
+    parameters.pcbWidth + parameters.boardClearance * 2 + parameters.wallThickness * 2;
+  const surfaceWidth = face === "left" || face === "right" ? outsideWidth : outsideLength;
+  const surfaceHeight =
+    face === "top" || face === "bottom" ? outsideWidth : parameters.baseHeight;
+  return [
+    Math.max(6, Math.min(surfaceWidth * 0.58, surfaceWidth - 4)),
+    Math.max(6, Math.min(surfaceHeight * 0.52, surfaceHeight - 4)),
+  ];
+}
+
+export function createPanelPlacement(
+  parameters: Pick<
+    DesignerParameters,
+    "pcbLength" | "pcbWidth" | "boardClearance" | "wallThickness" | "baseHeight"
+  >,
+  id: string,
+  face: EnclosureFace = "top",
+): PanelPlacement {
+  const [width, height] = getDefaultPanelSize(parameters, face);
+  return {
+    id,
+    face,
+    offsetU: 0,
+    offsetV: 0,
+    width,
+    height,
+    thickness: 2,
+    mountingType: "screw",
+    materialId: "acrylic-clear",
   };
 }

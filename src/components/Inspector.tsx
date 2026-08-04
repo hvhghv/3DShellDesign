@@ -6,7 +6,6 @@ import {
   Info,
   Magnet,
   PanelTop,
-  Plus,
   Trash2,
   UnfoldVertical,
   Wrench,
@@ -20,7 +19,6 @@ import {
 } from "../domain/magnetSupport";
 import { getMaterial, PANEL_MATERIALS, SHELL_MATERIALS } from "../domain/materials";
 import type {
-  ConnectorSurface,
   EnclosureFace,
   InspectorTab,
   PlacementRotation,
@@ -29,6 +27,7 @@ import type {
 } from "../domain/model";
 import {
   ENCLOSURE_FACE_OPTIONS,
+  getFaceLabel,
   PLACEMENT_ROTATIONS,
 } from "../domain/placements";
 import {
@@ -140,10 +139,12 @@ export function Inspector() {
   const parameters = useDesignerStore((state) => state.parameters);
   const pcbReference = useDesignerStore((state) => state.pcbReference);
   const selectedPart = useDesignerStore((state) => state.selectedPart);
+  const selectedFeatureId = useDesignerStore((state) => state.selectedFeatureId);
   const inspectorTab = useDesignerStore((state) => state.inspectorTab);
   const setInspectorTab = useDesignerStore((state) => state.setInspectorTab);
   const setParameter = useDesignerStore((state) => state.setParameter);
-  const addConnectorPlacement = useDesignerStore((state) => state.addConnectorPlacement);
+  const updatePanelPlacement = useDesignerStore((state) => state.updatePanelPlacement);
+  const removePanelPlacement = useDesignerStore((state) => state.removePanelPlacement);
   const updateConnectorPlacement = useDesignerStore((state) => state.updateConnectorPlacement);
   const setConnectorDefinition = useDesignerStore((state) => state.setConnectorDefinition);
   const removeConnectorPlacement = useDesignerStore((state) => state.removeConnectorPlacement);
@@ -151,6 +152,19 @@ export function Inspector() {
   const setEnclosureTemplate = useDesignerStore((state) => state.setEnclosureTemplate);
   const setSelectedPart = useDesignerStore((state) => state.setSelectedPart);
   const clearPcbReference = useDesignerStore((state) => state.clearPcbReference);
+  const selectedPanel =
+    parameters.panelPlacements.find((panel) => panel.id === selectedFeatureId) ??
+    parameters.panelPlacements[0] ??
+    null;
+  const selectedConnector =
+    parameters.connectorPlacements.find(
+      (connector) => connector.id === selectedFeatureId,
+    ) ?? parameters.connectorPlacements[0] ?? null;
+  const selectedConnectorIndex = selectedConnector
+    ? parameters.connectorPlacements.findIndex(
+        (connector) => connector.id === selectedConnector.id,
+      )
+    : -1;
   const dimensions = useMemo(() => deriveEnclosureDimensions(parameters), [parameters]);
   const issues = useMemo(
     () => validateDesign(parameters, pcbReference),
@@ -310,17 +324,31 @@ export function Inspector() {
               ) : null}
             </section>
             <section className="inspector-section">
-              <h2>可更换面板</h2>
-              <ToggleRow label="启用独立面板" detail="在所选壳体表面开窗并生成板材零件" checked={parameters.panelEnabled} onChange={(checked) => setParameter("panelEnabled", checked)} />
-              {parameters.panelEnabled ? (
+              <div className="section-heading-row">
+                <h2>面板参数</h2>
+                {selectedPanel ? (
+                  <button
+                    className="icon-section-button"
+                    type="button"
+                    title="删除当前面板"
+                    aria-label="删除当前面板"
+                    onClick={() => removePanelPlacement(selectedPanel.id)}
+                  >
+                    <Trash2 size={14} />
+                  </button>
+                ) : null}
+              </div>
+              {selectedPanel ? (
                 <>
                   <label className="select-field">
                     <span>所在面</span>
                     <select
                       aria-label="面板所在面"
-                      value={parameters.panelFace}
+                      value={selectedPanel.face}
                       onChange={(event) =>
-                        setParameter("panelFace", event.currentTarget.value as EnclosureFace)
+                        updatePanelPlacement(selectedPanel.id, {
+                          face: event.currentTarget.value as EnclosureFace,
+                        })
                       }
                     >
                       {ENCLOSURE_FACE_OPTIONS.map((option) => (
@@ -328,51 +356,51 @@ export function Inspector() {
                       ))}
                     </select>
                   </label>
-                  <NumberField label="横向偏移" value={parameters.panelOffsetU} min={-300} max={300} step={1} onChange={(value) => setParameter("panelOffsetU", value)} />
-                  <NumberField label="纵向偏移" value={parameters.panelOffsetV} min={-300} max={300} step={1} onChange={(value) => setParameter("panelOffsetV", value)} />
+                  <NumberField label="宽度" value={selectedPanel.width} min={6} max={300} step={1} onChange={(value) => updatePanelPlacement(selectedPanel.id, { width: value })} />
+                  <NumberField label="高度" value={selectedPanel.height} min={6} max={300} step={1} onChange={(value) => updatePanelPlacement(selectedPanel.id, { height: value })} />
+                  <NumberField label="横向偏移" value={selectedPanel.offsetU} min={-300} max={300} step={1} onChange={(value) => updatePanelPlacement(selectedPanel.id, { offsetU: value })} />
+                  <NumberField label="纵向偏移" value={selectedPanel.offsetV} min={-300} max={300} step={1} onChange={(value) => updatePanelPlacement(selectedPanel.id, { offsetV: value })} />
                   <label className="select-field">
                     <span>固定方式</span>
                     <select
                       aria-label="面板固定方式"
-                      value={parameters.panelMountingType}
-                      onChange={(event) => setParameter("panelMountingType", event.currentTarget.value as typeof parameters.panelMountingType)}
+                      value={selectedPanel.mountingType}
+                      onChange={(event) => updatePanelPlacement(selectedPanel.id, { mountingType: event.currentTarget.value as typeof selectedPanel.mountingType })}
                     >
                       <option value="screw">四角螺丝</option>
                       <option value="magnet">四角磁吸</option>
                       <option value="slide">侧边滑轨</option>
                     </select>
                   </label>
-                  <NumberField label="面板厚度" value={parameters.panelThickness} min={0.5} max={10} onChange={(value) => setParameter("panelThickness", value)} />
+                  <NumberField label="面板厚度" value={selectedPanel.thickness} min={0.5} max={10} onChange={(value) => updatePanelPlacement(selectedPanel.id, { thickness: value })} />
                 </>
               ) : null}
             </section>
             <section className="inspector-section">
               <div className="section-heading-row">
-                <h2>接口</h2>
-                <button
-                  className="section-action-button"
-                  type="button"
-                  onClick={addConnectorPlacement}
-                >
-                  <Plus size={14} />
-                  <span>添加</span>
-                </button>
+                <h2>接口参数</h2>
+                {selectedConnector ? (
+                  <button
+                    className="icon-section-button"
+                    type="button"
+                    title="删除当前接口"
+                    aria-label="删除当前接口"
+                    onClick={() => removeConnectorPlacement(selectedConnector.id)}
+                  >
+                    <Trash2 size={14} />
+                  </button>
+                ) : null}
               </div>
-              {parameters.connectorPlacements.map((placement, index) => {
+              {selectedConnector ? (() => {
+                const placement = selectedConnector;
+                const index = selectedConnectorIndex;
                 const definition = getConnectorDefinition(placement.definitionId);
+                const surfaceValue =
+                  placement.surface === "panel" && placement.panelId
+                    ? `panel:${placement.panelId}`
+                    : placement.surface;
                 return (
                   <div className="connector-placement" key={placement.id}>
-                    <div className="connector-placement-heading">
-                      <strong>接口 {index + 1}</strong>
-                      <button
-                        type="button"
-                        title="删除接口"
-                        aria-label={`删除接口 ${index + 1}`}
-                        onClick={() => removeConnectorPlacement(placement.id)}
-                      >
-                        <Trash2 size={14} />
-                      </button>
-                    </div>
                   <label className="select-field">
                     <span>器件</span>
                     <select
@@ -391,19 +419,25 @@ export function Inspector() {
                     <span>安装位置</span>
                     <select
                       aria-label={`接口 ${index + 1} 安装位置`}
-                      value={placement.surface}
-                      onChange={(event) =>
-                        updateConnectorPlacement(placement.id, {
-                          surface: event.currentTarget.value as ConnectorSurface,
-                        })
-                      }
+                      value={surfaceValue}
+                      onChange={(event) => {
+                        const value = event.currentTarget.value;
+                        updateConnectorPlacement(
+                          placement.id,
+                          value.startsWith("panel:")
+                            ? { surface: "panel", panelId: value.slice(6) }
+                            : { surface: value as EnclosureFace, panelId: null },
+                        );
+                      }}
                     >
                       {ENCLOSURE_FACE_OPTIONS.map((option) => (
                         <option key={option.id} value={option.id}>{option.name}</option>
                       ))}
-                      {parameters.panelEnabled ? (
-                        <option value="panel">可更换面板</option>
-                      ) : null}
+                      {parameters.panelPlacements.map((panel, panelIndex) => (
+                        <option key={panel.id} value={`panel:${panel.id}`}>
+                          面板 {panelIndex + 1}（{getFaceLabel(panel.face)}）
+                        </option>
+                      ))}
                     </select>
                   </label>
                   <label className="select-field">
@@ -446,7 +480,7 @@ export function Inspector() {
                   <p className="material-note">{definition.metadata.notes}</p>
                   </div>
                 );
-              })}
+              })() : null}
             </section>
             <section className="inspector-section">
               <h2>天线</h2>
@@ -533,17 +567,17 @@ export function Inspector() {
               <MaterialBadge materialId={parameters.shellMaterialId} />
               <p className="material-note">{getMaterial(parameters.shellMaterialId).notes}</p>
             </section>
-            {parameters.panelEnabled ? (
+            {selectedPanel ? (
               <section className="inspector-section">
                 <h2>面板材料</h2>
                 <label className="select-field">
                   <span>材料</span>
-                  <select value={parameters.panelMaterialId} onChange={(event) => setParameter("panelMaterialId", event.currentTarget.value)}>
+                  <select value={selectedPanel.materialId} onChange={(event) => updatePanelPlacement(selectedPanel.id, { materialId: event.currentTarget.value })}>
                     {PANEL_MATERIALS.map((material) => <option key={material.id} value={material.id}>{material.name}</option>)}
                   </select>
                 </label>
-                <MaterialBadge materialId={parameters.panelMaterialId} />
-                <p className="material-note">{getMaterial(parameters.panelMaterialId).notes}</p>
+                <MaterialBadge materialId={selectedPanel.materialId} />
+                <p className="material-note">{getMaterial(selectedPanel.materialId).notes}</p>
               </section>
             ) : null}
           </>

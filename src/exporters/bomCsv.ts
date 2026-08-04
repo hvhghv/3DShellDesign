@@ -23,25 +23,25 @@ export function createBomCsv(
     [projectName, "下壳", 1, shell.name, shell.process, `${parameters.wallThickness} mm 壁厚`],
     [projectName, "顶盖", 1, shell.name, shell.process, parameters.closureType],
   ];
-  if (parameters.panelEnabled) {
-    const panel = getMaterial(parameters.panelMaterialId);
+  parameters.panelPlacements.forEach((placement, index) => {
+    const panel = getMaterial(placement.materialId);
     rows.push([
       projectName,
-      "可更换面板",
+      `可更换面板 ${index + 1}`,
       1,
       panel.name,
       panel.process,
-      `${parameters.panelThickness} mm / ${getFaceLabel(parameters.panelFace)} / ${parameters.panelMountingType}`,
+      `${placement.thickness} mm / ${getFaceLabel(placement.face)} / ${placement.mountingType}`,
     ]);
     rows.push([
       projectName,
-      "面板固定件",
-      parameters.panelMountingType === "slide" ? 2 : 4,
-      parameters.panelMountingType,
+      `面板 ${index + 1} 固定件`,
+      placement.mountingType === "slide" ? 2 : 4,
+      placement.mountingType,
       "装配",
       "",
     ]);
-  }
+  });
   for (const placement of parameters.connectorPlacements) {
     const connector = getConnectorDefinition(placement.definitionId);
     rows.push([
@@ -50,7 +50,7 @@ export function createBomCsv(
       1,
       connector.metadata.bomName,
       "PCB 装配",
-      `${getConnectorSurfaceLabel(placement.surface, parameters)}；${connector.toleranceRules.description}`,
+      `${getConnectorSurfaceLabel(placement, parameters)}；${connector.toleranceRules.description}`,
     ]);
   }
   if (parameters.antennaEnabled) {

@@ -9,7 +9,7 @@ describe("BOM CSV exporter", () => {
     expect(csv).toContain('"控制器,样机",下壳,1,PETG 韧性打印,FDM');
     expect(csv).toContain("USB Type-C 母座,1,USB-C receptacle");
     expect(csv).toContain("顶盖紧固件,4,M3 self-tapping screw");
-    expect(csv).toContain("面板固定件,4,screw");
+    expect(csv).toContain("面板 1 固定件,4,screw");
   });
 
   it("includes the selected antenna and frequency band", () => {

@@ -1,10 +1,149 @@
 import { useEffect, useRef } from "react";
-import { Eye, Focus } from "lucide-react";
+import { Eye, Focus, Move3D, Scaling } from "lucide-react";
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
+import { TransformControls } from "three/examples/jsm/controls/TransformControls.js";
 import { buildPreviewModel, disposePreviewModel } from "../geometry/buildPreviewModel";
 import { useDesignerStore } from "../store/designerStore";
-import type { SelectablePart } from "../domain/model";
+import type { EnclosureFace, SelectablePart } from "../domain/model";
+
+function getEditableFeature(object: THREE.Object3D | null): THREE.Object3D | null {
+  let current = object;
+  while (current) {
+    if (
+      current instanceof THREE.Group &&
+      typeof current.userData.featureId === "string" &&
+      (current.userData.featureKind === "panel" ||
+        current.userData.featureKind === "connector")
+    ) {
+      return current;
+    }
+    current = current.parent;
+  }
+  return null;
+}
+
+function findEditableFeature(
+  root: THREE.Object3D,
+  featureId: string,
+  featureKind: "panel" | "connector",
+): THREE.Object3D | null {
+  let result: THREE.Object3D | null = null;
+  root.traverse((child) => {
+    if (
+      !result &&
+      child instanceof THREE.Group &&
+      child.userData.featureId === featureId &&
+      child.userData.featureKind === featureKind
+    ) {
+      result = child;
+    }
+  });
+  return result;
+}
+
+function getSurfaceCoordinates(
+  face: EnclosureFace,
+  position: THREE.Vector3,
+  baseHeight: number,
+): readonly [number, number] {
+  if (face === "top" || face === "bottom") return [position.x, position.z];
+  if (face === "left" || face === "right") {
+    return [position.z, position.y - baseHeight / 2];
+  }
+  return [position.x, position.y - baseHeight / 2];
+}
+
+function getSurfaceScale(
+  face: EnclosureFace,
+  scale: THREE.Vector3,
+): readonly [number, number] {
+  if (face === "top" || face === "bottom") return [scale.x, scale.z];
+  if (face === "left" || face === "right") return [scale.z, scale.y];
+  return [scale.x, scale.y];
+}
+
+function roundMeasurement(value: number): number {
+  return Number(value.toFixed(2));
+}
+
+function configureTransformAxes(
+  controls: TransformControls,
+  face: EnclosureFace,
+): void {
+  controls.showX = face !== "left" && face !== "right";
+  controls.showY = face !== "top" && face !== "bottom";
+  controls.showZ =
+    face === "top" || face === "bottom" || face === "left" || face === "right";
+  controls.showXY = controls.showX && controls.showY;
+  controls.showYZ = controls.showY && controls.showZ;
+  controls.showXZ = controls.showX && controls.showZ;
+}
+
+function commitFeatureTransform(object: THREE.Object3D): void {
+  const state = useDesignerStore.getState();
+  const featureId = object.userData.featureId as string | undefined;
+  const featureKind = object.userData.featureKind as string | undefined;
+  const face = object.userData.face as EnclosureFace | undefined;
+  if (!featureId || !face) return;
+
+  if (state.transformMode === "move") {
+    let [offsetU, offsetV] = getSurfaceCoordinates(
+      face,
+      object.position,
+      state.parameters.baseHeight,
+    );
+    if (featureKind === "connector") {
+      const connector = state.parameters.connectorPlacements.find(
+        (placement) => placement.id === featureId,
+      );
+      const panel =
+        connector?.surface === "panel"
+          ? state.parameters.panelPlacements.find(
+              (placement) => placement.id === connector.panelId,
+            )
+          : null;
+      offsetU -= panel?.offsetU ?? 0;
+      offsetV -= panel?.offsetV ?? 0;
+      state.updateConnectorPlacement(featureId, { offsetU, offsetV });
+    } else if (featureKind === "panel") {
+      state.updatePanelPlacement(featureId, { offsetU, offsetV });
+    }
+    return;
+  }
+
+  const [scaleU, scaleV] = getSurfaceScale(face, object.scale);
+  const baseWidth = Number(object.userData.baseWidth);
+  const baseHeight = Number(object.userData.baseHeight);
+  if (!Number.isFinite(baseWidth) || !Number.isFinite(baseHeight)) return;
+  if (featureKind === "panel") {
+    state.updatePanelPlacement(featureId, {
+      width: roundMeasurement(baseWidth * Math.abs(scaleU)),
+      height: roundMeasurement(baseHeight * Math.abs(scaleV)),
+    });
+  } else if (featureKind === "connector") {
+    const connector = state.parameters.connectorPlacements.find(
+      (placement) => placement.id === featureId,
+    );
+    if (!connector) return;
+    const definitionIsCircular = Boolean(object.userData.uniformScale);
+    let surfaceWidth = baseWidth * Math.abs(scaleU);
+    let surfaceHeight = baseHeight * Math.abs(scaleV);
+    if (definitionIsCircular) {
+      const factor =
+        Math.abs(scaleU - 1) >= Math.abs(scaleV - 1)
+          ? Math.abs(scaleU)
+          : Math.abs(scaleV);
+      surfaceWidth = baseWidth * factor;
+      surfaceHeight = surfaceWidth;
+    }
+    const quarterTurn = connector.rotation === 90 || connector.rotation === 270;
+    state.updateConnectorPlacement(featureId, {
+      cutoutWidth: roundMeasurement(quarterTurn ? surfaceHeight : surfaceWidth),
+      cutoutHeight: roundMeasurement(quarterTurn ? surfaceWidth : surfaceHeight),
+    });
+  }
+}
 
 function fitCamera(
   camera: THREE.PerspectiveCamera,
@@ -33,6 +172,8 @@ export function Viewport() {
   const sceneRef = useRef<THREE.Scene | null>(null);
   const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
   const controlsRef = useRef<OrbitControls | null>(null);
+  const transformControlsRef = useRef<TransformControls | null>(null);
+  const attachedFeatureRef = useRef<THREE.Object3D | null>(null);
   const modelRef = useRef<THREE.Group | null>(null);
   const gridRef = useRef<THREE.GridHelper | null>(null);
   const didInitialFit = useRef(false);
@@ -41,8 +182,12 @@ export function Viewport() {
   const pcbReference = useDesignerStore((state) => state.pcbReference);
   const stepPreview = useDesignerStore((state) => state.stepPreview);
   const selectedPart = useDesignerStore((state) => state.selectedPart);
+  const selectedFeatureId = useDesignerStore((state) => state.selectedFeatureId);
+  const transformMode = useDesignerStore((state) => state.transformMode);
   const focusedPart = useDesignerStore((state) => state.focusedPart);
   const setSelectedPart = useDesignerStore((state) => state.setSelectedPart);
+  const setSelectedFeature = useDesignerStore((state) => state.setSelectedFeature);
+  const setTransformMode = useDesignerStore((state) => state.setTransformMode);
   const focusSelectedPart = useDesignerStore((state) => state.focusSelectedPart);
   const showAllParts = useDesignerStore((state) => state.showAllParts);
   const showGrid = useDesignerStore((state) => state.showGrid);
@@ -81,6 +226,27 @@ export function Viewport() {
     controls.minDistance = 28;
     controls.maxDistance = 900;
     controls.maxPolarAngle = Math.PI * 0.495;
+
+    const transformControls = new TransformControls(camera, renderer.domElement);
+    transformControls.setSpace("world");
+    transformControls.setTranslationSnap(0.5);
+    transformControls.setScaleSnap(0.05);
+    transformControls.setSize(0.82);
+    const transformHelper = transformControls.getHelper();
+    scene.add(transformHelper);
+    let transformWasDragging = false;
+    const onDraggingChanged = (event: { value: unknown }) => {
+      const dragging = Boolean(event.value);
+      controls.enabled = !dragging;
+      if (dragging) transformWasDragging = true;
+    };
+    const onTransformMouseUp = () => {
+      if (attachedFeatureRef.current) {
+        commitFeatureTransform(attachedFeatureRef.current);
+      }
+    };
+    transformControls.addEventListener("dragging-changed", onDraggingChanged);
+    transformControls.addEventListener("mouseUp", onTransformMouseUp);
 
     const hemisphere = new THREE.HemisphereLight(0xffffff, 0x9ca79f, 2.2);
     scene.add(hemisphere);
@@ -132,6 +298,10 @@ export function Viewport() {
     };
 
     const onPointerUp = (event: PointerEvent) => {
+      if (transformWasDragging) {
+        transformWasDragging = false;
+        return;
+      }
       const moved = Math.hypot(
         event.clientX - pointerDown.x,
         event.clientY - pointerDown.y,
@@ -144,6 +314,14 @@ export function Viewport() {
       raycaster.setFromCamera(pointer, camera);
       const hits = raycaster.intersectObjects(modelRef.current.children, true);
       const hit = hits.find((candidate) => candidate.object instanceof THREE.Mesh);
+      const feature = getEditableFeature(hit?.object ?? null);
+      if (feature) {
+        setSelectedFeature(
+          feature.userData.featureKind as "panel" | "connector",
+          feature.userData.featureId as string,
+        );
+        return;
+      }
       const partId = hit?.object.userData.partId;
       if (typeof partId === "string") {
         setSelectedPart(partId as SelectablePart);
@@ -166,6 +344,7 @@ export function Viewport() {
     sceneRef.current = scene;
     cameraRef.current = camera;
     controlsRef.current = controls;
+    transformControlsRef.current = transformControls;
     gridRef.current = grid;
 
     return () => {
@@ -174,6 +353,11 @@ export function Viewport() {
       renderer.domElement.removeEventListener("pointerdown", onPointerDown);
       renderer.domElement.removeEventListener("pointerup", onPointerUp);
       controls.dispose();
+      transformControls.removeEventListener("dragging-changed", onDraggingChanged);
+      transformControls.removeEventListener("mouseUp", onTransformMouseUp);
+      transformControls.detach();
+      scene.remove(transformHelper);
+      transformControls.dispose();
       renderer.dispose();
       ground.geometry.dispose();
       (ground.material as THREE.Material).dispose();
@@ -187,9 +371,11 @@ export function Viewport() {
       sceneRef.current = null;
       cameraRef.current = null;
       controlsRef.current = null;
+      transformControlsRef.current = null;
+      attachedFeatureRef.current = null;
       gridRef.current = null;
     };
-  }, [setSelectedPart]);
+  }, [setSelectedFeature, setSelectedPart]);
 
   useEffect(() => {
     const scene = sceneRef.current;
@@ -206,9 +392,31 @@ export function Viewport() {
       pcbReference,
       stepPreview,
       focusedPart,
+      selectedFeatureId,
     );
     scene.add(model);
     modelRef.current = model;
+
+    const transformControls = transformControlsRef.current;
+    if (
+      transformControls &&
+      selectedFeatureId &&
+      (selectedPart === "panel" || selectedPart === "connector")
+    ) {
+      const feature = findEditableFeature(model, selectedFeatureId, selectedPart);
+      if (feature) {
+        attachedFeatureRef.current = feature;
+        transformControls.setMode(transformMode === "move" ? "translate" : "scale");
+        configureTransformAxes(transformControls, feature.userData.face as EnclosureFace);
+        transformControls.attach(feature);
+      } else {
+        transformControls.detach();
+        attachedFeatureRef.current = null;
+      }
+    } else if (transformControls) {
+      transformControls.detach();
+      attachedFeatureRef.current = null;
+    }
 
     if (
       (!didInitialFit.current || previousFocus.current !== focusedPart) &&
@@ -227,7 +435,16 @@ export function Viewport() {
         modelRef.current = null;
       }
     };
-  }, [exploded, focusedPart, parameters, pcbReference, selectedPart, stepPreview]);
+  }, [
+    exploded,
+    focusedPart,
+    parameters,
+    pcbReference,
+    selectedFeatureId,
+    selectedPart,
+    stepPreview,
+    transformMode,
+  ]);
 
   useEffect(() => {
     if (gridRef.current) gridRef.current.visible = showGrid;
@@ -245,9 +462,35 @@ export function Viewport() {
       <div
         className="viewport-canvas"
         data-focused-part={focusedPart ?? "all"}
+        data-selected-feature={selectedFeatureId ?? "none"}
+        data-transform-mode={transformMode}
         data-reference-kind={stepPreview ? "step" : pcbReference ? pcbReference.format : "parametric"}
         ref={hostRef}
       />
+      <div className="viewport-transform-controls" role="group" aria-label="3D 编辑工具">
+        <button
+          className={`icon-button ${transformMode === "move" ? "is-active" : ""}`}
+          type="button"
+          disabled={selectedPart !== "panel" && selectedPart !== "connector"}
+          onClick={() => setTransformMode("move")}
+          title="移动选中对象"
+          aria-label="移动选中对象"
+          aria-pressed={transformMode === "move"}
+        >
+          <Move3D size={17} />
+        </button>
+        <button
+          className={`icon-button ${transformMode === "scale" ? "is-active" : ""}`}
+          type="button"
+          disabled={selectedPart !== "panel" && selectedPart !== "connector"}
+          onClick={() => setTransformMode("scale")}
+          title="缩放选中对象"
+          aria-label="缩放选中对象"
+          aria-pressed={transformMode === "scale"}
+        >
+          <Scaling size={17} />
+        </button>
+      </div>
       <div className="viewport-focus-controls" role="group" aria-label="零件显示">
         <button
           className={`icon-button ${focusedPart ? "is-active" : ""}`}

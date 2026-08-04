@@ -5,12 +5,17 @@ import {
   CircuitBoard,
   FolderKanban,
   PanelTop,
+  Plus,
   SquareStack,
 } from "lucide-react";
 import type { ReactNode } from "react";
 import type { ClosureType, SelectablePart } from "../domain/model";
 import { getMagnetSupportOption } from "../domain/magnetSupport";
-import { getConnectorSurfaceLabel, getFaceLabel } from "../domain/placements";
+import {
+  getConnectorSurfaceLabel,
+  getFaceLabel,
+  getPanelLabel,
+} from "../domain/placements";
 import { useDesignerStore } from "../store/designerStore";
 import { getAntennaDefinition, getConnectorDefinition } from "../libraries/components";
 
@@ -34,20 +39,29 @@ interface TreeItemProps {
   label: string;
   detail?: string;
   depth?: number;
+  featureId?: string;
 }
 
-function TreeItem({ id, icon, label, detail, depth = 0 }: TreeItemProps) {
+function TreeItem({ id, icon, label, detail, depth = 0, featureId }: TreeItemProps) {
   const selectedPart = useDesignerStore((state) => state.selectedPart);
+  const selectedFeatureId = useDesignerStore((state) => state.selectedFeatureId);
   const focusedPart = useDesignerStore((state) => state.focusedPart);
   const setSelectedPart = useDesignerStore((state) => state.setSelectedPart);
+  const setSelectedFeature = useDesignerStore((state) => state.setSelectedFeature);
+  const selected =
+    selectedPart === id && (!featureId || selectedFeatureId === featureId);
 
   return (
     <button
-      className={`tree-item ${selectedPart === id ? "is-selected" : ""} ${focusedPart && focusedPart !== id ? "is-context-hidden" : ""}`}
+      className={`tree-item ${selected ? "is-selected" : ""} ${focusedPart && focusedPart !== id ? "is-context-hidden" : ""}`}
       style={{ paddingLeft: 12 + depth * 15 }}
       type="button"
-      onClick={() => setSelectedPart(id)}
-      aria-pressed={selectedPart === id}
+      onClick={() =>
+        featureId && (id === "panel" || id === "connector")
+          ? setSelectedFeature(id, featureId)
+          : setSelectedPart(id)
+      }
+      aria-pressed={selected}
     >
       <span className="tree-icon" aria-hidden="true">{icon}</span>
       <span className="tree-label">
@@ -61,9 +75,11 @@ function TreeItem({ id, icon, label, detail, depth = 0 }: TreeItemProps) {
 export function AssemblyTree() {
   const parameters = useDesignerStore((state) => state.parameters);
   const pcbReference = useDesignerStore((state) => state.pcbReference);
+  const addPanelPlacement = useDesignerStore((state) => state.addPanelPlacement);
+  const addConnectorPlacement = useDesignerStore((state) => state.addConnectorPlacement);
   const objectCount =
     4 +
-    Number(parameters.panelEnabled) +
+    parameters.panelPlacements.length +
     parameters.connectorPlacements.length +
     Number(parameters.antennaEnabled);
 
@@ -98,16 +114,37 @@ export function AssemblyTree() {
           depth={1}
         />
         <TreeItem id="lid" icon={<SquareStack size={16} />} label="顶盖" detail={CLOSURE_LABELS[parameters.closureType]} depth={1} />
-        {parameters.panelEnabled ? (
-          <TreeItem id="panel" icon={<PanelTop size={16} />} label="可更换面板" detail={`${getFaceLabel(parameters.panelFace)} · ${parameters.panelThickness} mm · ${PANEL_MOUNTING_LABELS[parameters.panelMountingType]}`} depth={1} />
-        ) : null}
+        <div className="tree-section-heading">
+          <span>面板</span>
+          <button type="button" onClick={addPanelPlacement} title="添加面板" aria-label="添加面板">
+            <Plus size={15} />
+          </button>
+        </div>
+        {parameters.panelPlacements.map((panel) => (
+          <TreeItem
+            key={panel.id}
+            id="panel"
+            featureId={panel.id}
+            icon={<PanelTop size={16} />}
+            label={getPanelLabel(panel, parameters)}
+            detail={`${getFaceLabel(panel.face)} · ${panel.width.toFixed(1)} × ${panel.height.toFixed(1)} mm · ${PANEL_MOUNTING_LABELS[panel.mountingType]}`}
+            depth={1}
+          />
+        ))}
+        <div className="tree-section-heading">
+          <span>接口</span>
+          <button type="button" onClick={addConnectorPlacement} title="添加接口" aria-label="添加接口">
+            <Plus size={15} />
+          </button>
+        </div>
         {parameters.connectorPlacements.map((placement) => (
           <TreeItem
             key={placement.id}
             id="connector"
+            featureId={placement.id}
             icon={<Cable size={16} />}
             label={getConnectorDefinition(placement.definitionId).name}
-            detail={getConnectorSurfaceLabel(placement.surface, parameters)}
+            detail={getConnectorSurfaceLabel(placement, parameters)}
             depth={2}
           />
         ))}

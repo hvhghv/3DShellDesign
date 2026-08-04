@@ -192,7 +192,7 @@ test("desktop workbench renders a nonblank interactive enclosure", async ({ page
   const exportCases = [
     { option: "base-stl", filename: "3dshell-base.stl", size: [108, 78, 24] },
     { option: "lid-stl", filename: "3dshell-lid.stl", size: [108, 78, 4.2] },
-    { option: "panel-stl", filename: "3dshell-panel.stl", size: [62.64, 40.56, 2] },
+    { option: "panel-stl:panel-1", filename: "3dshell-panel-1.stl", size: [62.64, 40.56, 2] },
   ] as const;
   for (const exportCase of exportCases) {
     await exportSelect.selectOption(exportCase.option);
@@ -261,11 +261,11 @@ test("desktop workbench renders a nonblank interactive enclosure", async ({ page
     page.getByRole("button", { name: /SMA 穿板棒状天线.*2\.4 GHz/ }),
   ).toBeVisible();
 
-  await exportSelect.selectOption("panel-dxf");
+  await exportSelect.selectOption("panel-dxf:panel-1");
   const dxfDownloadPromise = page.waitForEvent("download");
   await page.locator(".manufacturing-export button").click();
   const dxfDownload = await dxfDownloadPromise;
-  expect(dxfDownload.suggestedFilename()).toBe("3dshell-panel.dxf");
+  expect(dxfDownload.suggestedFilename()).toBe("3dshell-panel-1.dxf");
   const dxfPath = await dxfDownload.path();
   expect(dxfPath).not.toBeNull();
   const dxf = (await readFile(dxfPath!)).toString("utf8");
@@ -306,8 +306,8 @@ test("desktop workbench renders a nonblank interactive enclosure", async ({ page
   expect(libraryStl.dimensions[0]).toBeCloseTo(108, 1);
   expect(libraryStl.dimensions[1]).toBeCloseTo(78, 1);
 
-  await page.getByRole("button", { name: "添加", exact: true }).click();
-  const secondConnector = page.locator(".connector-placement").nth(1);
+  await page.getByRole("button", { name: "添加接口" }).click();
+  const secondConnector = page.locator(".connector-placement");
   await page
     .getByRole("combobox", { name: "接口 2 安装位置" })
     .selectOption("right");
@@ -336,7 +336,7 @@ test("desktop workbench renders a nonblank interactive enclosure", async ({ page
   expect(multiConnectorStl.triangleCount).toBeGreaterThan(libraryStl.triangleCount);
 
   await page.getByRole("combobox", { name: "面板所在面" }).selectOption("back");
-  await expect(page.locator(".tree-nav").getByText(/后壁 · 2 mm/)).toBeVisible();
+  await expect(page.locator(".tree-nav").getByText(/后壁 · .* mm/)).toBeVisible();
   await exportSelect.selectOption("base-stl");
   const sidePanelBasePromise = page.waitForEvent("download", { timeout: 60_000 });
   await page.locator(".manufacturing-export button").click();
@@ -347,8 +347,12 @@ test("desktop workbench renders a nonblank interactive enclosure", async ({ page
   ).toBe(1);
 
   await page
+    .locator(".tree-item")
+    .filter({ hasText: "USB Type-C 母座" })
+    .click();
+  await page
     .getByRole("combobox", { name: "接口 2 安装位置" })
-    .selectOption("panel");
+    .selectOption("panel:panel-1");
   await page
     .getByRole("combobox", { name: "接口 2 面内旋转" })
     .selectOption("0");
@@ -357,7 +361,7 @@ test("desktop workbench renders a nonblank interactive enclosure", async ({ page
     .filter({ hasText: "纵向偏移" })
     .locator("input")
     .fill("0");
-  await exportSelect.selectOption("panel-stl");
+  await exportSelect.selectOption("panel-stl:panel-1");
   const panelConnectorPromise = page.waitForEvent("download", { timeout: 60_000 });
   await page.locator(".manufacturing-export button").click();
   const panelConnectorPath = await (await panelConnectorPromise).path();
@@ -365,7 +369,7 @@ test("desktop workbench renders a nonblank interactive enclosure", async ({ page
   expect(
     readStlDimensions(await readFile(panelConnectorPath!)).connectedComponents,
   ).toBe(1);
-  await exportSelect.selectOption("panel-dxf");
+  await exportSelect.selectOption("panel-dxf:panel-1");
   const panelConnectorDxfPromise = page.waitForEvent("download");
   await page.locator(".manufacturing-export button").click();
   const panelConnectorDxfPath = await (await panelConnectorDxfPromise).path();
@@ -388,6 +392,10 @@ test("desktop workbench renders a nonblank interactive enclosure", async ({ page
   ).toBe(1);
 
   await page.getByRole("combobox", { name: "面板所在面" }).selectOption("right");
+  await page
+    .locator(".tree-item")
+    .filter({ hasText: "USB Type-C 母座" })
+    .click();
   for (const connectorFace of ["back", "left", "bottom"] as const) {
     await page
       .getByRole("combobox", { name: "接口 2 安装位置" })
@@ -404,7 +412,7 @@ test("desktop workbench renders a nonblank interactive enclosure", async ({ page
     ).toBe(1);
   }
 
-  await page.getByRole("button", { name: "删除接口 2" }).click();
+  await page.getByRole("button", { name: "删除当前接口" }).click();
   await page
     .getByRole("combobox", { name: "接口 1 安装位置" })
     .selectOption("top");
@@ -554,11 +562,22 @@ test("project parameters survive an immediate page reload", async ({ page }) => 
   await expect(lengthInput).toHaveValue("123");
   await page.getByRole("tab", { name: "结构" }).click();
   await page.getByRole("checkbox", { name: /启用天线/ }).check();
-  await page.getByRole("button", { name: "添加", exact: true }).click();
+  await page.getByRole("button", { name: "添加接口" }).click();
   await page
     .getByRole("combobox", { name: "接口 2 安装位置" })
     .selectOption("right");
   await page.getByRole("combobox", { name: "面板所在面" }).selectOption("left");
+  await page.getByRole("button", { name: "添加面板" }).click();
+  await expect(
+    page.locator(".tree-item").filter({ hasText: "面板 2" }),
+  ).toBeVisible();
+  await expect(page.getByRole("button", { name: "移动选中对象" })).toBeEnabled();
+  await page.getByRole("button", { name: "缩放选中对象" }).click();
+  await expect(page.locator(".viewport-canvas")).toHaveAttribute(
+    "data-transform-mode",
+    "scale",
+  );
+  await page.getByRole("combobox", { name: "面板所在面" }).selectOption("right");
 
   await page.reload();
 
@@ -569,12 +588,77 @@ test("project parameters survive an immediate page reload", async ({ page }) => 
     page.locator(".tree-nav").getByRole("button", { name: /SMA 穿板棒状天线/ }),
   ).toBeVisible();
   await page.getByRole("tab", { name: "结构" }).click();
+  await expect(page.locator(".tree-item").filter({ hasText: "面板 2" })).toBeVisible();
+  await page
+    .locator(".tree-item")
+    .filter({ hasText: "USB Type-C 母座" })
+    .nth(1)
+    .click();
   await expect(
     page.getByRole("combobox", { name: "接口 2 安装位置" }),
   ).toHaveValue("right");
+  await page.locator(".tree-item").filter({ hasText: "面板 1" }).click();
   await expect(page.getByRole("combobox", { name: "面板所在面" })).toHaveValue(
     "left",
   );
+  await page.locator(".tree-item").filter({ hasText: "面板 2" }).click();
+  await expect(page.getByRole("combobox", { name: "面板所在面" })).toHaveValue(
+    "right",
+  );
+});
+
+test("3D transform handles edit the selected panel", async ({ page }, testInfo) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+  await page.locator(".tree-item").filter({ hasText: "面板 1" }).click();
+  await expect(page.locator(".viewport-canvas")).toHaveAttribute(
+    "data-selected-feature",
+    "panel-1",
+  );
+  await expect(page.getByRole("button", { name: "移动选中对象" })).toBeEnabled();
+  const panelSection = page.locator(".inspector-section").filter({
+    has: page.getByRole("heading", { name: "面板参数" }),
+  });
+  const horizontalOffset = panelSection
+    .locator(".field-row")
+    .filter({ hasText: "横向偏移" })
+    .locator("input");
+  const panelWidth = panelSection
+    .locator(".field-row")
+    .filter({ hasText: "宽度" })
+    .locator("input");
+  await expect(horizontalOffset).toHaveValue("0");
+  await expect(panelWidth).toHaveValue("62.64");
+  const canvas = page.locator(".viewport-canvas canvas");
+  const canvasBox = await canvas.boundingBox();
+  expect(canvasBox).not.toBeNull();
+  await page.getByRole("button", { name: "缩放选中对象" }).click();
+  await expect(page.locator(".viewport-canvas")).toHaveAttribute(
+    "data-transform-mode",
+    "scale",
+  );
+  await page.mouse.move(canvasBox!.x + 505, canvasBox!.y + 290);
+  await page.mouse.down();
+  await page.mouse.move(canvasBox!.x + 525, canvasBox!.y + 294, { steps: 10 });
+  await page.mouse.up();
+  await expect(panelWidth).not.toHaveValue("62.64");
+  const scaledWidth = await panelWidth.inputValue();
+  await page.getByRole("button", { name: "移动选中对象" }).click();
+  await page.mouse.move(canvasBox!.x + 505, canvasBox!.y + 290);
+  await page.mouse.down();
+  await page.mouse.move(canvasBox!.x + 530, canvasBox!.y + 295, { steps: 12 });
+  await page.mouse.up();
+  await expect(horizontalOffset).not.toHaveValue("0");
+  const movedOffset = await horizontalOffset.inputValue();
+  await expect(page.locator(".status-bar")).toContainText("已缓存");
+  await page.reload();
+  await page.locator(".tree-item").filter({ hasText: "面板 1" }).click();
+  await expect(horizontalOffset).toHaveValue(movedOffset);
+  await expect(panelWidth).toHaveValue(scaledWidth);
+  await page.screenshot({
+    path: testInfo.outputPath("transform-gizmo.png"),
+    fullPage: true,
+  });
 });
 
 test("narrow workbench stays framed and keeps the 3D canvas visible", async ({ page }, testInfo) => {

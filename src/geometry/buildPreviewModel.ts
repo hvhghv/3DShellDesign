@@ -11,6 +11,7 @@ import type {
   StepPreview,
 } from "../domain/model";
 import {
+  getPanelPlacement,
   getRotatedCutoutSize,
   resolveConnectorFace,
 } from "../domain/placements";
@@ -511,12 +512,12 @@ export function buildPreviewModel(
   pcbReference: PcbReference | null,
   stepPreview: StepPreview | null = null,
   focusedPart: SelectablePart | null = null,
+  selectedFeatureId: string | null = null,
 ): THREE.Group {
   const root = new THREE.Group();
   root.name = "enclosure-preview";
   const dimensions = deriveEnclosureDimensions(parameters);
   const shellProfile = getMaterial(parameters.shellMaterialId);
-  const panelProfile = getMaterial(parameters.panelMaterialId);
   const shellMaterial = standardMaterial(shellProfile.color, selectedPart === "base");
   const lidMaterial = standardMaterial(shellProfile.color, selectedPart === "lid");
   const pcbMaterial = standardMaterial(0x2f7751, selectedPart === "pcb", {
@@ -638,23 +639,22 @@ export function buildPreviewModel(
     );
   }
 
-  if (parameters.panelEnabled && parameters.panelFace === "top") {
-    const panelOpeningLength = dimensions.panelLength - 4;
-    const panelOpeningWidth = dimensions.panelWidth - 4;
+  const topPanels = parameters.panelPlacements.filter((panel) => panel.face === "top");
+  if (topPanels.length > 0) {
     const lidShape = createRoundedShape(
       dimensions.outsideLength,
       dimensions.outsideWidth,
       parameters.cornerRadius,
     );
-    lidShape.holes.push(
-      createRoundedHole(
-        panelOpeningLength,
-        panelOpeningWidth,
+    for (const panel of topPanels) {
+      lidShape.holes.push(createRoundedHole(
+        panel.width - 4,
+        panel.height - 4,
         3.5,
-        parameters.panelOffsetU,
-        -parameters.panelOffsetV,
-      ),
-    );
+        panel.offsetU,
+        -panel.offsetV,
+      ));
+    }
     addMesh(
       root,
       createExtrudedGeometry(lidShape, parameters.lidThickness),
@@ -678,11 +678,15 @@ export function buildPreviewModel(
     );
   }
 
-  if (parameters.panelEnabled) {
-    const face = parameters.panelFace;
+  for (const panel of parameters.panelPlacements) {
+    const face = panel.face;
+    const panelProfile = getMaterial(panel.materialId);
+    const panelSelected =
+      selectedPart === "panel" &&
+      (selectedFeatureId === null || selectedFeatureId === panel.id);
     const panelMaterial = standardMaterial(
       panelProfile.color,
-      selectedPart === "panel",
+      panelSelected,
       {
         transparent: true,
         opacity: panelProfile.id === "aluminum-sheet" ? 1 : 0.66,
@@ -693,42 +697,55 @@ export function buildPreviewModel(
     const explodedOffset = exploded ? 8 : 0;
     const panelPosition = getPreviewFacePosition(
       face,
-      parameters.panelOffsetU,
-      parameters.panelOffsetV,
-      parameters.panelThickness / 2 + explodedOffset,
+      panel.offsetU,
+      panel.offsetV,
+      panel.thickness / 2 + explodedOffset,
       parameters,
       dimensions,
       lidY,
     );
+    const panelGroup = new THREE.Group();
+    panelGroup.position.set(...panelPosition);
+    panelGroup.userData = {
+      partId: "panel",
+      featureId: panel.id,
+      featureKind: "panel",
+      face,
+      baseWidth: panel.width,
+      baseHeight: panel.height,
+    };
+    root.add(panelGroup);
+    panelGroup.name = `panel-transform-${panel.id}`;
     const panelMesh = addMesh(
-      root,
+      panelGroup,
       createFacePlateGeometry(
-        dimensions.panelLength,
-        dimensions.panelWidth,
-        parameters.panelThickness,
+        panel.width,
+        panel.height,
+        panel.thickness,
         3.2,
         face,
       ),
       panelMaterial,
       "panel",
-      panelPosition,
+      [0, 0, 0],
     );
-    panelMesh.name = `panel-${face}`;
+    panelMesh.name = panel.id;
+    panelMesh.userData.featureId = panel.id;
 
     if (face !== "top") {
       const opening = addMesh(
         root,
         createFacePlaneGeometry(
-          dimensions.panelLength - 4,
-          dimensions.panelWidth - 4,
+          panel.width - 4,
+          panel.height - 4,
           face,
         ),
         standardMaterial(0x202725, selectedPart === "panel", { roughness: 0.82 }),
         "base",
         getPreviewFacePosition(
           face,
-          parameters.panelOffsetU,
-          parameters.panelOffsetV,
+          panel.offsetU,
+          panel.offsetV,
           0.04,
           parameters,
           dimensions,
@@ -736,20 +753,22 @@ export function buildPreviewModel(
         ),
         false,
       );
-      opening.name = `panel-opening-${face}`;
+      opening.name = `panel-opening-${panel.id}`;
+      opening.userData.featureId = panel.id;
+      opening.userData.featureKind = "panel";
       opening.renderOrder = 4;
     }
 
     const targetPart: SelectablePart = face === "top" ? "lid" : "base";
-    if (parameters.panelMountingType === "slide") {
+    if (panel.mountingType === "slide") {
       for (const pointV of [
-        -dimensions.panelWidth / 2 - 0.6,
-        dimensions.panelWidth / 2 + 0.6,
+        -panel.height / 2 - 0.6,
+        panel.height / 2 + 0.6,
       ]) {
         addMesh(
           root,
           createFaceBoxGeometry(
-            dimensions.panelLength + 2,
+            panel.width + 2,
             1.5,
             1.2,
             face,
@@ -758,8 +777,8 @@ export function buildPreviewModel(
           targetPart,
           getPreviewFacePosition(
             face,
-            parameters.panelOffsetU,
-            parameters.panelOffsetV + pointV,
+            panel.offsetU,
+            panel.offsetV + pointV,
             0.6,
             parameters,
             dimensions,
@@ -769,25 +788,25 @@ export function buildPreviewModel(
       }
     } else {
       const fixingMaterial = standardMaterial(
-        parameters.panelMountingType === "screw" ? 0x59615d : 0xc9933d,
-        selectedPart === "panel",
+        panel.mountingType === "screw" ? 0x59615d : 0xc9933d,
+        panelSelected,
         { metalness: 0.7, roughness: 0.26 },
       );
-      for (const [pointU, pointV] of getPanelMountingPoints(parameters)) {
+      for (const [pointU, pointV] of getPanelMountingPoints(panel)) {
         addMesh(
           root,
           createFaceCylinderGeometry(
-            parameters.panelMountingType === "screw" ? 1.3 : 2.15,
-            Math.min(1.4, parameters.panelThickness),
+            panel.mountingType === "screw" ? 1.3 : 2.15,
+            Math.min(1.4, panel.thickness),
             face,
           ),
           fixingMaterial,
           "panel",
           getPreviewFacePosition(
             face,
-            parameters.panelOffsetU + pointU,
-            parameters.panelOffsetV + pointV,
-            parameters.panelThickness + explodedOffset + 0.2,
+            panel.offsetU + pointU,
+            panel.offsetV + pointV,
+            panel.thickness + explodedOffset + 0.2,
             parameters,
             dimensions,
             lidY,
@@ -858,19 +877,26 @@ export function buildPreviewModel(
   }
 
   for (const placement of parameters.connectorPlacements) {
-    if (placement.surface === "panel" && !parameters.panelEnabled) continue;
+    const targetPanel =
+      placement.surface === "panel"
+        ? getPanelPlacement(parameters, placement.panelId)
+        : null;
+    if (placement.surface === "panel" && !targetPanel) continue;
     const connector = getConnectorDefinition(placement.definitionId);
     const face = resolveConnectorFace(placement, parameters);
     const surfaceU =
       placement.offsetU +
-      (placement.surface === "panel" ? parameters.panelOffsetU : 0);
+      (targetPanel?.offsetU ?? 0);
     const surfaceV =
       placement.offsetV +
-      (placement.surface === "panel" ? parameters.panelOffsetV : 0);
+      (targetPanel?.offsetV ?? 0);
     const surfaceOutset =
-      placement.surface === "panel" ? parameters.panelThickness : 0;
+      targetPanel?.thickness ?? 0;
     const quarterTurn = placement.rotation === 90 || placement.rotation === 270;
-    const portMaterial = standardMaterial(connector.visualGeometry.color, selectedPart === "connector", {
+    const connectorSelected =
+      selectedPart === "connector" &&
+      (selectedFeatureId === null || selectedFeatureId === placement.id);
+    const portMaterial = standardMaterial(connector.visualGeometry.color, connectorSelected, {
       metalness: 0.78,
       roughness: 0.22,
     });
@@ -892,27 +918,42 @@ export function buildPreviewModel(
             connector.visualGeometry.depth,
             face,
           );
+    const connectorPosition = getPreviewFacePosition(
+      face,
+      surfaceU,
+      surfaceV,
+      surfaceOutset - connector.visualGeometry.depth / 2 + 0.5,
+      parameters,
+      dimensions,
+      lidY,
+    );
+    const connectorGroup = new THREE.Group();
+    connectorGroup.position.set(...connectorPosition);
+    const [openingWidth, openingHeight] = getRotatedCutoutSize(placement);
+    connectorGroup.userData = {
+      partId: "connector",
+      featureId: placement.id,
+      featureKind: "connector",
+      face,
+      baseWidth: openingWidth,
+      baseHeight: openingHeight,
+      uniformScale: connector.panelCutout.shape === "circle",
+    };
+    root.add(connectorGroup);
+    connectorGroup.name = `connector-transform-${placement.id}`;
     const connectorMesh = addMesh(
-      root,
+      connectorGroup,
       visualGeometry,
       portMaterial,
       "connector",
-      getPreviewFacePosition(
-        face,
-        surfaceU,
-        surfaceV,
-        surfaceOutset - connector.visualGeometry.depth / 2 + 0.5,
-        parameters,
-        dimensions,
-        lidY,
-      ),
+      [0, 0, 0],
     );
     connectorMesh.name = placement.id;
+    connectorMesh.userData.featureId = placement.id;
 
     const openingMaterial = standardMaterial(0x202725, selectedPart === "connector", {
       roughness: 0.8,
     });
-    const [openingWidth, openingHeight] = getRotatedCutoutSize(placement);
     const openingGeometry =
       connector.panelCutout.shape === "circle"
         ? createFaceDiskGeometry(openingWidth / 2, face)
@@ -934,8 +975,10 @@ export function buildPreviewModel(
       false,
     );
     opening.renderOrder = 4;
+    opening.userData.featureId = placement.id;
+    opening.userData.featureKind = "connector";
 
-    if (selectedPart === "connector") {
+    if (connectorSelected) {
       const keepoutMaterial = standardMaterial(0xe1a33a, true, {
         transparent: true,
         opacity: 0.18,

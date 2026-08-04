@@ -6,8 +6,10 @@ describe("enclosure templates", () => {
     expect(ENCLOSURE_TEMPLATES).toHaveLength(4);
     expect(new Set(ENCLOSURE_TEMPLATES.map((item) => item.id)).size).toBe(4);
     expect(getEnclosureTemplate("wall-mount").parameterOverrides).toMatchObject({
-      panelEnabled: false,
       closureType: "screw",
     });
+    expect(getEnclosureTemplate("wall-mount").parameterOverrides).not.toHaveProperty(
+      "panelPlacements",
+    );
   });
 });

@@ -14,15 +14,25 @@ import {
   getFastenerDefinition,
 } from "../libraries/components";
 
-type ExportChoice =
+type StaticExportChoice =
   | "layout-3mf"
   | "base-stl"
   | "lid-stl"
-  | "panel-stl"
-  | "panel-svg"
-  | "panel-dxf"
   | "bom-csv"
   | "manifest";
+type PanelExportFormat = "stl" | "svg" | "dxf";
+type ExportChoice = StaticExportChoice | `panel-${PanelExportFormat}:${string}`;
+
+function parsePanelChoice(
+  choice: ExportChoice,
+): { format: PanelExportFormat; panelId: string } | null {
+  const match = /^panel-(stl|svg|dxf):(.+)$/.exec(choice);
+  if (!match) return null;
+  return {
+    format: match[1] as PanelExportFormat,
+    panelId: match[2],
+  };
+}
 
 function downloadBlob(filename: string, blob: Blob): void {
   const url = URL.createObjectURL(blob);
@@ -45,8 +55,10 @@ export function ManufacturingExport() {
     [parameters, pcbReference],
   );
   const blocked = issues.some((issue) => issue.level === "error");
-  const effectiveChoice =
-    !parameters.panelEnabled && choice.startsWith("panel-")
+  const requestedPanel = parsePanelChoice(choice);
+  const effectiveChoice: ExportChoice =
+    requestedPanel &&
+    !parameters.panelPlacements.some((panel) => panel.id === requestedPanel.panelId)
       ? "base-stl"
       : choice;
 
@@ -54,6 +66,7 @@ export function ManufacturingExport() {
     setBusy(true);
     setResult(null);
     try {
+      const panelChoice = parsePanelChoice(effectiveChoice);
       if (effectiveChoice === "layout-3mf") {
         const exported = await exportPrintLayout(
           projectName,
@@ -67,21 +80,43 @@ export function ManufacturingExport() {
         setResult(
           `${exported.summary.partCount} 个零件 · ${exported.summary.triangleCount.toLocaleString()} 三角面`,
         );
-      } else if (effectiveChoice.endsWith("-stl")) {
-        const part = effectiveChoice.replace("-stl", "") as SolidPart;
-        const exported = await exportSolidPart(parameters, part, pcbReference);
+      } else if (
+        effectiveChoice.endsWith("-stl") ||
+        panelChoice?.format === "stl"
+      ) {
+        const part: SolidPart = panelChoice
+          ? "panel"
+          : (effectiveChoice.replace("-stl", "") as SolidPart);
+        const panelIndex = panelChoice
+          ? parameters.panelPlacements.findIndex(
+              (panel) => panel.id === panelChoice.panelId,
+            )
+          : -1;
+        const exported = await exportSolidPart(
+          parameters,
+          part,
+          pcbReference,
+          panelChoice?.panelId ?? null,
+        );
         downloadBlob(
-          `3dshell-${part}.stl`,
+          panelChoice
+            ? `3dshell-panel-${panelIndex + 1}.stl`
+            : `3dshell-${part}.stl`,
           new Blob([exported.buffer], { type: "model/stl" }),
         );
         setResult(
           `${exported.summary.triangleCount.toLocaleString()} 三角面 · ${exported.summary.volume.toFixed(0)} mm³`,
         );
-      } else if (effectiveChoice === "panel-svg" || effectiveChoice === "panel-dxf") {
-        const isDxf = effectiveChoice === "panel-dxf";
-        const contents = isDxf ? createPanelDxf(parameters) : createPanelSvg(parameters);
+      } else if (panelChoice) {
+        const isDxf = panelChoice.format === "dxf";
+        const panelIndex = parameters.panelPlacements.findIndex(
+          (panel) => panel.id === panelChoice.panelId,
+        );
+        const contents = isDxf
+          ? createPanelDxf(parameters, panelChoice.panelId)
+          : createPanelSvg(parameters, panelChoice.panelId);
         downloadBlob(
-          isDxf ? "3dshell-panel.dxf" : "3dshell-panel.svg",
+          `3dshell-panel-${panelIndex + 1}.${panelChoice.format}`,
           new Blob([contents], {
             type: isDxf
               ? "application/dxf;charset=utf-8"
@@ -111,19 +146,18 @@ export function ManufacturingExport() {
             process: getMaterial(parameters.shellMaterialId).process,
             wallThickness: parameters.wallThickness,
           },
-          panel: parameters.panelEnabled
-            ? {
-                material: getMaterial(parameters.panelMaterialId).name,
-                process: getMaterial(parameters.panelMaterialId).process,
-                thickness: parameters.panelThickness,
-                size: [dimensions.panelLength, dimensions.panelWidth],
-                face: parameters.panelFace,
-                offset: [parameters.panelOffsetU, parameters.panelOffsetV],
-              }
-            : null,
+          panels: parameters.panelPlacements.map((panel) => ({
+            id: panel.id,
+            material: getMaterial(panel.materialId).name,
+            process: getMaterial(panel.materialId).process,
+            thickness: panel.thickness,
+            size: [panel.width, panel.height],
+            face: panel.face,
+            offset: [panel.offsetU, panel.offsetV],
+            mounting: panel.mountingType,
+          })),
           closure: parameters.closureType,
           template: parameters.enclosureTemplateId,
-          panelMounting: parameters.panelMountingType,
           ventPattern: parameters.ventPattern,
           connectors: parameters.connectorPlacements.map((placement) => ({
             ...placement,
@@ -168,9 +202,17 @@ export function ManufacturingExport() {
           <option value="layout-3mf">3MF 打印布局</option>
           <option value="base-stl">下壳 STL</option>
           <option value="lid-stl">顶盖 STL</option>
-          {parameters.panelEnabled ? <option value="panel-stl">面板 STL</option> : null}
-          {parameters.panelEnabled ? <option value="panel-svg">面板 SVG</option> : null}
-          {parameters.panelEnabled ? <option value="panel-dxf">面板 DXF</option> : null}
+          {parameters.panelPlacements.flatMap((panel, index) => [
+            <option key={`${panel.id}-stl`} value={`panel-stl:${panel.id}`}>
+              面板 {index + 1} STL
+            </option>,
+            <option key={`${panel.id}-svg`} value={`panel-svg:${panel.id}`}>
+              面板 {index + 1} SVG
+            </option>,
+            <option key={`${panel.id}-dxf`} value={`panel-dxf:${panel.id}`}>
+              面板 {index + 1} DXF
+            </option>,
+          ])}
           <option value="bom-csv">物料清单 CSV</option>
           <option value="manifest">制造清单 JSON</option>
         </select>

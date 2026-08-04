@@ -59,10 +59,17 @@ export function exportSolidPart(
   parameters: DesignerParameters,
   part: SolidPart,
   pcbReference: PcbReference | null,
+  panelId: string | null = null,
 ): Promise<SolidExportSuccess> {
   const id = nextRequestId;
   nextRequestId += 1;
-  const request: GeometryExportRequest = { id, parameters, pcbReference, part };
+  const request: GeometryExportRequest = {
+    id,
+    parameters,
+    pcbReference,
+    part,
+    panelId,
+  };
 
   return new Promise((resolve, reject) => {
     const timeout = window.setTimeout(() => {

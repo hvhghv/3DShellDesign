@@ -280,6 +280,51 @@ select:focus-visible {
   padding: 6px 0;
 }
 
+.tree-section-heading {
+  display: flex;
+  height: 31px;
+  padding: 3px 9px 3px 14px;
+  align-items: center;
+  justify-content: space-between;
+  color: var(--subtle);
+  border-top: 1px solid var(--border);
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.tree-section-heading button,
+.icon-section-button {
+  display: grid;
+  width: 25px;
+  height: 25px;
+  padding: 0;
+  place-items: center;
+  color: var(--accent-strong);
+  background: var(--accent-soft);
+  border: 1px solid #b7d0bf;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.tree-section-heading button:hover,
+.icon-section-button:hover {
+  color: #ffffff;
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.icon-section-button {
+  color: var(--muted);
+  background: transparent;
+  border-color: transparent;
+}
+
+.icon-section-button:hover {
+  color: var(--error);
+  background: #f9ecea;
+  border-color: #e7c3bd;
+}
+
 .tree-item {
   display: flex;
   width: 100%;
@@ -399,6 +444,28 @@ select:focus-visible {
   right: 10px;
   display: flex;
   gap: 3px;
+}
+
+.viewport-transform-controls {
+  position: absolute;
+  z-index: 3;
+  top: 10px;
+  right: 92px;
+  display: flex;
+  gap: 3px;
+}
+
+.viewport-transform-controls .icon-button {
+  background: rgba(255, 255, 255, 0.9);
+  border-color: rgba(188, 196, 189, 0.88);
+  box-shadow: 0 2px 8px rgba(35, 45, 39, 0.07);
+  backdrop-filter: blur(5px);
+}
+
+.viewport-transform-controls .icon-button.is-active {
+  color: var(--accent-strong);
+  background: var(--accent-soft);
+  border-color: var(--accent);
 }
 
 .viewport-focus-controls .icon-button {

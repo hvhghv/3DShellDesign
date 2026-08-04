@@ -12,6 +12,7 @@ import type {
 } from "../domain/model";
 import { getClosurePoints, MAGNET_GEOMETRY } from "../domain/magnetSupport";
 import {
+  getPanelPlacement,
   getRotatedCutoutSize,
   resolveConnectorFace,
 } from "../domain/placements";
@@ -458,58 +459,58 @@ function applyBasePanelFeatures(
   parameters: DesignerParameters,
   dimensions: EnclosureDimensions,
 ): ManifoldSolid {
-  if (!parameters.panelEnabled || parameters.panelFace === "top") return source;
-  const face = parameters.panelFace;
-  let result = subtractAndDispose(
-    source,
-    createFaceCutter(
-      module,
-      face,
-      parameters.panelOffsetU,
-      parameters.panelOffsetV,
-      dimensions.panelLength - 4,
-      dimensions.panelWidth - 4,
-      3.5,
-      parameters,
-      dimensions,
-    ),
-  );
+  let result = source;
+  for (const panel of parameters.panelPlacements) {
+    if (panel.face === "top") continue;
+    const face = panel.face;
+    result = subtractAndDispose(
+      result,
+      createFaceCutter(
+        module,
+        face,
+        panel.offsetU,
+        panel.offsetV,
+        panel.width - 4,
+        panel.height - 4,
+        3.5,
+        parameters,
+        dimensions,
+      ),
+    );
 
-  if (parameters.panelMountingType === "slide") {
-    for (const pointV of [
-      -dimensions.panelWidth / 2 - 1.2,
-      dimensions.panelWidth / 2 + 1.2,
-    ]) {
-      result = unionAndDispose(
-        result,
-        createFaceRail(
-          module,
-          face,
-          parameters.panelOffsetU,
-          parameters.panelOffsetV + pointV,
-          dimensions.panelLength + 2,
-          parameters,
-          dimensions,
-        ),
-      );
-    }
-  } else {
-    const radius = parameters.panelMountingType === "screw" ? 1.3 : 2.15;
-    for (const [pointU, pointV] of getPanelMountingPoints(parameters)) {
-      result = subtractAndDispose(
-        result,
-        createFaceCutter(
-          module,
-          face,
-          parameters.panelOffsetU + pointU,
-          parameters.panelOffsetV + pointV,
-          radius * 2,
-          radius * 2,
-          radius,
-          parameters,
-          dimensions,
-        ),
-      );
+    if (panel.mountingType === "slide") {
+      for (const pointV of [-panel.height / 2 - 1.2, panel.height / 2 + 1.2]) {
+        result = unionAndDispose(
+          result,
+          createFaceRail(
+            module,
+            face,
+            panel.offsetU,
+            panel.offsetV + pointV,
+            panel.width + 2,
+            parameters,
+            dimensions,
+          ),
+        );
+      }
+    } else {
+      const radius = panel.mountingType === "screw" ? 1.3 : 2.15;
+      for (const [pointU, pointV] of getPanelMountingPoints(panel)) {
+        result = subtractAndDispose(
+          result,
+          createFaceCutter(
+            module,
+            face,
+            panel.offsetU + pointU,
+            panel.offsetV + pointV,
+            radius * 2,
+            radius * 2,
+            radius,
+            parameters,
+            dimensions,
+          ),
+        );
+      }
     }
   }
   return result;
@@ -842,29 +843,26 @@ function buildLid(
   }
 
   let plate: ManifoldSolid;
-  if (parameters.panelEnabled && parameters.panelFace === "top") {
-    const outer = new module.CrossSection(
+  const topPanels = parameters.panelPlacements.filter((panel) => panel.face === "top");
+  if (topPanels.length > 0) {
+    let border = new module.CrossSection(
       roundedRectangle(
         dimensions.outsideLength,
         dimensions.outsideWidth,
         parameters.cornerRadius,
       ),
     );
-    const openingSource = new module.CrossSection(
-      roundedRectangle(
-        dimensions.panelLength - 4,
-        dimensions.panelWidth - 4,
-        3.5,
-      ),
-    );
-    const opening = openingSource.translate(
-      parameters.panelOffsetU,
-      parameters.panelOffsetV,
-    );
-    openingSource.delete();
-    const border = outer.subtract(opening);
-    outer.delete();
-    opening.delete();
+    for (const panel of topPanels) {
+      const openingSource = new module.CrossSection(
+        roundedRectangle(panel.width - 4, panel.height - 4, 3.5),
+      );
+      const opening = openingSource.translate(panel.offsetU, panel.offsetV);
+      openingSource.delete();
+      const nextBorder = border.subtract(opening);
+      border.delete();
+      opening.delete();
+      border = nextBorder;
+    }
     plate = border.extrude(parameters.lidThickness);
     border.delete();
     plate = translateAndDispose(plate, 0, 0, lipHeight);
@@ -880,38 +878,35 @@ function buildLid(
   }
   lid = unionAndDispose(lid, plate);
 
-  if (parameters.panelEnabled && parameters.panelFace === "top") {
-    if (parameters.panelMountingType === "slide") {
-      for (const y of [
-        -dimensions.panelWidth / 2 - 1.2,
-        dimensions.panelWidth / 2,
-      ]) {
+  for (const panel of topPanels) {
+    if (panel.mountingType === "slide") {
+      for (const y of [-panel.height / 2 - 1.2, panel.height / 2]) {
         const rail = cubeAt(
           module,
-          [dimensions.panelLength + 2, 1.2, 1.5],
-          parameters.panelOffsetU - (dimensions.panelLength + 2) / 2,
-          parameters.panelOffsetV + y,
+          [panel.width + 2, 1.2, 1.5],
+          panel.offsetU - (panel.width + 2) / 2,
+          panel.offsetV + y,
           lipHeight + parameters.lidThickness,
         );
         lid = unionAndDispose(lid, rail);
       }
     } else {
-      for (const [x, y] of getPanelMountingPoints(parameters)) {
+      for (const [x, y] of getPanelMountingPoints(panel)) {
         const support = cubeAt(
           module,
           [8, 8, parameters.lidThickness],
-          parameters.panelOffsetU + x - 4,
-          parameters.panelOffsetV + y - 4,
+          panel.offsetU + x - 4,
+          panel.offsetV + y - 4,
           lipHeight,
         );
         lid = unionAndDispose(lid, support);
-        const radius = parameters.panelMountingType === "screw" ? 1.3 : 2.15;
+        const radius = panel.mountingType === "screw" ? 1.3 : 2.15;
         const depth =
-          parameters.panelMountingType === "screw"
+          panel.mountingType === "screw"
             ? parameters.lidThickness + 0.4
             : Math.min(1.2, parameters.lidThickness);
         const z =
-          parameters.panelMountingType === "screw"
+          panel.mountingType === "screw"
             ? lipHeight - 0.2
             : lipHeight + parameters.lidThickness - depth;
         lid = subtractAndDispose(
@@ -920,8 +915,8 @@ function buildLid(
               module,
               radius,
               depth,
-              parameters.panelOffsetU + x,
-              parameters.panelOffsetV + y,
+              panel.offsetU + x,
+              panel.offsetV + y,
               z,
             ),
         );
@@ -1026,23 +1021,22 @@ function buildLid(
 function buildPanel(
   module: ManifoldToplevel,
   parameters: DesignerParameters,
+  panelId: string | null,
 ): ManifoldSolid {
-  if (!parameters.panelEnabled) {
-    throw new Error("当前设计未启用独立面板");
-  }
-  const dimensions = deriveEnclosureDimensions(parameters);
+  const selectedPanel = getPanelPlacement(parameters, panelId);
+  if (!selectedPanel) throw new Error("当前设计没有可导出的面板");
   let panel = extrudePlate(
     module,
-    dimensions.panelLength,
-    dimensions.panelWidth,
+    selectedPanel.width,
+    selectedPanel.height,
     3.2,
-    parameters.panelThickness,
+    selectedPanel.thickness,
   );
-  if (parameters.panelMountingType !== "slide") {
-    const radius = parameters.panelMountingType === "screw" ? 1.3 : 2.15;
-    const depth = parameters.panelThickness + 0.4;
+  if (selectedPanel.mountingType !== "slide") {
+    const radius = selectedPanel.mountingType === "screw" ? 1.3 : 2.15;
+    const depth = selectedPanel.thickness + 0.4;
     const z = -0.2;
-    for (const [x, y] of getPanelMountingPoints(parameters)) {
+    for (const [x, y] of getPanelMountingPoints(selectedPanel)) {
       panel = subtractAndDispose(
         panel,
         cylinderAt(module, radius, depth, x, y, z),
@@ -1050,7 +1044,10 @@ function buildPanel(
     }
   }
   for (const placement of parameters.connectorPlacements) {
-    if (placement.surface !== "panel") continue;
+    if (
+      placement.surface !== "panel" ||
+      placement.panelId !== selectedPanel.id
+    ) continue;
     const connector = getConnectorDefinition(placement.definitionId);
     const [width, height] = getRotatedCutoutSize(placement);
     let cutter =
@@ -1058,7 +1055,7 @@ function buildPanel(
         ? cylinderAt(
             module,
             width / 2,
-            parameters.panelThickness + 0.4,
+            selectedPanel.thickness + 0.4,
             placement.offsetU,
             placement.offsetV,
             -0.2,
@@ -1068,7 +1065,7 @@ function buildPanel(
             width,
             height,
             connector.panelCutout.cornerRadius,
-            parameters.panelThickness + 0.4,
+            selectedPanel.thickness + 0.4,
             -0.2,
           );
     if (connector.panelCutout.shape !== "circle") {
@@ -1089,8 +1086,9 @@ export function buildSolidPart(
   parameters: DesignerParameters,
   part: SolidPart,
   pcbReference: PcbReference | null = null,
+  panelId: string | null = null,
 ): ManifoldSolid {
   if (part === "base") return buildBase(module, parameters, pcbReference);
   if (part === "lid") return buildLid(module, parameters);
-  return buildPanel(module, parameters);
+  return buildPanel(module, parameters, panelId);
 }

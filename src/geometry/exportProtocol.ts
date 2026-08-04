@@ -7,6 +7,7 @@ export interface SolidExportRequest {
   parameters: DesignerParameters;
   pcbReference: PcbReference | null;
   part: SolidPart;
+  panelId?: string | null;
 }
 
 export interface PrintLayoutExportRequest {
@@ -19,6 +20,7 @@ export interface PrintLayoutExportRequest {
 
 export interface SolidExportSummary {
   part: SolidPart;
+  featureId?: string;
   triangleCount: number;
   volume: number;
   bounds: {

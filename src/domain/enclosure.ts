@@ -4,8 +4,11 @@ import { getVentPatternPoints } from "./patterns";
 import { MAGNET_GEOMETRY } from "./magnetSupport";
 import {
   createConnectorPlacement,
+  createPanelPlacement,
   getConnectorSurfaceSize,
   getFaceSize,
+  getDefaultPanelSize,
+  getPanelPlacement,
   getRotatedCutoutSize,
   isConnectorSurface,
   isEnclosureFace,
@@ -17,6 +20,7 @@ import type {
   DesignerParameters,
   EnclosureDimensions,
   PcbReference,
+  PanelPlacement,
   ValidationIssue,
 } from "./model";
 
@@ -36,13 +40,19 @@ export const DEFAULT_PARAMETERS: DesignerParameters = {
   closureType: "screw",
   magnetSupportType: "corner-shelf",
   shellMaterialId: "petg",
-  panelEnabled: true,
-  panelMaterialId: "acrylic-clear",
-  panelThickness: 2,
-  panelMountingType: "screw",
-  panelFace: "top",
-  panelOffsetU: 0,
-  panelOffsetV: 0,
+  panelPlacements: [
+    {
+      id: "panel-1",
+      face: "top",
+      offsetU: 0,
+      offsetV: 0,
+      width: 62.64,
+      height: 40.56,
+      thickness: 2,
+      mountingType: "screw",
+      materialId: "acrylic-clear",
+    },
+  ],
   connectorPlacements: [
     createConnectorPlacement("usb-c-receptacle", "connector-1"),
   ],
@@ -64,14 +74,6 @@ export function deriveEnclosureDimensions(
   const insideWidth = parameters.pcbWidth + parameters.boardClearance * 2;
   const outsideLength = insideLength + parameters.wallThickness * 2;
   const outsideWidth = insideWidth + parameters.wallThickness * 2;
-  const panelSurfaceLength =
-    parameters.panelFace === "left" || parameters.panelFace === "right"
-      ? outsideWidth
-      : outsideLength;
-  const panelSurfaceWidth =
-    parameters.panelFace === "top" || parameters.panelFace === "bottom"
-      ? outsideWidth
-      : parameters.baseHeight;
 
   return {
     outsideLength,
@@ -85,23 +87,14 @@ export function deriveEnclosureDimensions(
       parameters.standoffHeight -
       parameters.pcbThickness,
     mountingInset: Math.max(4, parameters.boardClearance + 1.5),
-    panelLength: Math.max(
-      6,
-      Math.min(panelSurfaceLength * 0.58, panelSurfaceLength - 4),
-    ),
-    panelWidth: Math.max(
-      6,
-      Math.min(panelSurfaceWidth * 0.52, panelSurfaceWidth - 4),
-    ),
   };
 }
 
 export function getPanelMountingPoints(
-  parameters: DesignerParameters,
+  panel: PanelPlacement,
 ): Array<readonly [number, number]> {
-  const dimensions = deriveEnclosureDimensions(parameters);
-  const x = dimensions.panelLength / 2 - 5;
-  const y = dimensions.panelWidth / 2 - 5;
+  const x = Math.max(1.5, panel.width / 2 - 5);
+  const y = Math.max(1.5, panel.height / 2 - 5);
   return [
     [-x, -y],
     [x, -y],
@@ -116,6 +109,13 @@ interface LegacyDesignerParameters extends Partial<DesignerParameters> {
   typeCPortWidth?: number;
   typeCPortHeight?: number;
   typeCPortOffset?: number;
+  panelEnabled?: boolean;
+  panelMaterialId?: string;
+  panelThickness?: number;
+  panelMountingType?: "screw" | "magnet" | "slide";
+  panelFace?: unknown;
+  panelOffsetU?: number;
+  panelOffsetV?: number;
 }
 
 function finiteOr(value: unknown, fallback: number): number {
@@ -127,6 +127,72 @@ export function normalizeDesignerParameters(value: unknown): DesignerParameters 
     value && typeof value === "object"
       ? (value as LegacyDesignerParameters)
       : ({} as LegacyDesignerParameters);
+  const dimensionSource = {
+    pcbLength: finiteOr(candidate.pcbLength, DEFAULT_PARAMETERS.pcbLength),
+    pcbWidth: finiteOr(candidate.pcbWidth, DEFAULT_PARAMETERS.pcbWidth),
+    boardClearance: finiteOr(
+      candidate.boardClearance,
+      DEFAULT_PARAMETERS.boardClearance,
+    ),
+    wallThickness: finiteOr(
+      candidate.wallThickness,
+      DEFAULT_PARAMETERS.wallThickness,
+    ),
+    baseHeight: finiteOr(candidate.baseHeight, DEFAULT_PARAMETERS.baseHeight),
+  };
+  let panelPlacements: PanelPlacement[];
+  if (Array.isArray(candidate.panelPlacements)) {
+    panelPlacements = candidate.panelPlacements.map((placement, index) => {
+      const raw =
+        placement && typeof placement === "object"
+          ? (placement as Partial<PanelPlacement>)
+          : ({} as Partial<PanelPlacement>);
+      const face = isEnclosureFace(raw.face) ? raw.face : "top";
+      const [defaultWidth, defaultHeight] = getDefaultPanelSize(
+        dimensionSource,
+        face,
+      );
+      return {
+        id: typeof raw.id === "string" && raw.id ? raw.id : `panel-${index + 1}`,
+        face,
+        offsetU: finiteOr(raw.offsetU, 0),
+        offsetV: finiteOr(raw.offsetV, 0),
+        width: Math.max(6, finiteOr(raw.width, defaultWidth)),
+        height: Math.max(6, finiteOr(raw.height, defaultHeight)),
+        thickness: Math.max(0.5, finiteOr(raw.thickness, 2)),
+        mountingType:
+          raw.mountingType === "magnet" || raw.mountingType === "slide"
+            ? raw.mountingType
+            : "screw",
+        materialId:
+          typeof raw.materialId === "string"
+            ? getMaterial(raw.materialId).id
+            : "acrylic-clear",
+      };
+    });
+  } else if (candidate.panelEnabled === false) {
+    panelPlacements = [];
+  } else {
+    const face = isEnclosureFace(candidate.panelFace) ? candidate.panelFace : "top";
+    panelPlacements = [
+      {
+        ...createPanelPlacement(dimensionSource, "panel-1", face),
+        offsetU: finiteOr(candidate.panelOffsetU, 0),
+        offsetV: finiteOr(candidate.panelOffsetV, 0),
+        thickness: finiteOr(candidate.panelThickness, 2),
+        mountingType:
+          candidate.panelMountingType === "magnet" ||
+          candidate.panelMountingType === "slide"
+            ? candidate.panelMountingType
+            : "screw",
+        materialId:
+          typeof candidate.panelMaterialId === "string"
+            ? getMaterial(candidate.panelMaterialId).id
+            : "acrylic-clear",
+      },
+    ];
+  }
+
   let connectorPlacements: ConnectorPlacement[];
   if (Array.isArray(candidate.connectorPlacements)) {
     connectorPlacements = candidate.connectorPlacements.map((placement, index) => {
@@ -141,6 +207,12 @@ export function normalizeDesignerParameters(value: unknown): DesignerParameters 
         id: typeof raw.id === "string" && raw.id ? raw.id : `connector-${index + 1}`,
         definitionId: definition.id,
         surface: isConnectorSurface(raw.surface) ? raw.surface : "front",
+        panelId:
+          raw.surface === "panel"
+            ? panelPlacements.some((panel) => panel.id === raw.panelId)
+              ? raw.panelId ?? null
+              : panelPlacements[0]?.id ?? null
+            : null,
         offsetU: finiteOr(raw.offsetU, 0),
         offsetV: finiteOr(raw.offsetV, -3),
         rotation: isPlacementRotation(raw.rotation) ? raw.rotation : 0,
@@ -177,11 +249,7 @@ export function normalizeDesignerParameters(value: unknown): DesignerParameters 
   const normalized = {
     ...DEFAULT_PARAMETERS,
     ...candidate,
-    panelFace: isEnclosureFace(candidate.panelFace)
-      ? candidate.panelFace
-      : DEFAULT_PARAMETERS.panelFace,
-    panelOffsetU: finiteOr(candidate.panelOffsetU, 0),
-    panelOffsetV: finiteOr(candidate.panelOffsetV, 0),
+    panelPlacements,
     connectorPlacements,
   } as DesignerParameters & Record<string, unknown>;
   for (const key of [
@@ -190,6 +258,13 @@ export function normalizeDesignerParameters(value: unknown): DesignerParameters 
     "typeCPortWidth",
     "typeCPortHeight",
     "typeCPortOffset",
+    "panelEnabled",
+    "panelMaterialId",
+    "panelThickness",
+    "panelMountingType",
+    "panelFace",
+    "panelOffsetU",
+    "panelOffsetV",
   ]) {
     delete normalized[key];
   }
@@ -201,7 +276,6 @@ export function validateDesign(
   pcbReference: PcbReference | null = null,
 ): ValidationIssue[] {
   const material = getMaterial(parameters.shellMaterialId);
-  const panelMaterial = getMaterial(parameters.panelMaterialId);
   const dimensions = deriveEnclosureDimensions(parameters);
   const issues: ValidationIssue[] = [];
 
@@ -295,49 +369,76 @@ export function validateDesign(
     }
   }
 
-  if (
-    parameters.panelEnabled &&
-    parameters.panelThickness < panelMaterial.minWall
-  ) {
-    issues.push({
-      id: "panel-thickness",
-      level: "error",
-      title: "面板厚度不足",
-      detail: `${panelMaterial.shortName} 建议至少 ${panelMaterial.minWall.toFixed(1)} mm`,
-      part: "panel",
-    });
-  }
-
-  if (parameters.panelEnabled) {
+  for (const [index, panel] of parameters.panelPlacements.entries()) {
+    const panelMaterial = getMaterial(panel.materialId);
+    if (panel.thickness < panelMaterial.minWall) {
+      issues.push({
+        id: `panel-thickness-${panel.id}`,
+        level: "error",
+        title: `面板 ${index + 1} 厚度不足`,
+        detail: `${panelMaterial.shortName} 建议至少 ${panelMaterial.minWall.toFixed(1)} mm`,
+        part: "panel",
+      });
+    }
     const [surfaceWidth, surfaceHeight] = getFaceSize(
-      parameters.panelFace,
+      panel.face,
       parameters,
       dimensions,
     );
     if (
-      Math.abs(parameters.panelOffsetU) + dimensions.panelLength / 2 >
+      Math.abs(panel.offsetU) + panel.width / 2 >
         surfaceWidth / 2 - 2 ||
-      Math.abs(parameters.panelOffsetV) + dimensions.panelWidth / 2 >
+      Math.abs(panel.offsetV) + panel.height / 2 >
         surfaceHeight / 2 - 2
     ) {
       issues.push({
-        id: "panel-face-bounds",
+        id: `panel-face-bounds-${panel.id}`,
         level: "error",
-        title: "面板超出安装面",
+        title: `面板 ${index + 1} 超出安装面`,
         detail: "减小面板偏移，确保面板边缘完整落在所选壳体表面",
         part: "panel",
       });
     }
   }
 
+  for (let first = 0; first < parameters.panelPlacements.length; first += 1) {
+    const firstPanel = parameters.panelPlacements[first];
+    for (
+      let second = first + 1;
+      second < parameters.panelPlacements.length;
+      second += 1
+    ) {
+      const secondPanel = parameters.panelPlacements[second];
+      if (firstPanel.face !== secondPanel.face) continue;
+      if (
+        Math.abs(firstPanel.offsetU - secondPanel.offsetU) <
+          (firstPanel.width + secondPanel.width) / 2 + 2 &&
+        Math.abs(firstPanel.offsetV - secondPanel.offsetV) <
+          (firstPanel.height + secondPanel.height) / 2 + 2
+      ) {
+        issues.push({
+          id: `panel-overlap-${firstPanel.id}-${secondPanel.id}`,
+          level: "error",
+          title: "面板开窗相互重叠",
+          detail: "移动或缩小其中一个面板，至少保留 2 mm 壳体材料",
+          part: "panel",
+        });
+      }
+    }
+  }
+
   for (const [index, placement] of parameters.connectorPlacements.entries()) {
     const connector = getConnectorDefinition(placement.definitionId);
-    if (placement.surface === "panel" && !parameters.panelEnabled) {
+    const targetPanel =
+      placement.surface === "panel"
+        ? parameters.panelPlacements.find((panel) => panel.id === placement.panelId)
+        : null;
+    if (placement.surface === "panel" && !targetPanel) {
       issues.push({
         id: `connector-panel-disabled-${placement.id}`,
         level: "error",
         title: `${connector.name}缺少安装面板`,
-        detail: "启用可更换面板，或将接口改放到壳体表面",
+        detail: "选择一个现有面板，或将接口改放到壳体表面",
         part: "connector",
       });
       continue;
@@ -365,22 +466,24 @@ export function validateDesign(
       });
     }
 
-    if (
-      parameters.panelEnabled &&
-      placement.surface !== "panel" &&
-      placement.surface === parameters.panelFace &&
-      Math.abs(placement.offsetU - parameters.panelOffsetU) <
-        (cutoutWidth + dimensions.panelLength) / 2 &&
-      Math.abs(placement.offsetV - parameters.panelOffsetV) <
-        (cutoutHeight + dimensions.panelWidth) / 2
-    ) {
-      issues.push({
-        id: `connector-panel-overlap-${placement.id}`,
-        level: "error",
-        title: `${connector.name}与面板区域重叠`,
-        detail: "将接口目标改为可更换面板，或移动到面板区域之外",
-        part: "connector",
-      });
+    if (placement.surface !== "panel") {
+      for (const panel of parameters.panelPlacements) {
+        if (
+          placement.surface === panel.face &&
+          Math.abs(placement.offsetU - panel.offsetU) <
+            (cutoutWidth + panel.width) / 2 &&
+          Math.abs(placement.offsetV - panel.offsetV) <
+            (cutoutHeight + panel.height) / 2
+        ) {
+          issues.push({
+            id: `connector-panel-overlap-${placement.id}-${panel.id}`,
+            level: "error",
+            title: `${connector.name}与面板区域重叠`,
+            detail: "将接口目标改为对应面板，或移动到面板区域之外",
+            part: "connector",
+          });
+        }
+      }
     }
   }
 
@@ -388,10 +491,12 @@ export function validateDesign(
     const firstPlacement = parameters.connectorPlacements[first];
     const firstFace = resolveConnectorFace(firstPlacement, parameters);
     const [firstWidth, firstHeight] = getRotatedCutoutSize(firstPlacement);
-    const firstU = firstPlacement.offsetU +
-      (firstPlacement.surface === "panel" ? parameters.panelOffsetU : 0);
-    const firstV = firstPlacement.offsetV +
-      (firstPlacement.surface === "panel" ? parameters.panelOffsetV : 0);
+    const firstPanel =
+      firstPlacement.surface === "panel"
+        ? getPanelPlacement(parameters, firstPlacement.panelId)
+        : null;
+    const firstU = firstPlacement.offsetU + (firstPanel?.offsetU ?? 0);
+    const firstV = firstPlacement.offsetV + (firstPanel?.offsetV ?? 0);
     for (
       let second = first + 1;
       second < parameters.connectorPlacements.length;
@@ -400,10 +505,12 @@ export function validateDesign(
       const secondPlacement = parameters.connectorPlacements[second];
       if (resolveConnectorFace(secondPlacement, parameters) !== firstFace) continue;
       const [secondWidth, secondHeight] = getRotatedCutoutSize(secondPlacement);
-      const secondU = secondPlacement.offsetU +
-        (secondPlacement.surface === "panel" ? parameters.panelOffsetU : 0);
-      const secondV = secondPlacement.offsetV +
-        (secondPlacement.surface === "panel" ? parameters.panelOffsetV : 0);
+      const secondPanel =
+        secondPlacement.surface === "panel"
+          ? getPanelPlacement(parameters, secondPlacement.panelId)
+          : null;
+      const secondU = secondPlacement.offsetU + (secondPanel?.offsetU ?? 0);
+      const secondV = secondPlacement.offsetV + (secondPanel?.offsetV ?? 0);
       if (
         Math.abs(firstU - secondU) < (firstWidth + secondWidth) / 2 + 2 &&
         Math.abs(firstV - secondV) < (firstHeight + secondHeight) / 2 + 2
@@ -527,9 +634,6 @@ export function clampParameter(
     cornerRadius: [0.5, 30],
     standoffHeight: [0, 30],
     lidThickness: [0.8, 8],
-    panelThickness: [0.5, 10],
-    panelOffsetU: [-300, 300],
-    panelOffsetV: [-300, 300],
     antennaOffset: [-120, 120],
     ventRows: [1, 12],
     ventColumns: [1, 16],

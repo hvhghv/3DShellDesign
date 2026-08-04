@@ -1,6 +1,6 @@
-import { deriveEnclosureDimensions, getPanelMountingPoints } from "../domain/enclosure";
+import { getPanelMountingPoints } from "../domain/enclosure";
 import type { DesignerParameters } from "../domain/model";
-import { getRotatedCutoutSize } from "../domain/placements";
+import { getPanelPlacement, getRotatedCutoutSize } from "../domain/placements";
 import { getConnectorDefinition } from "../libraries/components";
 
 function format(value: number): string {
@@ -42,11 +42,14 @@ function appendRoundedPolyline(
   }
 }
 
-export function createPanelDxf(parameters: DesignerParameters): string {
-  if (!parameters.panelEnabled) throw new Error("当前设计未启用独立面板");
-  const dimensions = deriveEnclosureDimensions(parameters);
-  const width = dimensions.panelLength;
-  const height = dimensions.panelWidth;
+export function createPanelDxf(
+  parameters: DesignerParameters,
+  panelId: string | null = null,
+): string {
+  const panel = getPanelPlacement(parameters, panelId);
+  if (!panel) throw new Error("当前设计没有可导出的面板");
+  const width = panel.width;
+  const height = panel.height;
   const lines = [
     ...pair(0, "SECTION"),
     ...pair(2, "HEADER"),
@@ -57,9 +60,9 @@ export function createPanelDxf(parameters: DesignerParameters): string {
     ...pair(2, "ENTITIES"),
   ];
   appendRoundedPolyline(lines, 0, 0, width, height, 3.2);
-  if (parameters.panelMountingType !== "slide") {
-    const radiusValue = parameters.panelMountingType === "screw" ? 1.3 : 2.15;
-    for (const [x, y] of getPanelMountingPoints(parameters)) {
+  if (panel.mountingType !== "slide") {
+    const radiusValue = panel.mountingType === "screw" ? 1.3 : 2.15;
+    for (const [x, y] of getPanelMountingPoints(panel)) {
       lines.push(
         ...pair(0, "CIRCLE"),
         ...pair(8, "CUT"),
@@ -70,7 +73,7 @@ export function createPanelDxf(parameters: DesignerParameters): string {
     }
   }
   for (const placement of parameters.connectorPlacements) {
-    if (placement.surface !== "panel") continue;
+    if (placement.surface !== "panel" || placement.panelId !== panel.id) continue;
     const definition = getConnectorDefinition(placement.definitionId);
     const [cutoutWidth, cutoutHeight] = getRotatedCutoutSize(placement);
     const centerX = placement.offsetU + width / 2;

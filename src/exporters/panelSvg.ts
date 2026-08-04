@@ -1,7 +1,7 @@
-import { deriveEnclosureDimensions, getPanelMountingPoints } from "../domain/enclosure";
+import { getPanelMountingPoints } from "../domain/enclosure";
 import { getMaterial } from "../domain/materials";
 import type { DesignerParameters } from "../domain/model";
-import { getRotatedCutoutSize } from "../domain/placements";
+import { getPanelPlacement, getRotatedCutoutSize } from "../domain/placements";
 import { getConnectorDefinition } from "../libraries/components";
 
 function format(value: number): string {
@@ -17,13 +17,16 @@ function escapeXml(value: string): string {
     .replaceAll("'", "&apos;");
 }
 
-export function createPanelSvg(parameters: DesignerParameters): string {
-  if (!parameters.panelEnabled) throw new Error("当前设计未启用独立面板");
-  const dimensions = deriveEnclosureDimensions(parameters);
-  const width = dimensions.panelLength;
-  const height = dimensions.panelWidth;
+export function createPanelSvg(
+  parameters: DesignerParameters,
+  panelId: string | null = null,
+): string {
+  const panel = getPanelPlacement(parameters, panelId);
+  if (!panel) throw new Error("当前设计没有可导出的面板");
+  const width = panel.width;
+  const height = panel.height;
   const radius = Math.min(3.2, width / 2, height / 2);
-  const material = getMaterial(parameters.panelMaterialId);
+  const material = getMaterial(panel.materialId);
   const path = [
     `M ${format(radius)} 0`,
     `H ${format(width - radius)}`,
@@ -37,14 +40,17 @@ export function createPanelSvg(parameters: DesignerParameters): string {
     "Z",
   ].join(" ");
   const mountingHoles =
-    parameters.panelMountingType === "slide"
+    panel.mountingType === "slide"
       ? []
-      : getPanelMountingPoints(parameters).map(([x, y]) => {
-          const radius = parameters.panelMountingType === "screw" ? 1.3 : 2.15;
+      : getPanelMountingPoints(panel).map(([x, y]) => {
+          const radius = panel.mountingType === "screw" ? 1.3 : 2.15;
           return `  <circle cx="${format(x + width / 2)}" cy="${format(height / 2 - y)}" r="${format(radius)}" fill="none" stroke="#000000" stroke-width="0.1" vector-effect="non-scaling-stroke"/>`;
         });
   const connectorCutouts = parameters.connectorPlacements
-    .filter((placement) => placement.surface === "panel")
+    .filter(
+      (placement) =>
+        placement.surface === "panel" && placement.panelId === panel.id,
+    )
     .map((placement) => {
       const definition = getConnectorDefinition(placement.definitionId);
       const [cutoutWidth, cutoutHeight] = getRotatedCutoutSize(placement);
@@ -60,7 +66,7 @@ export function createPanelSvg(parameters: DesignerParameters): string {
     '<?xml version="1.0" encoding="UTF-8"?>',
     `<svg xmlns="http://www.w3.org/2000/svg" width="${format(width)}mm" height="${format(height)}mm" viewBox="0 0 ${format(width)} ${format(height)}">`,
     "  <title>3DShellDesigner replaceable panel</title>",
-    `  <desc>${escapeXml(material.name)}, ${format(parameters.panelThickness)} mm</desc>`,
+    `  <desc>${escapeXml(material.name)}, ${format(panel.thickness)} mm</desc>`,
     `  <path d="${path}" fill="none" stroke="#000000" stroke-width="0.1" vector-effect="non-scaling-stroke"/>`,
     ...mountingHoles,
     ...connectorCutouts,

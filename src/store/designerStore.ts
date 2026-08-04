@@ -9,17 +9,24 @@ import type {
   DesignerParameters,
   InspectorTab,
   PcbReference,
+  PanelPlacement,
   ProjectSnapshot,
   SelectablePart,
   StepPreview,
 } from "../domain/model";
-import { createConnectorPlacement } from "../domain/placements";
+import {
+  createConnectorPlacement,
+  createPanelPlacement,
+  ENCLOSURE_FACE_OPTIONS,
+  getDefaultPanelSize,
+} from "../domain/placements";
 import { getAntennaDefinition, getConnectorDefinition } from "../libraries/components";
 import { getEnclosureTemplate } from "../libraries/templates";
 import { queueProjectCache, readProjectCache } from "./projectCache";
 
 const STORAGE_KEY = "3dshell-designer.project.v1";
 type CacheStatus = "restoring" | "saving" | "saved" | "error";
+export type TransformMode = "move" | "scale";
 
 interface DesignerState {
   projectName: string;
@@ -27,6 +34,7 @@ interface DesignerState {
   pcbReference: PcbReference | null;
   stepPreview: StepPreview | null;
   selectedPart: SelectablePart;
+  selectedFeatureId: string | null;
   focusedPart: SelectablePart | null;
   inspectorTab: InspectorTab;
   showGrid: boolean;
@@ -34,6 +42,7 @@ interface DesignerState {
   cameraResetToken: number;
   cachedAt: string | null;
   cacheStatus: CacheStatus;
+  transformMode: TransformMode;
   setParameter: <Key extends keyof DesignerParameters>(
     key: Key,
     value: DesignerParameters[Key],
@@ -45,9 +54,17 @@ interface DesignerState {
   ) => void;
   setConnectorDefinition: (placementId: string, definitionId: string) => void;
   removeConnectorPlacement: (id: string) => void;
+  addPanelPlacement: () => void;
+  updatePanelPlacement: (
+    id: string,
+    changes: Partial<Omit<PanelPlacement, "id">>,
+  ) => void;
+  removePanelPlacement: (id: string) => void;
   setAntennaDefinition: (id: string) => void;
   setEnclosureTemplate: (id: string) => void;
   setSelectedPart: (part: SelectablePart) => void;
+  setSelectedFeature: (part: "panel" | "connector", id: string) => void;
+  setTransformMode: (mode: TransformMode) => void;
   focusSelectedPart: () => void;
   showAllParts: () => void;
   setInspectorTab: (tab: InspectorTab) => void;
@@ -63,7 +80,7 @@ interface DesignerState {
 }
 
 function isPartAvailable(part: SelectablePart, parameters: DesignerParameters): boolean {
-  if (part === "panel") return parameters.panelEnabled;
+  if (part === "panel") return parameters.panelPlacements.length > 0;
   if (part === "connector") return parameters.connectorPlacements.length > 0;
   if (part === "antenna") return parameters.antennaEnabled;
   return true;
@@ -142,6 +159,7 @@ export const useDesignerStore = create<DesignerState>((set) => ({
   pcbReference: persistedProject.pcbReference,
   stepPreview: null,
   selectedPart: "project",
+  selectedFeatureId: null,
   focusedPart: null,
   inspectorTab: "dimensions",
   showGrid: true,
@@ -149,6 +167,7 @@ export const useDesignerStore = create<DesignerState>((set) => ({
   cameraResetToken: 0,
   cachedAt: persistedProject.cachedAt,
   cacheStatus: "restoring",
+  transformMode: "move",
   setParameter: (key, value) =>
     set((state) => {
       const nextParameters = {
@@ -174,6 +193,133 @@ export const useDesignerStore = create<DesignerState>((set) => ({
         cacheStatus: "saving",
       };
     }),
+  addPanelPlacement: () =>
+    set((state) => {
+      const usedFaces = new Set(
+        state.parameters.panelPlacements.map((panel) => panel.face),
+      );
+      const face =
+        ENCLOSURE_FACE_OPTIONS.find((option) => !usedFaces.has(option.id))?.id ??
+        "top";
+      const id = `panel-${Date.now().toString(36)}-${state.parameters.panelPlacements.length + 1}`;
+      const panel = createPanelPlacement(state.parameters, id, face);
+      const parameters = {
+        ...state.parameters,
+        panelPlacements: [...state.parameters.panelPlacements, panel],
+      };
+      const snapshot = persistSnapshot(
+        state.projectName,
+        parameters,
+        state.pcbReference,
+        state.stepPreview,
+      );
+      return {
+        parameters,
+        selectedPart: "panel",
+        selectedFeatureId: id,
+        inspectorTab: "structure",
+        focusedPart: state.focusedPart ? "panel" : null,
+        cachedAt: snapshot.updatedAt,
+        cacheStatus: "saving",
+      };
+    }),
+  updatePanelPlacement: (id, changes) =>
+    set((state) => {
+      const parameters = {
+        ...state.parameters,
+        panelPlacements: state.parameters.panelPlacements.map((panel) =>
+          panel.id === id
+            ? (() => {
+                const nextFace = changes.face ?? panel.face;
+                const faceChanged = nextFace !== panel.face;
+                const [faceWidth, faceHeight] = faceChanged
+                  ? getDefaultPanelSize(state.parameters, nextFace)
+                  : [panel.width, panel.height];
+                return {
+                  ...panel,
+                  ...changes,
+                  offsetU: Math.min(
+                    300,
+                    Math.max(
+                      -300,
+                      changes.offsetU ?? (faceChanged ? 0 : panel.offsetU),
+                    ),
+                  ),
+                  offsetV: Math.min(
+                    300,
+                    Math.max(
+                      -300,
+                      changes.offsetV ?? (faceChanged ? 0 : panel.offsetV),
+                    ),
+                  ),
+                  width: Math.min(300, Math.max(6, changes.width ?? faceWidth)),
+                  height: Math.min(300, Math.max(6, changes.height ?? faceHeight)),
+                  thickness: Math.min(
+                    10,
+                    Math.max(0.5, changes.thickness ?? panel.thickness),
+                  ),
+                };
+              })()
+            : panel,
+        ),
+      };
+      const snapshot = persistSnapshot(
+        state.projectName,
+        parameters,
+        state.pcbReference,
+        state.stepPreview,
+      );
+      return {
+        parameters,
+        selectedPart: "panel",
+        selectedFeatureId: id,
+        focusedPart: state.focusedPart ? "panel" : null,
+        cachedAt: snapshot.updatedAt,
+        cacheStatus: "saving",
+      };
+    }),
+  removePanelPlacement: (id) =>
+    set((state) => {
+      const removed = state.parameters.panelPlacements.find((panel) => panel.id === id);
+      const panelPlacements = state.parameters.panelPlacements.filter(
+        (panel) => panel.id !== id,
+      );
+      const parameters = {
+        ...state.parameters,
+        panelPlacements,
+        connectorPlacements: state.parameters.connectorPlacements.map((connector) =>
+          connector.surface === "panel" && connector.panelId === id && removed
+            ? {
+                ...connector,
+                surface: removed.face,
+                panelId: null,
+                offsetU: connector.offsetU + removed.offsetU,
+                offsetV: connector.offsetV + removed.offsetV,
+              }
+            : connector,
+        ),
+      };
+      const snapshot = persistSnapshot(
+        state.projectName,
+        parameters,
+        state.pcbReference,
+        state.stepPreview,
+      );
+      const nextPanel = panelPlacements[0] ?? null;
+      return {
+        parameters,
+        selectedPart:
+          state.selectedPart === "panel" && !nextPanel ? "project" : state.selectedPart,
+        selectedFeatureId:
+          state.selectedPart === "panel" && state.selectedFeatureId === id
+            ? nextPanel?.id ?? null
+            : state.selectedFeatureId,
+        focusedPart:
+          state.focusedPart === "panel" && !nextPanel ? null : state.focusedPart,
+        cachedAt: snapshot.updatedAt,
+        cacheStatus: "saving",
+      };
+    }),
   addConnectorPlacement: () =>
     set((state) => {
       const id = `connector-${Date.now().toString(36)}-${state.parameters.connectorPlacements.length + 1}`;
@@ -193,6 +339,8 @@ export const useDesignerStore = create<DesignerState>((set) => ({
       return {
         parameters,
         selectedPart: "connector",
+        selectedFeatureId: id,
+        inspectorTab: "structure",
         focusedPart: state.focusedPart ? "connector" : null,
         cachedAt: snapshot.updatedAt,
         cacheStatus: "saving",
@@ -236,6 +384,7 @@ export const useDesignerStore = create<DesignerState>((set) => ({
       return {
         parameters,
         selectedPart: "connector",
+        selectedFeatureId: id,
         focusedPart: state.focusedPart ? "connector" : null,
         cachedAt: snapshot.updatedAt,
         cacheStatus: "saving",
@@ -266,6 +415,7 @@ export const useDesignerStore = create<DesignerState>((set) => ({
       return {
         parameters,
         selectedPart: "connector",
+        selectedFeatureId: placementId,
         focusedPart: state.focusedPart ? "connector" : null,
         cachedAt: snapshot.updatedAt,
         cacheStatus: "saving",
@@ -292,6 +442,10 @@ export const useDesignerStore = create<DesignerState>((set) => ({
           state.selectedPart === "connector" && !hasConnectors
             ? "project"
             : state.selectedPart,
+        selectedFeatureId:
+          state.selectedPart === "connector" && state.selectedFeatureId === id
+            ? parameters.connectorPlacements[0]?.id ?? null
+            : state.selectedFeatureId,
         focusedPart:
           state.focusedPart === "connector" && !hasConnectors
             ? null
@@ -353,9 +507,23 @@ export const useDesignerStore = create<DesignerState>((set) => ({
   setSelectedPart: (selectedPart) =>
     set((state) => ({
       selectedPart,
+      selectedFeatureId:
+        selectedPart === "panel"
+          ? state.parameters.panelPlacements[0]?.id ?? null
+          : selectedPart === "connector"
+            ? state.parameters.connectorPlacements[0]?.id ?? null
+            : null,
       focusedPart:
         selectedPart === "project" ? null : state.focusedPart ? selectedPart : null,
     })),
+  setSelectedFeature: (selectedPart, selectedFeatureId) =>
+    set((state) => ({
+      selectedPart,
+      selectedFeatureId,
+      inspectorTab: "structure",
+      focusedPart: state.focusedPart ? selectedPart : null,
+    })),
+  setTransformMode: (transformMode) => set({ transformMode }),
   focusSelectedPart: () =>
     set((state) => ({
       focusedPart: state.selectedPart === "project" ? null : state.selectedPart,
@@ -374,6 +542,7 @@ export const useDesignerStore = create<DesignerState>((set) => ({
       pcbReference: null,
       stepPreview: null,
       selectedPart: "project",
+      selectedFeatureId: null,
       focusedPart: null,
       inspectorTab: "dimensions",
       exploded: false,
@@ -399,6 +568,7 @@ export const useDesignerStore = create<DesignerState>((set) => ({
         pcbReference,
         stepPreview: null,
         selectedPart: "pcb",
+        selectedFeatureId: null,
         focusedPart: state.focusedPart ? "pcb" : null,
         cachedAt: snapshot.updatedAt,
         cacheStatus: "saving",
@@ -430,6 +600,7 @@ export const useDesignerStore = create<DesignerState>((set) => ({
         pcbReference,
         stepPreview,
         selectedPart: "pcb",
+        selectedFeatureId: null,
         focusedPart: state.focusedPart ? "pcb" : null,
         cachedAt: snapshot.updatedAt,
         cacheStatus: "saving",
@@ -455,6 +626,7 @@ export const useDesignerStore = create<DesignerState>((set) => ({
       pcbReference,
       stepPreview: null,
       selectedPart: "project",
+      selectedFeatureId: null,
       focusedPart: null,
       cachedAt: persisted.updatedAt,
       cacheStatus: "saving",
@@ -477,6 +649,7 @@ export const useDesignerStore = create<DesignerState>((set) => ({
           parameters: normalizeDesignerParameters(cached.snapshot.parameters),
           pcbReference: cached.snapshot.pcbReference ?? null,
           stepPreview: cached.stepPreview,
+          selectedFeatureId: null,
           focusedPart: null,
           cachedAt: cached.snapshot.updatedAt,
           cacheStatus: "saved",

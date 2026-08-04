@@ -39,19 +39,26 @@ workerScope.addEventListener("message", (event) => {
     try {
       const module = await getModule();
       if (request.format === "3mf") {
-        const parts: SolidPart[] = request.parameters.panelEnabled
-          ? ["base", "lid", "panel"]
-          : ["base", "lid"];
+        const parts: Array<{ part: SolidPart; panelId: string | null }> = [
+          { part: "base", panelId: null },
+          { part: "lid", panelId: null },
+          ...request.parameters.panelPlacements.map((panel) => ({
+            part: "panel" as const,
+            panelId: panel.id,
+          })),
+        ];
         const meshes: ThreeMfPart[] = [];
         const summaries: SolidExportSummary[] = [];
         const solids: ReturnType<typeof buildSolidPart>[] = [];
         try {
-          for (const part of parts) {
+          for (const descriptor of parts) {
+            const { part, panelId } = descriptor;
             const solid = buildSolidPart(
               module,
               request.parameters,
               part,
               request.pcbReference,
+              panelId,
             );
             solids.push(solid);
             const status = solid.status();
@@ -59,19 +66,25 @@ workerScope.addEventListener("message", (event) => {
             if (solid.isEmpty()) throw new Error(`${part} 实体为空`);
             const mesh = solid.getMesh();
             const bounds = solid.boundingBox();
-            const material = getMaterial(
+            const panel =
               part === "panel"
-                ? request.parameters.panelMaterialId
-                : request.parameters.shellMaterialId,
-            );
+                ? request.parameters.panelPlacements.find((item) => item.id === panelId)
+                : null;
+            const material = getMaterial(panel?.materialId ?? request.parameters.shellMaterialId);
             meshes.push({
-              name: part === "base" ? "下壳" : part === "lid" ? "顶盖" : "可更换面板",
+              name:
+                part === "base"
+                  ? "下壳"
+                  : part === "lid"
+                    ? "顶盖"
+                    : `可更换面板 ${request.parameters.panelPlacements.findIndex((item) => item.id === panelId) + 1}`,
               materialName: material.name,
               color: material.color,
               mesh,
             });
             summaries.push({
               part,
+              ...(panelId ? { featureId: panelId } : {}),
               triangleCount: mesh.numTri,
               volume: solid.volume(),
               bounds,
@@ -103,6 +116,7 @@ workerScope.addEventListener("message", (event) => {
         request.parameters,
         request.part,
         request.pcbReference,
+        request.panelId ?? null,
       );
       try {
         const status = solid.status();
@@ -119,6 +133,7 @@ workerScope.addEventListener("message", (event) => {
           buffer,
           summary: {
             part: request.part,
+            ...(request.panelId ? { featureId: request.panelId } : {}),
             triangleCount: mesh.numTri,
             volume: solid.volume(),
             bounds,

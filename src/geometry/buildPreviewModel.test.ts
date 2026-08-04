@@ -69,16 +69,26 @@ describe("surface placement preview", () => {
     "places the panel on the %s face",
     (face) => {
       const model = buildPreviewModel(
-        { ...DEFAULT_PARAMETERS, panelFace: face },
+        {
+          ...DEFAULT_PARAMETERS,
+          panelPlacements: DEFAULT_PARAMETERS.panelPlacements.map((panel) => ({
+            ...panel,
+            face,
+          })),
+        },
         "panel",
         false,
         null,
       );
 
-      expect(model.children.filter((child) => child.name === `panel-${face}`)).toHaveLength(1);
+      expect(
+        model.children.filter(
+          (child) => child.userData.featureId === "panel-1" && child.userData.face === face,
+        ),
+      ).toHaveLength(1);
       if (face !== "top") {
         expect(
-          model.children.filter((child) => child.name === `panel-opening-${face}`),
+          model.children.filter((child) => child.name === "panel-opening-panel-1"),
         ).toHaveLength(1);
       }
       disposePreviewModel(model);
@@ -100,8 +110,12 @@ describe("surface placement preview", () => {
       null,
     );
 
-    expect(model.children.filter((child) => child.name === "connector-1")).toHaveLength(1);
-    expect(model.children.filter((child) => child.name === "connector-2")).toHaveLength(1);
+    expect(
+      model.children.filter((child) => child.name === "connector-transform-connector-1"),
+    ).toHaveLength(1);
+    expect(
+      model.children.filter((child) => child.name === "connector-transform-connector-2"),
+    ).toHaveLength(1);
     disposePreviewModel(model);
   });
 });

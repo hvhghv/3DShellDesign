@@ -14,7 +14,10 @@ describe("panel DXF exporter", () => {
   it("omits holes for a slide-in panel", () => {
     const dxf = createPanelDxf({
       ...DEFAULT_PARAMETERS,
-      panelMountingType: "slide",
+      panelPlacements: DEFAULT_PARAMETERS.panelPlacements.map((panel) => ({
+        ...panel,
+        mountingType: "slide",
+      })),
     });
     expect(dxf).not.toContain("\r\nCIRCLE\r\n");
   });
@@ -24,12 +27,13 @@ describe("panel DXF exporter", () => {
     const dxf = createPanelDxf({
       ...DEFAULT_PARAMETERS,
       connectorPlacements: [
-        { ...connector, surface: "panel" },
+        { ...connector, surface: "panel", panelId: "panel-1" },
         {
           ...connector,
           id: "connector-2",
           definitionId: "dc-5521-jack",
           surface: "panel",
+          panelId: "panel-1",
           offsetU: 18,
           cutoutWidth: 9,
           cutoutHeight: 9,

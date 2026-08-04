@@ -14,11 +14,24 @@ export interface ConnectorPlacement {
   id: string;
   definitionId: string;
   surface: ConnectorSurface;
+  panelId: string | null;
   offsetU: number;
   offsetV: number;
   rotation: PlacementRotation;
   cutoutWidth: number;
   cutoutHeight: number;
+}
+
+export interface PanelPlacement {
+  id: string;
+  face: EnclosureFace;
+  offsetU: number;
+  offsetV: number;
+  width: number;
+  height: number;
+  thickness: number;
+  mountingType: PanelMountingType;
+  materialId: string;
 }
 
 export type InspectorTab = "dimensions" | "structure" | "materials";
@@ -48,13 +61,7 @@ export interface DesignerParameters {
   closureType: ClosureType;
   magnetSupportType: MagnetSupportType;
   shellMaterialId: string;
-  panelEnabled: boolean;
-  panelMaterialId: string;
-  panelThickness: number;
-  panelMountingType: PanelMountingType;
-  panelFace: EnclosureFace;
-  panelOffsetU: number;
-  panelOffsetV: number;
+  panelPlacements: PanelPlacement[];
   connectorPlacements: ConnectorPlacement[];
   antennaEnabled: boolean;
   antennaDefinitionId: string;
@@ -75,8 +82,6 @@ export interface EnclosureDimensions {
   insideWidth: number;
   availableComponentHeight: number;
   mountingInset: number;
-  panelLength: number;
-  panelWidth: number;
 }
 
 export type ValidationLevel = "error" | "warning" | "info";

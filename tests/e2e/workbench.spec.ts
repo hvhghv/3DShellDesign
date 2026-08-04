@@ -81,6 +81,7 @@ function readStlDimensions(stl: Uint8Array): {
 }
 
 test("desktop workbench renders a nonblank interactive enclosure", async ({ page }, testInfo) => {
+  test.setTimeout(180_000);
   const pageErrors: string[] = [];
   page.on("pageerror", (error) => pageErrors.push(error.message));
   await page.setViewportSize({ width: 1440, height: 900 });

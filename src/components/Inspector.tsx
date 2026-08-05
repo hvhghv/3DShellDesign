@@ -82,29 +82,6 @@ function NumberField({
   );
 }
 
-interface ToggleRowProps {
-  label: string;
-  detail: string;
-  checked: boolean;
-  onChange: (checked: boolean) => void;
-}
-
-function ToggleRow({ label, detail, checked, onChange }: ToggleRowProps) {
-  return (
-    <label className="toggle-row">
-      <span>
-        <strong>{label}</strong>
-        <small>{detail}</small>
-      </span>
-      <input
-        type="checkbox"
-        checked={checked}
-        onChange={(event) => onChange(event.currentTarget.checked)}
-      />
-    </label>
-  );
-}
-
 function MaterialBadge({ materialId }: { materialId: string }) {
   const material = getMaterial(materialId);
   return (
@@ -148,7 +125,9 @@ export function Inspector() {
   const updateConnectorPlacement = useDesignerStore((state) => state.updateConnectorPlacement);
   const setConnectorDefinition = useDesignerStore((state) => state.setConnectorDefinition);
   const removeConnectorPlacement = useDesignerStore((state) => state.removeConnectorPlacement);
+  const updateAntennaPlacement = useDesignerStore((state) => state.updateAntennaPlacement);
   const setAntennaDefinition = useDesignerStore((state) => state.setAntennaDefinition);
+  const removeAntennaPlacement = useDesignerStore((state) => state.removeAntennaPlacement);
   const setEnclosureTemplate = useDesignerStore((state) => state.setEnclosureTemplate);
   const setSelectedPart = useDesignerStore((state) => state.setSelectedPart);
   const clearPcbReference = useDesignerStore((state) => state.clearPcbReference);
@@ -165,6 +144,15 @@ export function Inspector() {
         (connector) => connector.id === selectedConnector.id,
       )
     : -1;
+  const selectedAntenna =
+    parameters.antennaPlacements.find(
+      (antenna) => antenna.id === selectedFeatureId,
+    ) ?? parameters.antennaPlacements[0] ?? null;
+  const selectedAntennaIndex = selectedAntenna
+    ? parameters.antennaPlacements.findIndex(
+        (antenna) => antenna.id === selectedAntenna.id,
+      )
+    : -1;
   const dimensions = useMemo(() => deriveEnclosureDimensions(parameters), [parameters]);
   const issues = useMemo(
     () => validateDesign(parameters, pcbReference),
@@ -176,6 +164,227 @@ export function Inspector() {
     { id: "structure", label: "结构" },
     { id: "materials", label: "材料" },
   ];
+
+  if (selectedPart === "connector" && selectedConnector) {
+    const placement = selectedConnector;
+    const definition = getConnectorDefinition(placement.definitionId);
+    const surfaceValue =
+      placement.surface === "panel" && placement.panelId
+        ? `panel:${placement.panelId}`
+        : placement.surface;
+    return (
+      <aside className="inspector-panel" aria-label="接口检查器">
+        <div className="inspector-title">
+          <span>{definition.name}</span>
+          <small>接口 {selectedConnectorIndex + 1}</small>
+        </div>
+        <div className="inspector-scroll contextual-inspector">
+          <section className="inspector-section connector-placement">
+            <div className="section-heading-row">
+              <h2>接口参数</h2>
+              <button
+                className="icon-section-button"
+                type="button"
+                title="删除当前接口"
+                aria-label="删除当前接口"
+                onClick={() => removeConnectorPlacement(placement.id)}
+              >
+                <Trash2 size={14} />
+              </button>
+            </div>
+            <label className="select-field">
+              <span>器件</span>
+              <select
+                aria-label={`接口 ${selectedConnectorIndex + 1} 器件`}
+                value={placement.definitionId}
+                onChange={(event) =>
+                  setConnectorDefinition(placement.id, event.currentTarget.value)
+                }
+              >
+                {CONNECTOR_DEFINITIONS.map((item) => (
+                  <option key={item.id} value={item.id}>{item.name}</option>
+                ))}
+              </select>
+            </label>
+            <label className="select-field">
+              <span>安装位置</span>
+              <select
+                aria-label={`接口 ${selectedConnectorIndex + 1} 安装位置`}
+                value={surfaceValue}
+                onChange={(event) => {
+                  const value = event.currentTarget.value;
+                  updateConnectorPlacement(
+                    placement.id,
+                    value.startsWith("panel:")
+                      ? { surface: "panel", panelId: value.slice(6) }
+                      : { surface: value as EnclosureFace, panelId: null },
+                  );
+                }}
+              >
+                {ENCLOSURE_FACE_OPTIONS.map((option) => (
+                  <option key={option.id} value={option.id}>{option.name}</option>
+                ))}
+                {parameters.panelPlacements.map((panel, panelIndex) => (
+                  <option key={panel.id} value={`panel:${panel.id}`}>
+                    面板 {panelIndex + 1}（{getFaceLabel(panel.face)}）
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="select-field">
+              <span>面内旋转</span>
+              <select
+                aria-label={`接口 ${selectedConnectorIndex + 1} 面内旋转`}
+                value={placement.rotation}
+                onChange={(event) =>
+                  updateConnectorPlacement(placement.id, {
+                    rotation: Number(event.currentTarget.value) as PlacementRotation,
+                  })
+                }
+              >
+                {PLACEMENT_ROTATIONS.map((rotation) => (
+                  <option key={rotation} value={rotation}>{rotation}°</option>
+                ))}
+              </select>
+            </label>
+            {definition.panelCutout.shape === "circle" ? (
+              <NumberField
+                label="孔径"
+                value={placement.cutoutWidth}
+                min={1}
+                max={60}
+                onChange={(value) =>
+                  updateConnectorPlacement(placement.id, {
+                    cutoutWidth: value,
+                    cutoutHeight: value,
+                  })
+                }
+              />
+            ) : (
+              <>
+                <NumberField label="开孔宽度" value={placement.cutoutWidth} min={1} max={60} onChange={(value) => updateConnectorPlacement(placement.id, { cutoutWidth: value })} />
+                <NumberField label="开孔高度" value={placement.cutoutHeight} min={1} max={60} onChange={(value) => updateConnectorPlacement(placement.id, { cutoutHeight: value })} />
+              </>
+            )}
+            <NumberField label="横向偏移" value={placement.offsetU} min={-300} max={300} step={1} onChange={(value) => updateConnectorPlacement(placement.id, { offsetU: value })} />
+            <NumberField label="纵向偏移" value={placement.offsetV} min={-300} max={300} step={1} onChange={(value) => updateConnectorPlacement(placement.id, { offsetV: value })} />
+            <p className="material-note">{definition.metadata.notes}</p>
+          </section>
+        </div>
+      </aside>
+    );
+  }
+
+  if (selectedPart === "antenna" && selectedAntenna) {
+    const placement = selectedAntenna;
+    const definition = getAntennaDefinition(placement.definitionId);
+    const surfaceValue =
+      placement.surface === "panel" && placement.panelId
+        ? `panel:${placement.panelId}`
+        : placement.surface;
+    return (
+      <aside className="inspector-panel" aria-label="天线检查器">
+        <div className="inspector-title">
+          <span>{definition.name}</span>
+          <small>天线 {selectedAntennaIndex + 1}</small>
+        </div>
+        <div className="inspector-scroll contextual-inspector">
+          <section className="inspector-section">
+            <div className="section-heading-row">
+              <h2>天线参数</h2>
+              <button
+                className="icon-section-button"
+                type="button"
+                title="删除当前天线"
+                aria-label="删除当前天线"
+                onClick={() => removeAntennaPlacement(placement.id)}
+              >
+                <Trash2 size={14} />
+              </button>
+            </div>
+            <label className="select-field">
+              <span>类型</span>
+              <select
+                aria-label={`天线 ${selectedAntennaIndex + 1} 类型`}
+                value={placement.definitionId}
+                onChange={(event) =>
+                  setAntennaDefinition(placement.id, event.currentTarget.value)
+                }
+              >
+                {ANTENNA_DEFINITIONS.map((item) => (
+                  <option key={item.id} value={item.id}>{item.name}</option>
+                ))}
+              </select>
+            </label>
+            <label className="select-field">
+              <span>安装位置</span>
+              <select
+                aria-label={`天线 ${selectedAntennaIndex + 1} 安装位置`}
+                value={surfaceValue}
+                onChange={(event) => {
+                  const value = event.currentTarget.value;
+                  updateAntennaPlacement(
+                    placement.id,
+                    value.startsWith("panel:")
+                      ? { surface: "panel", panelId: value.slice(6) }
+                      : { surface: value as EnclosureFace, panelId: null },
+                  );
+                }}
+              >
+                {ENCLOSURE_FACE_OPTIONS.map((option) => (
+                  <option key={option.id} value={option.id}>{option.name}</option>
+                ))}
+                {parameters.panelPlacements.map((panel, panelIndex) => (
+                  <option key={panel.id} value={`panel:${panel.id}`}>
+                    面板 {panelIndex + 1}（{getFaceLabel(panel.face)}）
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="select-field">
+              <span>面内旋转</span>
+              <select
+                aria-label={`天线 ${selectedAntennaIndex + 1} 面内旋转`}
+                value={placement.rotation}
+                onChange={(event) =>
+                  updateAntennaPlacement(placement.id, {
+                    rotation: Number(event.currentTarget.value) as PlacementRotation,
+                  })
+                }
+              >
+                {PLACEMENT_ROTATIONS.map((rotation) => (
+                  <option key={rotation} value={rotation}>{rotation}°</option>
+                ))}
+              </select>
+            </label>
+            {definition.enclosureCutout ? (
+              <NumberField
+                label="开孔直径"
+                value={placement.cutoutDiameter}
+                min={1}
+                max={40}
+                onChange={(value) =>
+                  updateAntennaPlacement(placement.id, { cutoutDiameter: value })
+                }
+              />
+            ) : null}
+            <NumberField label="横向偏移" value={placement.offsetU} min={-300} max={300} step={1} onChange={(value) => updateAntennaPlacement(placement.id, { offsetU: value })} />
+            <NumberField label="纵向偏移" value={placement.offsetV} min={-300} max={300} step={1} onChange={(value) => updateAntennaPlacement(placement.id, { offsetV: value })} />
+            <div className="material-summary">
+              <AntennaIcon className="antenna-summary-icon" size={18} />
+              <span>
+                <strong>{definition.metadata.frequencyBand}</strong>
+                <small>
+                  {definition.enclosureCutout?.description ?? "内置安装，不生成外壳开孔"}
+                </small>
+              </span>
+            </div>
+            <p className="material-note">{definition.metadata.notes}</p>
+          </section>
+        </div>
+      </aside>
+    );
+  }
 
   return (
     <aside className="inspector-panel" aria-label="参数检查器">
@@ -481,51 +690,6 @@ export function Inspector() {
                   </div>
                 );
               })() : null}
-            </section>
-            <section className="inspector-section">
-              <h2>天线</h2>
-              <ToggleRow
-                label="启用天线"
-                detail="外置天线开孔或内置射频禁入空间"
-                checked={parameters.antennaEnabled}
-                onChange={(checked) => setParameter("antennaEnabled", checked)}
-              />
-              {parameters.antennaEnabled ? (
-                <>
-                  <label className="select-field">
-                    <span>天线类型</span>
-                    <select
-                      aria-label="天线类型"
-                      value={parameters.antennaDefinitionId}
-                      onChange={(event) => setAntennaDefinition(event.currentTarget.value)}
-                    >
-                      {ANTENNA_DEFINITIONS.map((definition) => (
-                        <option key={definition.id} value={definition.id}>{definition.name}</option>
-                      ))}
-                    </select>
-                  </label>
-                  <NumberField
-                    label="水平偏移"
-                    value={parameters.antennaOffset}
-                    min={-120}
-                    max={120}
-                    step={1}
-                    onChange={(value) => setParameter("antennaOffset", value)}
-                  />
-                  <div className="material-summary">
-                    <AntennaIcon className="antenna-summary-icon" size={18} />
-                    <span>
-                      <strong>{getAntennaDefinition(parameters.antennaDefinitionId).metadata.frequencyBand}</strong>
-                      <small>
-                        {getAntennaDefinition(parameters.antennaDefinitionId).enclosureCutout?.description ?? "内置安装，不生成外壳开孔"}
-                      </small>
-                    </span>
-                  </div>
-                  <p className="material-note">
-                    {getAntennaDefinition(parameters.antennaDefinitionId).metadata.notes}
-                  </p>
-                </>
-              ) : null}
             </section>
             <section className="inspector-section">
               <h2>镂空阵列</h2>

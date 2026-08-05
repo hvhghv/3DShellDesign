@@ -44,4 +44,25 @@ describe("panel DXF exporter", () => {
     expect(dxf.match(/\r\nLWPOLYLINE\r\n/g)).toHaveLength(2);
     expect(dxf.match(/\r\nCIRCLE\r\n/g)).toHaveLength(5);
   });
+
+  it("includes physical antenna cutouts mounted to the panel", () => {
+    const dxf = createPanelDxf({
+      ...DEFAULT_PARAMETERS,
+      antennaPlacements: [
+        {
+          id: "antenna-1",
+          definitionId: "sma-bulkhead-whip",
+          surface: "panel",
+          panelId: "panel-1",
+          offsetU: 10,
+          offsetV: -4,
+          rotation: 0,
+          cutoutDiameter: 6.8,
+        },
+      ],
+    });
+
+    expect(dxf.match(/\r\nCIRCLE\r\n/g)).toHaveLength(5);
+    expect(dxf).toContain("\r\n40\r\n3.4\r\n");
+  });
 });

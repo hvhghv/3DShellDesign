@@ -15,8 +15,18 @@ describe("BOM CSV exporter", () => {
   it("includes the selected antenna and frequency band", () => {
     const csv = createBomCsv("射频控制器", {
       ...DEFAULT_PARAMETERS,
-      antennaEnabled: true,
-      antennaDefinitionId: "sma-bulkhead-whip",
+      antennaPlacements: [
+        {
+          id: "antenna-1",
+          definitionId: "sma-bulkhead-whip",
+          surface: "back",
+          panelId: null,
+          offsetU: 0,
+          offsetV: 0,
+          rotation: 0,
+          cutoutDiameter: 6.8,
+        },
+      ],
     });
 
     expect(csv).toContain("SMA 穿板棒状天线,1,SMA female bulkhead + whip antenna");

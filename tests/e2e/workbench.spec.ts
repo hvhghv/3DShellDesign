@@ -107,6 +107,28 @@ function readStlDimensions(stl: Uint8Array): {
   };
 }
 
+async function chooseDevice(
+  page: Page,
+  kind: "接口" | "天线",
+  name: string,
+): Promise<void> {
+  await page.getByRole("button", { name: `添加${kind}` }).click();
+  const picker = page.getByRole("dialog", {
+    name: kind === "接口" ? "添加接口器件选择器" : "添加天线选择器",
+  });
+  await expect(picker).toBeVisible();
+  await picker.getByText(name, { exact: true }).click();
+  await expect(picker).toHaveCount(0);
+}
+
+async function addConnector(page: Page, name = "USB Type-C 母座") {
+  await chooseDevice(page, "接口", name);
+}
+
+async function addAntenna(page: Page, name = "SMA 穿板棒状天线") {
+  await chooseDevice(page, "天线", name);
+}
+
 test("desktop workbench renders a nonblank interactive enclosure", async ({ page }, testInfo) => {
   test.setTimeout(600_000);
   const pageErrors: string[] = [];
@@ -189,6 +211,7 @@ test("desktop workbench renders a nonblank interactive enclosure", async ({ page
   expect(layoutModel).toContain("PETG 韧性打印");
   expect(layoutModel).toContain("透明亚克力板");
 
+  let baseTriangleCount = 0;
   const exportCases = [
     { option: "base-stl", filename: "3dshell-base.stl", size: [108, 78, 24] },
     { option: "lid-stl", filename: "3dshell-lid.stl", size: [108, 78, 4.2] },
@@ -211,6 +234,7 @@ test("desktop workbench renders a nonblank interactive enclosure", async ({ page
     });
     if (exportCase.option === "base-stl") {
       expect(parsed.connectedComponents).toBe(1);
+      baseTriangleCount = parsed.triangleCount;
     }
   }
 
@@ -253,13 +277,45 @@ test("desktop workbench renders a nonblank interactive enclosure", async ({ page
 
   await expect(page.getByText(/三角面/)).toBeVisible();
 
-  await page.getByRole("checkbox", { name: /启用天线/ }).check();
-  await page.getByRole("combobox", { name: "天线类型" }).selectOption(
-    "sma-bulkhead-whip",
+  await addAntenna(page);
+  await page.getByRole("combobox", { name: "天线 1 安装位置" }).selectOption(
+    "left",
   );
+  await page
+    .locator(".field-row")
+    .filter({ hasText: "横向偏移" })
+    .locator("input")
+    .fill("30");
   await expect(
     page.getByRole("button", { name: /SMA 穿板棒状天线.*2\.4 GHz/ }),
   ).toBeVisible();
+  await addAntenna(page);
+  await page
+    .getByRole("combobox", { name: "天线 2 安装位置" })
+    .selectOption("panel:panel-1");
+  const panelAntennaInspector = page.getByRole("complementary", {
+    name: "天线检查器",
+  });
+  await panelAntennaInspector
+    .locator(".field-row")
+    .filter({ hasText: "横向偏移" })
+    .locator("input")
+    .fill("20");
+  await panelAntennaInspector
+    .locator(".field-row")
+    .filter({ hasText: "纵向偏移" })
+    .locator("input")
+    .fill("0");
+  await page.locator(".tree-nav").getByRole("button", { name: /下壳/ }).click();
+
+  await exportSelect.selectOption("base-stl");
+  const antennaBasePromise = page.waitForEvent("download", { timeout: 60_000 });
+  await page.locator(".manufacturing-export button").click();
+  const antennaBasePath = await (await antennaBasePromise).path();
+  expect(antennaBasePath).not.toBeNull();
+  const antennaBase = readStlDimensions(await readFile(antennaBasePath!));
+  expect(antennaBase.connectedComponents).toBe(1);
+  expect(antennaBase.triangleCount).not.toBe(baseTriangleCount);
 
   await exportSelect.selectOption("panel-dxf:panel-1");
   const dxfDownloadPromise = page.waitForEvent("download");
@@ -270,7 +326,13 @@ test("desktop workbench renders a nonblank interactive enclosure", async ({ page
   expect(dxfPath).not.toBeNull();
   const dxf = (await readFile(dxfPath!)).toString("utf8");
   expect(dxf).toContain("LWPOLYLINE");
-  expect(dxf.match(/\r\nCIRCLE\r\n/g)).toHaveLength(4);
+  expect(dxf.match(/\r\nCIRCLE\r\n/g)).toHaveLength(5);
+  await page
+    .locator(".tree-nav")
+    .getByRole("button", { name: /SMA 穿板棒状天线.*面板/ })
+    .click();
+  await page.getByRole("button", { name: "删除当前天线" }).click();
+  await page.locator(".tree-nav").getByRole("button", { name: /下壳/ }).click();
 
   await exportSelect.selectOption("bom-csv");
   const bomDownloadPromise = page.waitForEvent("download");
@@ -284,6 +346,11 @@ test("desktop workbench renders a nonblank interactive enclosure", async ({ page
   expect(bom).toContain("圆形磁铁,8,直径 6 x 1.8 mm");
   expect(bom).toContain("双壁角托；装配前确认磁极");
   expect(bom).toContain("SMA 穿板棒状天线");
+  await page
+    .locator(".tree-item")
+    .filter({ hasText: "SMA 穿板棒状天线" })
+    .click();
+  await page.getByRole("button", { name: "删除当前天线" }).click();
 
   await page.getByRole("button", { name: "螺丝", exact: true }).click();
   await page.getByRole("combobox", { name: "紧固件规格" }).selectOption(
@@ -295,6 +362,7 @@ test("desktop workbench renders a nonblank interactive enclosure", async ({ page
   await expect(
     page.getByRole("button", { name: "DC 5.5/2.1 母座 前壁" }),
   ).toBeVisible();
+  await page.locator(".tree-nav").getByRole("button", { name: /下壳/ }).click();
   await exportSelect.selectOption("base-stl");
   const libraryDownloadPromise = page.waitForEvent("download", { timeout: 60_000 });
   await page.locator(".manufacturing-export button").click();
@@ -306,7 +374,7 @@ test("desktop workbench renders a nonblank interactive enclosure", async ({ page
   expect(libraryStl.dimensions[0]).toBeCloseTo(108, 1);
   expect(libraryStl.dimensions[1]).toBeCloseTo(78, 1);
 
-  await page.getByRole("button", { name: "添加接口" }).click();
+  await addConnector(page);
   const secondConnector = page.locator(".connector-placement");
   await page
     .getByRole("combobox", { name: "接口 2 安装位置" })
@@ -322,6 +390,7 @@ test("desktop workbench renders a nonblank interactive enclosure", async ({ page
   await expect(
     page.getByRole("button", { name: "USB Type-C 母座 右壁" }),
   ).toBeVisible();
+  await page.locator(".tree-nav").getByRole("button", { name: /下壳/ }).click();
   await exportSelect.selectOption("base-stl");
   const multiConnectorDownloadPromise = page.waitForEvent("download", {
     timeout: 60_000,
@@ -361,6 +430,7 @@ test("desktop workbench renders a nonblank interactive enclosure", async ({ page
     .filter({ hasText: "纵向偏移" })
     .locator("input")
     .fill("0");
+  await page.locator(".tree-nav").getByRole("button", { name: /下壳/ }).click();
   await exportSelect.selectOption("panel-stl:panel-1");
   const panelConnectorPromise = page.waitForEvent("download", { timeout: 60_000 });
   await page.locator(".manufacturing-export button").click();
@@ -380,8 +450,13 @@ test("desktop workbench renders a nonblank interactive enclosure", async ({ page
   expect(panelConnectorDxf.match(/\r\nLWPOLYLINE\r\n/g)).toHaveLength(2);
 
   await page
+    .locator(".tree-item")
+    .filter({ hasText: "USB Type-C 母座" })
+    .click();
+  await page
     .getByRole("combobox", { name: "接口 2 安装位置" })
     .selectOption("top");
+  await page.locator(".tree-nav").getByRole("button", { name: /下壳/ }).click();
   await exportSelect.selectOption("lid-stl");
   const topConnectorPromise = page.waitForEvent("download", { timeout: 60_000 });
   await page.locator(".manufacturing-export button").click();
@@ -391,6 +466,7 @@ test("desktop workbench renders a nonblank interactive enclosure", async ({ page
     readStlDimensions(await readFile(topConnectorPath!)).connectedComponents,
   ).toBe(1);
 
+  await page.locator(".tree-item").filter({ hasText: "面板 1" }).click();
   await page.getByRole("combobox", { name: "面板所在面" }).selectOption("right");
   await page
     .locator(".tree-item")
@@ -398,8 +474,13 @@ test("desktop workbench renders a nonblank interactive enclosure", async ({ page
     .click();
   for (const connectorFace of ["back", "left", "bottom"] as const) {
     await page
+      .locator(".tree-item")
+      .filter({ hasText: "USB Type-C 母座" })
+      .click();
+    await page
       .getByRole("combobox", { name: "接口 2 安装位置" })
       .selectOption(connectorFace);
+    await page.locator(".tree-nav").getByRole("button", { name: /下壳/ }).click();
     await exportSelect.selectOption("base-stl");
     const faceConnectorPromise = page.waitForEvent("download", {
       timeout: 60_000,
@@ -412,10 +493,15 @@ test("desktop workbench renders a nonblank interactive enclosure", async ({ page
     ).toBe(1);
   }
 
+  await page
+    .locator(".tree-item")
+    .filter({ hasText: "USB Type-C 母座" })
+    .click();
   await page.getByRole("button", { name: "删除当前接口" }).click();
   await page
     .getByRole("combobox", { name: "接口 1 安装位置" })
     .selectOption("top");
+  await page.locator(".tree-item").filter({ hasText: "面板 1" }).click();
   for (const panelFace of ["front", "back", "left", "right", "bottom"] as const) {
     await page.getByRole("combobox", { name: "面板所在面" }).selectOption(panelFace);
     await exportSelect.selectOption("base-stl");
@@ -528,10 +614,6 @@ test("desktop workbench renders a nonblank interactive enclosure", async ({ page
     "data-reference-kind",
     "step",
   );
-  await expect(
-    page.locator(".tree-nav").getByRole("button", { name: /SMA 穿板棒状天线/ }),
-  ).toBeVisible();
-
   await page.getByRole("button", { name: "移除 PCB 文件关联" }).click();
   await page.getByRole("combobox", { name: "外壳模板" }).selectOption(
     "wall-mount",
@@ -555,6 +637,47 @@ test("desktop workbench renders a nonblank interactive enclosure", async ({ page
   expect(pageErrors).toEqual([]);
 });
 
+test("device pickers create only the selected connector and antenna", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+  const tree = page.locator(".tree-nav");
+  await expect(tree.locator(".tree-item").filter({ hasText: "USB Type-C 母座" })).toHaveCount(1);
+
+  await page.getByRole("button", { name: "添加接口" }).click();
+  const connectorPicker = page.getByRole("dialog", {
+    name: "添加接口器件选择器",
+  });
+  await expect(connectorPicker).toBeVisible();
+  await expect(tree.locator(".tree-item").filter({ hasText: "USB Type-C 母座" })).toHaveCount(1);
+  await connectorPicker.getByRole("searchbox", { name: "搜索添加接口器件" }).fill("1.25");
+  await expect(connectorPicker.locator(".device-picker-item")).toHaveCount(3);
+  await expect(connectorPicker.getByText("1.25 mm 2P 线对板端子", { exact: true })).toBeVisible();
+  await expect(connectorPicker.getByText("1.25 mm 4P 线对板端子", { exact: true })).toBeVisible();
+  await expect(connectorPicker.getByText("1.25 mm 5P 线对板端子", { exact: true })).toBeVisible();
+  await connectorPicker
+    .locator(".device-picker-item")
+    .filter({ hasText: "1.25 mm 4P 线对板端子" })
+    .click();
+  await expect(connectorPicker).toHaveCount(0);
+  await expect(tree.locator(".tree-item").filter({ hasText: "1.25 mm 4P 线对板端子" })).toBeVisible();
+  await expect(page.getByRole("combobox", { name: "接口 2 器件" })).toHaveValue(
+    "terminal-125-4p",
+  );
+
+  await page.getByRole("button", { name: "添加天线" }).click();
+  const antennaPicker = page.getByRole("dialog", { name: "添加天线选择器" });
+  await expect(antennaPicker).toBeVisible();
+  await antennaPicker
+    .locator(".device-picker-item")
+    .filter({ hasText: "RP-SMA 穿板棒状天线" })
+    .click();
+  await expect(antennaPicker).toHaveCount(0);
+  await expect(tree.locator(".tree-item").filter({ hasText: "RP-SMA 穿板棒状天线" })).toBeVisible();
+  await expect(page.getByRole("combobox", { name: "天线 1 类型" })).toHaveValue(
+    "rp-sma-bulkhead-whip",
+  );
+});
+
 test("project parameters survive an immediate page reload", async ({ page }) => {
   test.setTimeout(120_000);
   await page.goto("/");
@@ -562,11 +685,19 @@ test("project parameters survive an immediate page reload", async ({ page }) => 
   await lengthInput.fill("123");
   await expect(lengthInput).toHaveValue("123");
   await page.getByRole("tab", { name: "结构" }).click();
-  await page.getByRole("checkbox", { name: /启用天线/ }).check();
-  await page.getByRole("button", { name: "添加接口" }).click();
+  await addAntenna(page);
+  await addAntenna(page, "内贴 FPC 天线");
+  await page
+    .getByRole("combobox", { name: "天线 2 安装位置" })
+    .selectOption("right");
+  await page
+    .getByRole("combobox", { name: "天线 2 面内旋转" })
+    .selectOption("90");
+  await addConnector(page);
   await page
     .getByRole("combobox", { name: "接口 2 安装位置" })
     .selectOption("right");
+  await page.locator(".tree-item").filter({ hasText: "面板 1" }).click();
   await page.getByRole("combobox", { name: "面板所在面" }).selectOption("left");
   await page.getByRole("button", { name: "添加面板" }).click();
   await expect(
@@ -588,7 +719,19 @@ test("project parameters survive an immediate page reload", async ({ page }) => 
   await expect(
     page.locator(".tree-nav").getByRole("button", { name: /SMA 穿板棒状天线/ }),
   ).toBeVisible();
-  await page.getByRole("tab", { name: "结构" }).click();
+  await expect(
+    page.locator(".tree-nav").getByRole("button", { name: /内贴 FPC 天线.*右壁/ }),
+  ).toBeVisible();
+  await page
+    .locator(".tree-nav")
+    .getByRole("button", { name: /内贴 FPC 天线.*右壁/ })
+    .click();
+  await expect(page.getByRole("combobox", { name: "天线 2 类型" })).toHaveValue(
+    "adhesive-fpc-antenna",
+  );
+  await expect(
+    page.getByRole("combobox", { name: "天线 2 面内旋转" }),
+  ).toHaveValue("90");
   await expect(page.locator(".tree-item").filter({ hasText: "面板 2" })).toBeVisible();
   await page
     .locator(".tree-item")
@@ -606,6 +749,135 @@ test("project parameters survive an immediate page reload", async ({ page }) => 
   await expect(page.getByRole("combobox", { name: "面板所在面" })).toHaveValue(
     "right",
   );
+});
+
+test("connector and antenna editors stay contextual and support instances", async ({ page }, testInfo) => {
+  test.setTimeout(120_000);
+  const pageErrors: string[] = [];
+  const consoleErrors: string[] = [];
+  page.on("pageerror", (error) => pageErrors.push(error.message));
+  page.on("console", (message) => {
+    if (message.type() === "error") consoleErrors.push(message.text());
+  });
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+
+  await page
+    .locator(".tree-item")
+    .filter({ hasText: "USB Type-C 母座" })
+    .click();
+  await expect(page.getByRole("complementary", { name: "接口检查器" })).toBeVisible();
+  await expect(page.getByRole("tablist", { name: "参数类别" })).toHaveCount(0);
+  await expect(page.getByRole("heading", { name: "接口参数" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "制造导出" })).toHaveCount(0);
+  const connectorEditor = page.getByRole("complementary", { name: "接口检查器" });
+  const connectorOffset = connectorEditor
+    .locator(".field-row")
+    .filter({ hasText: "横向偏移" })
+    .locator("input");
+  await expect(connectorOffset).toHaveValue("0");
+  const canvas = page.locator(".viewport-canvas canvas");
+  const canvasBox = await canvas.boundingBox();
+  expect(canvasBox).not.toBeNull();
+  await page.mouse.move(canvasBox!.x + 345, canvasBox!.y + 452);
+  await page.mouse.down();
+  await page.mouse.move(canvasBox!.x + 370, canvasBox!.y + 462, { steps: 8 });
+  await page.mouse.up();
+  await expect(connectorOffset).not.toHaveValue("0");
+  const movedConnectorOffset = await connectorOffset.inputValue();
+  await expect(page.locator(".status-bar")).toContainText("已缓存");
+  await page.reload();
+  await page
+    .locator(".tree-item")
+    .filter({ hasText: "USB Type-C 母座" })
+    .click();
+  await expect(connectorOffset).toHaveValue(movedConnectorOffset);
+  await page.screenshot({
+    path: testInfo.outputPath("connector-editor.png"),
+    fullPage: true,
+  });
+
+  await page.getByRole("button", { name: "缩放选中对象" }).click();
+  await expect(page.locator(".viewport-canvas")).toHaveAttribute(
+    "data-transform-mode",
+    "scale",
+  );
+  await addAntenna(page, "内贴 FPC 天线");
+  await expect(page.getByRole("complementary", { name: "天线检查器" })).toBeVisible();
+  await expect(page.getByRole("tablist", { name: "参数类别" })).toHaveCount(0);
+  await expect(page.locator(".viewport-canvas")).toHaveAttribute(
+    "data-transform-mode",
+    "move",
+  );
+  await expect(page.getByRole("button", { name: "缩放选中对象" })).toBeDisabled();
+  await page.getByRole("combobox", { name: "天线 1 安装位置" }).selectOption(
+    "right",
+  );
+  await page.getByRole("combobox", { name: "天线 1 面内旋转" }).selectOption(
+    "180",
+  );
+  const firstAntennaEditor = page.getByRole("complementary", { name: "天线检查器" });
+  await firstAntennaEditor
+    .locator(".field-row")
+    .filter({ hasText: "横向偏移" })
+    .locator("input")
+    .fill("12");
+  await firstAntennaEditor
+    .locator(".field-row")
+    .filter({ hasText: "纵向偏移" })
+    .locator("input")
+    .fill("2");
+
+  await addAntenna(page, "RP-SMA 穿板棒状天线");
+  await page.getByRole("combobox", { name: "天线 2 安装位置" }).selectOption(
+    "top",
+  );
+  const secondAntennaEditor = page.getByRole("complementary", { name: "天线检查器" });
+  const secondAntennaOffset = secondAntennaEditor
+    .locator(".field-row")
+    .filter({ hasText: "横向偏移" })
+    .locator("input");
+  await expect(secondAntennaOffset).toHaveValue("0");
+  await page.mouse.move(canvasBox!.x + 500, canvasBox!.y + 268);
+  await page.mouse.down();
+  await page.mouse.move(canvasBox!.x + 525, canvasBox!.y + 273, { steps: 8 });
+  await page.mouse.up();
+  await expect(secondAntennaOffset).not.toHaveValue("0");
+  await secondAntennaOffset.fill("40");
+  await expect(page.locator(".tree-item").filter({ hasText: "内贴 FPC 天线" })).toBeVisible();
+  await expect(page.locator(".tree-item").filter({ hasText: "RP-SMA 穿板棒状天线" })).toBeVisible();
+  await page.screenshot({
+    path: testInfo.outputPath("antenna-editor.png"),
+    fullPage: true,
+  });
+
+  await expect(page.locator(".status-bar")).toContainText("已缓存");
+  await page.reload();
+  await page.locator(".tree-item").filter({ hasText: "内贴 FPC 天线" }).click();
+  await expect(page.getByRole("combobox", { name: "天线 1 安装位置" })).toHaveValue(
+    "right",
+  );
+  await expect(page.getByRole("combobox", { name: "天线 1 面内旋转" })).toHaveValue(
+    "180",
+  );
+  await expect(
+    page.getByRole("complementary", { name: "天线检查器" })
+      .locator(".field-row")
+      .filter({ hasText: "横向偏移" })
+      .locator("input"),
+  ).toHaveValue("12");
+  await page.locator(".tree-item").filter({ hasText: "RP-SMA 穿板棒状天线" }).click();
+  await expect(page.getByRole("combobox", { name: "天线 2 安装位置" })).toHaveValue(
+    "top",
+  );
+  await expect(
+    page.getByRole("complementary", { name: "天线检查器" })
+      .locator(".field-row")
+      .filter({ hasText: "横向偏移" })
+      .locator("input"),
+  ).toHaveValue("40");
+  expect(pageErrors).toEqual([]);
+  expect(consoleErrors).toEqual([]);
 });
 
 test("3D transform handles edit the selected panel", async ({ page }, testInfo) => {

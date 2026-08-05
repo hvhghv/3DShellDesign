@@ -3,6 +3,7 @@ import {
   ANTENNA_DEFINITIONS,
   CONNECTOR_DEFINITIONS,
   FASTENER_DEFINITIONS,
+  TERMINAL_CONNECTOR_DEFINITIONS,
   getAntennaDefinition,
   getConnectorDefinition,
   getFastenerDefinition,
@@ -21,6 +22,29 @@ describe("component library", () => {
       expect(definition.panelCutout.height).toBeGreaterThan(0);
       expect(definition.keepoutVolumes.length).toBeGreaterThan(0);
       expect(definition.metadata.bomName).not.toBe("");
+    }
+  });
+
+  it("provides common terminal pitches and position counts", () => {
+    expect(TERMINAL_CONNECTOR_DEFINITIONS).toHaveLength(12);
+    for (const pitch of [1, 1.25, 2.54, 5.08]) {
+      for (const positions of [2, 4, 5]) {
+        expect(
+          TERMINAL_CONNECTOR_DEFINITIONS.find(
+            (definition) =>
+              definition.terminalSpec?.pitch === pitch &&
+              definition.terminalSpec.positions === positions,
+          ),
+        ).toEqual(
+          expect.objectContaining({
+            category: "terminal",
+            panelCutout: expect.objectContaining({
+              width: expect.any(Number),
+              height: expect.any(Number),
+            }),
+          }),
+        );
+      }
     }
   });
 

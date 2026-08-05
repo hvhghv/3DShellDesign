@@ -34,6 +34,10 @@ export interface ConnectorDefinition {
     bomName: string;
     notes: string;
   };
+  terminalSpec?: {
+    pitch: number;
+    positions: 2 | 4 | 5;
+  };
 }
 
 export type AntennaPlacement = "rear-bulkhead" | "inner-rear-wall" | "pcb-rear-edge";
@@ -83,6 +87,114 @@ export interface FastenerDefinition {
     notes: string;
   };
 }
+
+interface TerminalFamily {
+  id: string;
+  pitch: number;
+  height: number;
+  depth: number;
+  housingExtra: number;
+  color: string;
+  screwOperated: boolean;
+}
+
+const TERMINAL_FAMILIES: TerminalFamily[] = [
+  {
+    id: "100",
+    pitch: 1,
+    height: 3.2,
+    depth: 5,
+    housingExtra: 2.4,
+    color: "#eee9dc",
+    screwOperated: false,
+  },
+  {
+    id: "125",
+    pitch: 1.25,
+    height: 4,
+    depth: 6,
+    housingExtra: 3,
+    color: "#e9e4d8",
+    screwOperated: false,
+  },
+  {
+    id: "254",
+    pitch: 2.54,
+    height: 6,
+    depth: 8,
+    housingExtra: 4,
+    color: "#d7d3c8",
+    screwOperated: false,
+  },
+  {
+    id: "508",
+    pitch: 5.08,
+    height: 8.2,
+    depth: 10,
+    housingExtra: 5.4,
+    color: "#397b4a",
+    screwOperated: true,
+  },
+];
+
+const TERMINAL_POSITIONS = [2, 4, 5] as const;
+
+function formatPitch(pitch: number): string {
+  return pitch === 1 ? "1.0" : pitch.toFixed(2);
+}
+
+function createTerminalDefinition(
+  family: TerminalFamily,
+  positions: (typeof TERMINAL_POSITIONS)[number],
+): ConnectorDefinition {
+  const width = family.pitch * (positions - 1) + family.housingExtra;
+  const pitchLabel = formatPitch(family.pitch);
+  const connectorLabel = family.screwOperated ? "接线端子" : "线对板端子";
+  const operationLabel = family.screwOperated ? "螺丝刀与导线" : "线束插拔";
+  return {
+    id: `terminal-${family.id}-${positions}p`,
+    name: `${pitchLabel} mm ${positions}P ${connectorLabel}`,
+    category: "terminal",
+    visualGeometry: {
+      shape: "rounded-rectangle",
+      width,
+      height: family.height,
+      depth: family.depth,
+      color: family.color,
+    },
+    panelCutout: {
+      shape: "rounded-rectangle",
+      width: width + 1.2,
+      height: family.height + 1.3,
+      cornerRadius: 0.8,
+    },
+    boardAlignment: { heightAboveBoardCenter: family.height / 2 + 0.8 },
+    keepoutVolumes: [
+      {
+        role: family.screwOperated ? "tool" : "wiring",
+        width: width + 5,
+        height: family.height + 7,
+        depth: family.depth + 22,
+      },
+    ],
+    toleranceRules: {
+      xyClearance: family.screwOperated ? 0.45 : 0.3,
+      description: `通用 ${pitchLabel} mm ${positions}P 包络，已预留${operationLabel}空间`,
+    },
+    metadata: {
+      bomName: `${pitchLabel} mm ${positions}-pin ${family.screwOperated ? "screw terminal" : "wire-to-board terminal"}`,
+      notes: `不同厂商的塑壳、锁扣和进线方向存在差异，需按具体 ${pitchLabel} mm ${positions}P 器件图纸复核。`,
+    },
+    terminalSpec: { pitch: family.pitch, positions },
+  };
+}
+
+export const TERMINAL_CONNECTOR_DEFINITIONS: ConnectorDefinition[] =
+  TERMINAL_FAMILIES.flatMap((family) =>
+    TERMINAL_POSITIONS.map((positions) =>
+      createTerminalDefinition(family, positions),
+    ),
+  );
 
 export const CONNECTOR_DEFINITIONS: ConnectorDefinition[] = [
   {
@@ -140,17 +252,7 @@ export const CONNECTOR_DEFINITIONS: ConnectorDefinition[] = [
     toleranceRules: { xyClearance: 0.5, description: "包含水晶头卡扣活动空间" },
     metadata: { bomName: "RJ45 receptacle", notes: "带灯、带磁和屏蔽型号高度不同，需按器件图校核。" },
   },
-  {
-    id: "terminal-508-2p",
-    name: "5.08 mm 两位接线端子",
-    category: "terminal",
-    visualGeometry: { shape: "rounded-rectangle", width: 10.5, height: 8.2, depth: 10, color: "#397b4a" },
-    panelCutout: { shape: "rounded-rectangle", width: 11.5, height: 9.5, cornerRadius: 0.8 },
-    boardAlignment: { heightAboveBoardCenter: 5 },
-    keepoutVolumes: [{ role: "tool", width: 16, height: 18, depth: 30 }],
-    toleranceRules: { xyClearance: 0.45, description: "为导线与螺丝刀操作预留包络" },
-    metadata: { bomName: "5.08 mm 2-pin terminal", notes: "端子开口方向和螺丝刀角度需结合装配方向检查。" },
-  },
+  ...TERMINAL_CONNECTOR_DEFINITIONS,
   {
     id: "fpc-20p-05",
     name: "0.5 mm 20P FPC 端子",

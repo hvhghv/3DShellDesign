@@ -4,8 +4,10 @@ import { getVentPatternPoints } from "./patterns";
 import { MAGNET_GEOMETRY } from "./magnetSupport";
 import {
   createConnectorPlacement,
+  createAntennaPlacement,
   createPanelPlacement,
   getConnectorSurfaceSize,
+  getAntennaSurfaceSize,
   getFaceSize,
   getDefaultPanelSize,
   getPanelPlacement,
@@ -13,9 +15,11 @@ import {
   isConnectorSurface,
   isEnclosureFace,
   isPlacementRotation,
+  resolveAntennaFace,
   resolveConnectorFace,
 } from "./placements";
 import type {
+  AntennaPlacement,
   ConnectorPlacement,
   DesignerParameters,
   EnclosureDimensions,
@@ -56,9 +60,7 @@ export const DEFAULT_PARAMETERS: DesignerParameters = {
   connectorPlacements: [
     createConnectorPlacement("usb-c-receptacle", "connector-1"),
   ],
-  antennaEnabled: false,
-  antennaDefinitionId: "sma-bulkhead-whip",
-  antennaOffset: 20,
+  antennaPlacements: [],
   closureFastenerId: "m3-self-tapping",
   ventPattern: "none",
   ventRows: 3,
@@ -116,10 +118,31 @@ interface LegacyDesignerParameters extends Partial<DesignerParameters> {
   panelFace?: unknown;
   panelOffsetU?: number;
   panelOffsetV?: number;
+  antennaEnabled?: boolean;
+  antennaDefinitionId?: string;
+  antennaOffset?: number;
 }
 
 function finiteOr(value: unknown, fallback: number): number {
   return typeof value === "number" && Number.isFinite(value) ? value : fallback;
+}
+
+function getAntennaMountingSize(
+  placement: AntennaPlacement,
+): readonly [number, number] {
+  const antenna = getAntennaDefinition(placement.definitionId);
+  if (antenna.enclosureCutout) {
+    const diameter = Math.max(
+      placement.cutoutDiameter,
+      antenna.visualGeometry.width,
+      antenna.visualGeometry.height,
+    );
+    return [diameter, diameter];
+  }
+  const quarterTurn = placement.rotation === 90 || placement.rotation === 270;
+  return quarterTurn
+    ? [antenna.visualGeometry.height, antenna.visualGeometry.width]
+    : [antenna.visualGeometry.width, antenna.visualGeometry.height];
 }
 
 export function normalizeDesignerParameters(value: unknown): DesignerParameters {
@@ -139,6 +162,18 @@ export function normalizeDesignerParameters(value: unknown): DesignerParameters 
       DEFAULT_PARAMETERS.wallThickness,
     ),
     baseHeight: finiteOr(candidate.baseHeight, DEFAULT_PARAMETERS.baseHeight),
+    bottomThickness: finiteOr(
+      candidate.bottomThickness,
+      DEFAULT_PARAMETERS.bottomThickness,
+    ),
+    standoffHeight: finiteOr(
+      candidate.standoffHeight,
+      DEFAULT_PARAMETERS.standoffHeight,
+    ),
+    pcbThickness: finiteOr(
+      candidate.pcbThickness,
+      DEFAULT_PARAMETERS.pcbThickness,
+    ),
   };
   let panelPlacements: PanelPlacement[];
   if (Array.isArray(candidate.panelPlacements)) {
@@ -246,11 +281,68 @@ export function normalizeDesignerParameters(value: unknown): DesignerParameters 
     }));
   }
 
+  let antennaPlacements: AntennaPlacement[];
+  if (Array.isArray(candidate.antennaPlacements)) {
+    antennaPlacements = candidate.antennaPlacements.map((placement, index) => {
+      const raw =
+        placement && typeof placement === "object"
+          ? (placement as Partial<AntennaPlacement>)
+          : ({} as Partial<AntennaPlacement>);
+      const definition = getAntennaDefinition(
+        typeof raw.definitionId === "string"
+          ? raw.definitionId
+          : "sma-bulkhead-whip",
+      );
+      const surface = isConnectorSurface(raw.surface) ? raw.surface : "back";
+      return {
+        ...createAntennaPlacement(
+          dimensionSource,
+          definition.id,
+          typeof raw.id === "string" && raw.id ? raw.id : `antenna-${index + 1}`,
+          surface,
+        ),
+        panelId:
+          surface === "panel"
+            ? panelPlacements.some((panel) => panel.id === raw.panelId)
+              ? raw.panelId ?? null
+              : panelPlacements[0]?.id ?? null
+            : null,
+        offsetU: finiteOr(raw.offsetU, 0),
+        offsetV: finiteOr(raw.offsetV, 0),
+        rotation: isPlacementRotation(raw.rotation) ? raw.rotation : 0,
+        cutoutDiameter: Math.max(
+          0,
+          finiteOr(
+            raw.cutoutDiameter,
+            definition.enclosureCutout?.diameter ?? 0,
+          ),
+        ),
+      };
+    });
+  } else if (candidate.antennaEnabled) {
+    const definition = getAntennaDefinition(
+      candidate.antennaDefinitionId ?? "sma-bulkhead-whip",
+    );
+    antennaPlacements = [
+      {
+        ...createAntennaPlacement(
+          dimensionSource,
+          definition.id,
+          "antenna-1",
+        ),
+        offsetU: finiteOr(candidate.antennaOffset, 20),
+      },
+    ];
+  } else {
+    antennaPlacements = [];
+  }
+
   const normalized = {
     ...DEFAULT_PARAMETERS,
     ...candidate,
     panelPlacements,
     connectorPlacements,
+    antennaPlacements,
   } as DesignerParameters & Record<string, unknown>;
   for (const key of [
     "typeCPortEnabled",
@@ -265,6 +357,9 @@ export function normalizeDesignerParameters(value: unknown): DesignerParameters 
     "panelFace",
     "panelOffsetU",
     "panelOffsetV",
+    "antennaEnabled",
+    "antennaDefinitionId",
+    "antennaOffset",
   ]) {
     delete normalized[key];
   }
@@ -526,42 +621,148 @@ export function validateDesign(
     }
   }
 
-  if (parameters.antennaEnabled) {
-    const antenna = getAntennaDefinition(parameters.antennaDefinitionId);
-    const mountingWidth = Math.max(
-      antenna.visualGeometry.width,
-      antenna.enclosureCutout?.diameter ?? 0,
-    );
-    const edgeDistance =
-      (dimensions.outsideLength - parameters.cornerRadius * 2) / 2 -
-      Math.abs(parameters.antennaOffset) -
-      mountingWidth / 2;
-    if (edgeDistance < parameters.wallThickness * 2) {
+  for (const [index, placement] of parameters.antennaPlacements.entries()) {
+    const antenna = getAntennaDefinition(placement.definitionId);
+    const targetPanel =
+      placement.surface === "panel"
+        ? getPanelPlacement(parameters, placement.panelId)
+        : null;
+    if (placement.surface === "panel" && !targetPanel) {
       issues.push({
-        id: "antenna-edge-distance",
+        id: `antenna-panel-missing-${placement.id}`,
         level: "error",
-        title: `${antenna.name}距边缘过近`,
-        detail: `当前剩余 ${Math.max(0, edgeDistance).toFixed(1)} mm，需要保留壁厚和圆角区域`,
+        title: `${antenna.name}缺少安装面板`,
+        detail: "选择一个现有面板，或将天线改放到壳体表面",
+        part: "antenna",
+      });
+      continue;
+    }
+    const [surfaceWidth, surfaceHeight] = getAntennaSurfaceSize(
+      placement,
+      parameters,
+      dimensions,
+    );
+    const [mountingWidth, mountingHeight] = getAntennaMountingSize(placement);
+    const edgeMargin = placement.surface === "panel"
+      ? 2
+      : Math.max(2, parameters.wallThickness * 2);
+    if (
+      surfaceWidth / 2 - Math.abs(placement.offsetU) - mountingWidth / 2 <
+        edgeMargin ||
+      surfaceHeight / 2 - Math.abs(placement.offsetV) - mountingHeight / 2 <
+        edgeMargin
+    ) {
+      issues.push({
+        id: `antenna-edge-distance-${placement.id}`,
+        level: "error",
+        title: `${antenna.name}超出安全放置区域`,
+        detail: `天线 ${index + 1} 距安装面边缘至少保留 ${edgeMargin.toFixed(1)} mm`,
         part: "antenna",
       });
     }
 
-    const antennaCenterHeight =
-      parameters.bottomThickness +
-      parameters.standoffHeight +
-      parameters.pcbThickness / 2 +
-      antenna.heightAboveBoardCenter;
-    if (
-      antennaCenterHeight + antenna.visualGeometry.height / 2 >
-      parameters.baseHeight - parameters.wallThickness
+    if (placement.surface !== "panel") {
+      for (const panel of parameters.panelPlacements) {
+        if (
+          placement.surface === panel.face &&
+          Math.abs(placement.offsetU - panel.offsetU) <
+            (mountingWidth + panel.width) / 2 &&
+          Math.abs(placement.offsetV - panel.offsetV) <
+            (mountingHeight + panel.height) / 2
+        ) {
+          issues.push({
+            id: `antenna-panel-overlap-${placement.id}-${panel.id}`,
+            level: "error",
+            title: `${antenna.name}与面板区域重叠`,
+            detail: "将天线目标改为对应面板，或移动到面板区域之外",
+            part: "antenna",
+          });
+        }
+      }
+    }
+  }
+
+  for (let first = 0; first < parameters.antennaPlacements.length; first += 1) {
+    const firstPlacement = parameters.antennaPlacements[first];
+    const firstPanel =
+      firstPlacement.surface === "panel"
+        ? getPanelPlacement(parameters, firstPlacement.panelId)
+        : null;
+    if (firstPlacement.surface === "panel" && !firstPanel) continue;
+    const firstFace = resolveAntennaFace(firstPlacement, parameters);
+    const [firstWidth, firstHeight] = getAntennaMountingSize(firstPlacement);
+    const firstU = firstPlacement.offsetU + (firstPanel?.offsetU ?? 0);
+    const firstV = firstPlacement.offsetV + (firstPanel?.offsetV ?? 0);
+    for (
+      let second = first + 1;
+      second < parameters.antennaPlacements.length;
+      second += 1
     ) {
-      issues.push({
-        id: "antenna-height",
-        level: "error",
-        title: `${antenna.name}安装高度不足`,
-        detail: "提高下壳高度或选择更紧凑的天线",
-        part: "antenna",
-      });
+      const secondPlacement = parameters.antennaPlacements[second];
+      const secondPanel =
+        secondPlacement.surface === "panel"
+          ? getPanelPlacement(parameters, secondPlacement.panelId)
+          : null;
+      if (secondPlacement.surface === "panel" && !secondPanel) continue;
+      if (resolveAntennaFace(secondPlacement, parameters) !== firstFace) continue;
+      const [secondWidth, secondHeight] = getAntennaMountingSize(secondPlacement);
+      const secondU = secondPlacement.offsetU + (secondPanel?.offsetU ?? 0);
+      const secondV = secondPlacement.offsetV + (secondPanel?.offsetV ?? 0);
+      if (
+        Math.abs(firstU - secondU) < (firstWidth + secondWidth) / 2 + 2 &&
+        Math.abs(firstV - secondV) < (firstHeight + secondHeight) / 2 + 2
+      ) {
+        issues.push({
+          id: `antenna-overlap-${firstPlacement.id}-${secondPlacement.id}`,
+          level: "error",
+          title: "天线安装区域相互重叠",
+          detail: "移动其中一个天线，至少保留 2 mm 壳体材料和装配空间",
+          part: "antenna",
+        });
+      }
+    }
+  }
+
+  for (const antennaPlacement of parameters.antennaPlacements) {
+    const antennaPanel =
+      antennaPlacement.surface === "panel"
+        ? getPanelPlacement(parameters, antennaPlacement.panelId)
+        : null;
+    if (antennaPlacement.surface === "panel" && !antennaPanel) continue;
+    const antennaFace = resolveAntennaFace(antennaPlacement, parameters);
+    const [antennaWidth, antennaHeight] =
+      getAntennaMountingSize(antennaPlacement);
+    const antennaU = antennaPlacement.offsetU + (antennaPanel?.offsetU ?? 0);
+    const antennaV = antennaPlacement.offsetV + (antennaPanel?.offsetV ?? 0);
+    for (const connectorPlacement of parameters.connectorPlacements) {
+      const connectorPanel =
+        connectorPlacement.surface === "panel"
+          ? getPanelPlacement(parameters, connectorPlacement.panelId)
+          : null;
+      if (connectorPlacement.surface === "panel" && !connectorPanel) continue;
+      if (resolveConnectorFace(connectorPlacement, parameters) !== antennaFace) {
+        continue;
+      }
+      const [connectorWidth, connectorHeight] =
+        getRotatedCutoutSize(connectorPlacement);
+      const connectorU =
+        connectorPlacement.offsetU + (connectorPanel?.offsetU ?? 0);
+      const connectorV =
+        connectorPlacement.offsetV + (connectorPanel?.offsetV ?? 0);
+      if (
+        Math.abs(antennaU - connectorU) <
+          (antennaWidth + connectorWidth) / 2 + 2 &&
+        Math.abs(antennaV - connectorV) <
+          (antennaHeight + connectorHeight) / 2 + 2
+      ) {
+        issues.push({
+          id: `antenna-connector-overlap-${antennaPlacement.id}-${connectorPlacement.id}`,
+          level: "error",
+          title: "天线与接口安装区域重叠",
+          detail: "移动天线或接口，至少保留 2 mm 壳体材料和装配空间",
+          part: "antenna",
+        });
+      }
     }
   }
 
@@ -634,7 +835,6 @@ export function clampParameter(
     cornerRadius: [0.5, 30],
     standoffHeight: [0, 30],
     lidThickness: [0.8, 8],
-    antennaOffset: [-120, 120],
     ventRows: [1, 12],
     ventColumns: [1, 16],
     ventHoleSize: [1.5, 12],

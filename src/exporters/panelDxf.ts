@@ -1,7 +1,10 @@
 import { getPanelMountingPoints } from "../domain/enclosure";
 import type { DesignerParameters } from "../domain/model";
 import { getPanelPlacement, getRotatedCutoutSize } from "../domain/placements";
-import { getConnectorDefinition } from "../libraries/components";
+import {
+  getAntennaDefinition,
+  getConnectorDefinition,
+} from "../libraries/components";
 
 function format(value: number): string {
   return Number(value.toFixed(5)).toString();
@@ -96,6 +99,23 @@ export function createPanelDxf(
         definition.panelCutout.cornerRadius,
       );
     }
+  }
+  for (const placement of parameters.antennaPlacements) {
+    if (
+      placement.surface !== "panel" ||
+      placement.panelId !== panel.id ||
+      placement.cutoutDiameter <= 0 ||
+      getAntennaDefinition(placement.definitionId).enclosureCutout === null
+    ) {
+      continue;
+    }
+    lines.push(
+      ...pair(0, "CIRCLE"),
+      ...pair(8, "CUT"),
+      ...pair(10, format(placement.offsetU + width / 2)),
+      ...pair(20, format(placement.offsetV + height / 2)),
+      ...pair(40, format(placement.cutoutDiameter / 2)),
+    );
   }
   lines.push(...pair(0, "ENDSEC"), ...pair(0, "EOF"));
   return `${lines.join("\r\n")}\r\n`;

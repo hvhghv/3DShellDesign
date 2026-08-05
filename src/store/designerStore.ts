@@ -5,6 +5,7 @@ import {
   normalizeDesignerParameters,
 } from "../domain/enclosure";
 import type {
+  AntennaPlacement,
   ConnectorPlacement,
   DesignerParameters,
   InspectorTab,
@@ -15,6 +16,7 @@ import type {
   StepPreview,
 } from "../domain/model";
 import {
+  createAntennaPlacement,
   createConnectorPlacement,
   createPanelPlacement,
   ENCLOSURE_FACE_OPTIONS,
@@ -47,7 +49,7 @@ interface DesignerState {
     key: Key,
     value: DesignerParameters[Key],
   ) => void;
-  addConnectorPlacement: () => void;
+  addConnectorPlacement: (definitionId?: string) => void;
   updateConnectorPlacement: (
     id: string,
     changes: Partial<Omit<ConnectorPlacement, "id">>,
@@ -60,10 +62,16 @@ interface DesignerState {
     changes: Partial<Omit<PanelPlacement, "id">>,
   ) => void;
   removePanelPlacement: (id: string) => void;
-  setAntennaDefinition: (id: string) => void;
+  addAntennaPlacement: (definitionId?: string) => void;
+  updateAntennaPlacement: (
+    id: string,
+    changes: Partial<Omit<AntennaPlacement, "id">>,
+  ) => void;
+  setAntennaDefinition: (placementId: string, definitionId: string) => void;
+  removeAntennaPlacement: (id: string) => void;
   setEnclosureTemplate: (id: string) => void;
   setSelectedPart: (part: SelectablePart) => void;
-  setSelectedFeature: (part: "panel" | "connector", id: string) => void;
+  setSelectedFeature: (part: "panel" | "connector" | "antenna", id: string) => void;
   setTransformMode: (mode: TransformMode) => void;
   focusSelectedPart: () => void;
   showAllParts: () => void;
@@ -82,7 +90,7 @@ interface DesignerState {
 function isPartAvailable(part: SelectablePart, parameters: DesignerParameters): boolean {
   if (part === "panel") return parameters.panelPlacements.length > 0;
   if (part === "connector") return parameters.connectorPlacements.length > 0;
-  if (part === "antenna") return parameters.antennaEnabled;
+  if (part === "antenna") return parameters.antennaPlacements.length > 0;
   return true;
 }
 
@@ -298,6 +306,17 @@ export const useDesignerStore = create<DesignerState>((set) => ({
               }
             : connector,
         ),
+        antennaPlacements: state.parameters.antennaPlacements.map((antenna) =>
+          antenna.surface === "panel" && antenna.panelId === id && removed
+            ? {
+                ...antenna,
+                surface: removed.face,
+                panelId: null,
+                offsetU: antenna.offsetU + removed.offsetU,
+                offsetV: antenna.offsetV + removed.offsetV,
+              }
+            : antenna,
+        ),
       };
       const snapshot = persistSnapshot(
         state.projectName,
@@ -320,14 +339,14 @@ export const useDesignerStore = create<DesignerState>((set) => ({
         cacheStatus: "saving",
       };
     }),
-  addConnectorPlacement: () =>
+  addConnectorPlacement: (definitionId = "usb-c-receptacle") =>
     set((state) => {
       const id = `connector-${Date.now().toString(36)}-${state.parameters.connectorPlacements.length + 1}`;
       const parameters = {
         ...state.parameters,
         connectorPlacements: [
           ...state.parameters.connectorPlacements,
-          createConnectorPlacement("usb-c-receptacle", id),
+          createConnectorPlacement(definitionId, id),
         ],
       };
       const snapshot = persistSnapshot(
@@ -454,12 +473,17 @@ export const useDesignerStore = create<DesignerState>((set) => ({
         cacheStatus: "saving",
       };
     }),
-  setAntennaDefinition: (antennaDefinitionId) =>
+  addAntennaPlacement: (definitionId = "sma-bulkhead-whip") =>
     set((state) => {
-      const antenna = getAntennaDefinition(antennaDefinitionId);
+      const id = `antenna-${Date.now().toString(36)}-${state.parameters.antennaPlacements.length + 1}`;
+      const placement = createAntennaPlacement(
+        state.parameters,
+        definitionId,
+        id,
+      );
       const parameters = {
         ...state.parameters,
-        antennaDefinitionId: antenna.id,
+        antennaPlacements: [...state.parameters.antennaPlacements, placement],
       };
       const snapshot = persistSnapshot(
         state.projectName,
@@ -470,7 +494,113 @@ export const useDesignerStore = create<DesignerState>((set) => ({
       return {
         parameters,
         selectedPart: "antenna",
+        selectedFeatureId: id,
+        inspectorTab: "structure",
         focusedPart: state.focusedPart ? "antenna" : null,
+        cachedAt: snapshot.updatedAt,
+        cacheStatus: "saving",
+      };
+    }),
+  updateAntennaPlacement: (id, changes) =>
+    set((state) => {
+      const parameters = {
+        ...state.parameters,
+        antennaPlacements: state.parameters.antennaPlacements.map((placement) =>
+          placement.id === id
+            ? {
+                ...placement,
+                ...changes,
+                offsetU: Math.min(
+                  300,
+                  Math.max(-300, changes.offsetU ?? placement.offsetU),
+                ),
+                offsetV: Math.min(
+                  300,
+                  Math.max(-300, changes.offsetV ?? placement.offsetV),
+                ),
+                cutoutDiameter: Math.min(
+                  40,
+                  Math.max(
+                    0,
+                    changes.cutoutDiameter ?? placement.cutoutDiameter,
+                  ),
+                ),
+              }
+            : placement,
+        ),
+      };
+      const snapshot = persistSnapshot(
+        state.projectName,
+        parameters,
+        state.pcbReference,
+        state.stepPreview,
+      );
+      return {
+        parameters,
+        selectedPart: "antenna",
+        selectedFeatureId: id,
+        focusedPart: state.focusedPart ? "antenna" : null,
+        cachedAt: snapshot.updatedAt,
+        cacheStatus: "saving",
+      };
+    }),
+  setAntennaDefinition: (placementId, antennaDefinitionId) =>
+    set((state) => {
+      const antenna = getAntennaDefinition(antennaDefinitionId);
+      const parameters = {
+        ...state.parameters,
+        antennaPlacements: state.parameters.antennaPlacements.map((placement) =>
+          placement.id === placementId
+            ? {
+                ...placement,
+                definitionId: antenna.id,
+                cutoutDiameter: antenna.enclosureCutout?.diameter ?? 0,
+              }
+            : placement,
+        ),
+      };
+      const snapshot = persistSnapshot(
+        state.projectName,
+        parameters,
+        state.pcbReference,
+        state.stepPreview,
+      );
+      return {
+        parameters,
+        selectedPart: "antenna",
+        selectedFeatureId: placementId,
+        focusedPart: state.focusedPart ? "antenna" : null,
+        cachedAt: snapshot.updatedAt,
+        cacheStatus: "saving",
+      };
+    }),
+  removeAntennaPlacement: (id) =>
+    set((state) => {
+      const antennaPlacements = state.parameters.antennaPlacements.filter(
+        (placement) => placement.id !== id,
+      );
+      const parameters = { ...state.parameters, antennaPlacements };
+      const snapshot = persistSnapshot(
+        state.projectName,
+        parameters,
+        state.pcbReference,
+        state.stepPreview,
+      );
+      const nextAntenna = antennaPlacements[0] ?? null;
+      return {
+        parameters,
+        selectedPart:
+          state.selectedPart === "antenna" && !nextAntenna
+            ? "project"
+            : state.selectedPart,
+        selectedFeatureId:
+          state.selectedPart === "antenna" && state.selectedFeatureId === id
+            ? nextAntenna?.id ?? null
+            : state.selectedFeatureId,
+        focusedPart:
+          state.focusedPart === "antenna" && !nextAntenna
+            ? null
+            : state.focusedPart,
         cachedAt: snapshot.updatedAt,
         cacheStatus: "saving",
       };
@@ -512,6 +642,8 @@ export const useDesignerStore = create<DesignerState>((set) => ({
           ? state.parameters.panelPlacements[0]?.id ?? null
           : selectedPart === "connector"
             ? state.parameters.connectorPlacements[0]?.id ?? null
+            : selectedPart === "antenna"
+              ? state.parameters.antennaPlacements[0]?.id ?? null
             : null,
       focusedPart:
         selectedPart === "project" ? null : state.focusedPart ? selectedPart : null,

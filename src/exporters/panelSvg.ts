@@ -2,7 +2,10 @@ import { getPanelMountingPoints } from "../domain/enclosure";
 import { getMaterial } from "../domain/materials";
 import type { DesignerParameters } from "../domain/model";
 import { getPanelPlacement, getRotatedCutoutSize } from "../domain/placements";
-import { getConnectorDefinition } from "../libraries/components";
+import {
+  getAntennaDefinition,
+  getConnectorDefinition,
+} from "../libraries/components";
 
 function format(value: number): string {
   return Number(value.toFixed(3)).toString();
@@ -61,6 +64,19 @@ export function createPanelSvg(
       }
       return `  <rect x="${format(centerX - cutoutWidth / 2)}" y="${format(centerY - cutoutHeight / 2)}" width="${format(cutoutWidth)}" height="${format(cutoutHeight)}" rx="${format(Math.min(definition.panelCutout.cornerRadius, cutoutWidth / 2, cutoutHeight / 2))}" fill="none" stroke="#000000" stroke-width="0.1" vector-effect="non-scaling-stroke"/>`;
     });
+  const antennaCutouts = parameters.antennaPlacements
+    .filter(
+      (placement) =>
+        placement.surface === "panel" &&
+        placement.panelId === panel.id &&
+        placement.cutoutDiameter > 0 &&
+        getAntennaDefinition(placement.definitionId).enclosureCutout !== null,
+    )
+    .map((placement) => {
+      const centerX = placement.offsetU + width / 2;
+      const centerY = height / 2 - placement.offsetV;
+      return `  <circle cx="${format(centerX)}" cy="${format(centerY)}" r="${format(placement.cutoutDiameter / 2)}" fill="none" stroke="#000000" stroke-width="0.1" vector-effect="non-scaling-stroke"/>`;
+    });
 
   return [
     '<?xml version="1.0" encoding="UTF-8"?>',
@@ -70,6 +86,7 @@ export function createPanelSvg(
     `  <path d="${path}" fill="none" stroke="#000000" stroke-width="0.1" vector-effect="non-scaling-stroke"/>`,
     ...mountingHoles,
     ...connectorCutouts,
+    ...antennaCutouts,
     "</svg>",
     "",
   ].join("\n");

@@ -13,6 +13,7 @@ import type {
 import {
   getPanelPlacement,
   getRotatedCutoutSize,
+  resolveAntennaFace,
   resolveConnectorFace,
 } from "../domain/placements";
 import { getCenteredMountingHoles } from "../domain/pcbReference";
@@ -194,6 +195,17 @@ function getPreviewFacePosition(
   return [-dimensions.outsideLength / 2 - normalOffset, parameters.baseHeight / 2 + v, u];
 }
 
+function relativePosition(
+  position: readonly [number, number, number],
+  origin: readonly [number, number, number],
+): [number, number, number] {
+  return [
+    position[0] - origin[0],
+    position[1] - origin[1],
+    position[2] - origin[2],
+  ];
+}
+
 function createRingGeometry(
   outerWidth: number,
   outerDepth: number,
@@ -250,6 +262,33 @@ function addMesh(
   }
 
   return mesh;
+}
+
+function addPreviewOutline(
+  group: THREE.Group,
+  geometry: THREE.BufferGeometry,
+  color: THREE.ColorRepresentation,
+  opacity: number,
+  partId: SelectablePart,
+  position: [number, number, number],
+): THREE.LineSegments {
+  const outlineGeometry = new THREE.EdgesGeometry(geometry, 28);
+  geometry.dispose();
+  const outline = new THREE.LineSegments(
+    outlineGeometry,
+    new THREE.LineBasicMaterial({
+      color,
+      transparent: true,
+      opacity,
+      depthTest: false,
+      depthWrite: false,
+    }),
+  );
+  outline.position.set(...position);
+  outline.renderOrder = 6;
+  outline.userData.partId = partId;
+  group.add(outline);
+  return outline;
 }
 
 function addCylinder(
@@ -951,19 +990,175 @@ export function buildPreviewModel(
     connectorMesh.name = placement.id;
     connectorMesh.userData.featureId = placement.id;
 
-    const openingMaterial = standardMaterial(0x202725, selectedPart === "connector", {
-      roughness: 0.8,
-    });
     const openingGeometry =
       connector.panelCutout.shape === "circle"
         ? createFaceDiskGeometry(openingWidth / 2, face)
         : createFacePlaneGeometry(openingWidth, openingHeight, face);
-    const opening = addMesh(
-      root,
+    const openingPosition = getPreviewFacePosition(
+      face,
+      surfaceU,
+      surfaceV,
+      surfaceOutset + 0.04,
+      parameters,
+      dimensions,
+      lidY,
+    );
+    const opening = addPreviewOutline(
+      connectorGroup,
       openingGeometry,
-      openingMaterial,
+      connectorSelected ? 0x176b45 : 0x33423a,
+      connectorSelected ? 0.95 : 0.62,
       "connector",
-      getPreviewFacePosition(
+      relativePosition(openingPosition, connectorPosition),
+    );
+    opening.name = `${placement.id}-opening`;
+    opening.userData.featureId = placement.id;
+    opening.userData.featureKind = "connector";
+
+    if (connectorSelected) {
+      const keepout = connector.keepoutVolumes[0];
+      const keepoutPosition = getPreviewFacePosition(
+        face,
+        surfaceU,
+        surfaceV,
+        surfaceOutset + keepout.depth / 2,
+        parameters,
+        dimensions,
+        lidY,
+      );
+      const keepoutOutline = addPreviewOutline(
+        connectorGroup,
+        createFaceBoxGeometry(
+          quarterTurn ? keepout.height : keepout.width,
+          quarterTurn ? keepout.width : keepout.height,
+          keepout.depth,
+          face,
+        ),
+        0xd39a2f,
+        0.82,
+        "connector",
+        relativePosition(keepoutPosition, connectorPosition),
+      );
+      keepoutOutline.name = `${placement.id}-keepout`;
+    }
+  }
+
+  for (const placement of parameters.antennaPlacements) {
+    const targetPanel =
+      placement.surface === "panel"
+        ? getPanelPlacement(parameters, placement.panelId)
+        : null;
+    if (placement.surface === "panel" && !targetPanel) continue;
+    const antenna = getAntennaDefinition(placement.definitionId);
+    const face = resolveAntennaFace(placement, parameters);
+    const surfaceU = placement.offsetU + (targetPanel?.offsetU ?? 0);
+    const surfaceV = placement.offsetV + (targetPanel?.offsetV ?? 0);
+    const surfaceOutset = targetPanel?.thickness ?? 0;
+    const quarterTurn = placement.rotation === 90 || placement.rotation === 270;
+    const antennaSelected =
+      selectedPart === "antenna" &&
+      (selectedFeatureId === null || selectedFeatureId === placement.id);
+    const antennaMaterial = standardMaterial(
+      antenna.visualGeometry.color,
+      antennaSelected,
+      {
+        metalness: antenna.placement === "rear-bulkhead" ? 0.66 : 0.12,
+        roughness: 0.32,
+        ...(antennaSelected && antenna.placement !== "rear-bulkhead"
+          ? { depthTest: false, transparent: true, opacity: 0.92 }
+          : {}),
+      },
+    );
+    const external = antenna.enclosureCutout !== null;
+    const antennaNormalOffset = external
+      ? surfaceOutset + antenna.visualGeometry.depth / 2 - 1.2
+      : surfaceOutset - antenna.visualGeometry.depth / 2;
+    const antennaPosition = getPreviewFacePosition(
+      face,
+      surfaceU,
+      surfaceV,
+      antennaNormalOffset,
+      parameters,
+      dimensions,
+      lidY,
+    );
+    const [baseWidth, baseHeight] = external
+      ? [placement.cutoutDiameter, placement.cutoutDiameter]
+      : quarterTurn
+        ? [antenna.visualGeometry.height, antenna.visualGeometry.width]
+        : [antenna.visualGeometry.width, antenna.visualGeometry.height];
+    const antennaGroup = new THREE.Group();
+    antennaGroup.position.set(...antennaPosition);
+    antennaGroup.name = `antenna-transform-${placement.id}`;
+    antennaGroup.userData = {
+      partId: "antenna",
+      featureId: placement.id,
+      featureKind: "antenna",
+      face,
+      baseWidth,
+      baseHeight,
+      uniformScale: external,
+    };
+    root.add(antennaGroup);
+
+    const bodyGeometry = external
+      ? createFaceCylinderGeometry(
+          antenna.visualGeometry.width / 2,
+          antenna.visualGeometry.depth,
+          face,
+          28,
+        )
+      : createFaceBoxGeometry(
+          quarterTurn
+            ? antenna.visualGeometry.height
+            : antenna.visualGeometry.width,
+          quarterTurn
+            ? antenna.visualGeometry.width
+            : antenna.visualGeometry.height,
+          antenna.visualGeometry.depth,
+          face,
+        );
+    const body = addMesh(
+      antennaGroup,
+      bodyGeometry,
+      antennaMaterial,
+      "antenna",
+      [0, 0, 0],
+    );
+    body.name = placement.id;
+    body.userData.featureId = placement.id;
+
+    if (external) {
+      const radiatorLength = antenna.visualGeometry.radiatorLength ?? 0;
+      if (radiatorLength > 0) {
+        const radiatorGeometry = createFaceCylinderGeometry(
+          (antenna.visualGeometry.radiatorDiameter ?? 3) / 2,
+          radiatorLength,
+          face,
+          20,
+        );
+        const radiatorPosition = getPreviewFacePosition(
+          face,
+          surfaceU,
+          surfaceV,
+          surfaceOutset +
+            antenna.visualGeometry.depth -
+            1.2 +
+            radiatorLength / 2,
+          parameters,
+          dimensions,
+          lidY,
+        );
+        addMesh(
+          antennaGroup,
+          radiatorGeometry,
+          standardMaterial(0x303533, antennaSelected, { roughness: 0.78 }),
+          "antenna",
+          relativePosition(radiatorPosition, antennaPosition),
+        );
+      }
+
+      const openingPosition = getPreviewFacePosition(
         face,
         surfaceU,
         surfaceV,
@@ -971,148 +1166,47 @@ export function buildPreviewModel(
         parameters,
         dimensions,
         lidY,
-      ),
-      false,
-    );
-    opening.renderOrder = 4;
-    opening.userData.featureId = placement.id;
-    opening.userData.featureKind = "connector";
+      );
+      const opening = addMesh(
+        antennaGroup,
+        createFaceDiskGeometry(placement.cutoutDiameter / 2, face),
+        standardMaterial(0x202725, antennaSelected, { roughness: 0.8 }),
+        "antenna",
+        relativePosition(openingPosition, antennaPosition),
+        false,
+      );
+      opening.renderOrder = 4;
+      opening.userData.featureId = placement.id;
+      opening.userData.featureKind = "antenna";
+    }
 
-    if (connectorSelected) {
-      const keepoutMaterial = standardMaterial(0xe1a33a, true, {
-        transparent: true,
-        opacity: 0.18,
-        depthWrite: false,
-      });
-      const keepout = connector.keepoutVolumes[0];
-      const keepoutMesh = addMesh(
-        root,
+    if (antennaSelected) {
+      const keepout = antenna.keepoutVolume;
+      const keepoutPosition = getPreviewFacePosition(
+        face,
+        surfaceU,
+        surfaceV,
+        external
+          ? surfaceOutset + keepout.depth / 2
+          : surfaceOutset - keepout.depth / 2,
+        parameters,
+        dimensions,
+        lidY,
+      );
+      const keepoutOutline = addPreviewOutline(
+        antennaGroup,
         createFaceBoxGeometry(
           quarterTurn ? keepout.height : keepout.width,
           quarterTurn ? keepout.width : keepout.height,
           keepout.depth,
           face,
         ),
-        keepoutMaterial,
-        "connector",
-        getPreviewFacePosition(
-          face,
-          surfaceU,
-          surfaceV,
-          surfaceOutset + keepout.depth / 2,
-          parameters,
-          dimensions,
-          lidY,
-        ),
-        false,
-      );
-      keepoutMesh.name = `${placement.id}-keepout`;
-    }
-  }
-
-  if (parameters.antennaEnabled) {
-    const antenna = getAntennaDefinition(parameters.antennaDefinitionId);
-    const antennaY = boardY + antenna.heightAboveBoardCenter;
-    const antennaMaterial = standardMaterial(
-      antenna.visualGeometry.color,
-      selectedPart === "antenna",
-      {
-        metalness: antenna.placement === "rear-bulkhead" ? 0.66 : 0.12,
-        roughness: 0.32,
-        ...(selectedPart === "antenna" && antenna.placement !== "rear-bulkhead"
-          ? { depthTest: false, transparent: true, opacity: 0.92 }
-          : {}),
-      },
-    );
-    let antennaCenterZ: number;
-
-    if (antenna.placement === "rear-bulkhead") {
-      const bodyGeometry = new THREE.CylinderGeometry(
-        antenna.visualGeometry.width / 2,
-        antenna.visualGeometry.width / 2,
-        antenna.visualGeometry.depth,
-        28,
-      ).rotateX(Math.PI / 2);
-      antennaCenterZ =
-        -dimensions.outsideWidth / 2 - antenna.visualGeometry.depth / 2 + 1.2;
-      addMesh(
-        root,
-        bodyGeometry,
-        antennaMaterial,
+        0xd39a2f,
+        0.82,
         "antenna",
-        [parameters.antennaOffset, antennaY, antennaCenterZ],
+        relativePosition(keepoutPosition, antennaPosition),
       );
-
-      const radiatorLength = antenna.visualGeometry.radiatorLength ?? 0;
-      if (radiatorLength > 0) {
-        const radiatorGeometry = new THREE.CylinderGeometry(
-          (antenna.visualGeometry.radiatorDiameter ?? 3) / 2,
-          (antenna.visualGeometry.radiatorDiameter ?? 3) / 2,
-          radiatorLength,
-          20,
-        ).rotateX(Math.PI / 2);
-        addMesh(
-          root,
-          radiatorGeometry,
-          standardMaterial(0x303533, selectedPart === "antenna", { roughness: 0.78 }),
-          "antenna",
-          [
-            parameters.antennaOffset,
-            antennaY,
-            -dimensions.outsideWidth / 2 - antenna.visualGeometry.depth + 1.2 - radiatorLength / 2,
-          ],
-        );
-      }
-
-      const opening = addMesh(
-        root,
-        new THREE.CircleGeometry((antenna.enclosureCutout?.diameter ?? 0) / 2, 32).rotateY(
-          Math.PI,
-        ),
-        standardMaterial(0x202725, selectedPart === "antenna", { roughness: 0.8 }),
-        "antenna",
-        [parameters.antennaOffset, antennaY, -dimensions.outsideWidth / 2 - 0.04],
-        false,
-      );
-      opening.renderOrder = 4;
-    } else {
-      antennaCenterZ =
-        antenna.placement === "inner-rear-wall"
-          ? -dimensions.insideWidth / 2 + antenna.visualGeometry.depth / 2
-          : -parameters.pcbWidth / 2 + antenna.visualGeometry.depth / 2;
-      addMesh(
-        root,
-        new THREE.BoxGeometry(
-          antenna.visualGeometry.width,
-          antenna.visualGeometry.height,
-          antenna.visualGeometry.depth,
-        ),
-        antennaMaterial,
-        "antenna",
-        [parameters.antennaOffset, antennaY, antennaCenterZ],
-      );
-    }
-
-    if (selectedPart === "antenna") {
-      const keepout = antenna.keepoutVolume;
-      const keepoutCenterZ =
-        antenna.placement === "rear-bulkhead"
-          ? -dimensions.outsideWidth / 2 - keepout.depth / 2
-          : antennaCenterZ + keepout.depth / 2;
-      const keepoutMesh = addMesh(
-        root,
-        new THREE.BoxGeometry(keepout.width, keepout.height, keepout.depth),
-        standardMaterial(0xe0b83e, true, {
-          transparent: true,
-          opacity: 0.17,
-          depthWrite: false,
-          depthTest: false,
-        }),
-        "antenna",
-        [parameters.antennaOffset, antennaY, keepoutCenterZ],
-        false,
-      );
-      keepoutMesh.renderOrder = 6;
+      keepoutOutline.name = `${placement.id}-keepout`;
     }
   }
 

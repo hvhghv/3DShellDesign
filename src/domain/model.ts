@@ -22,6 +22,17 @@ export interface ConnectorPlacement {
   cutoutHeight: number;
 }
 
+export interface AntennaPlacement {
+  id: string;
+  definitionId: string;
+  surface: ConnectorSurface;
+  panelId: string | null;
+  offsetU: number;
+  offsetV: number;
+  rotation: PlacementRotation;
+  cutoutDiameter: number;
+}
+
 export interface PanelPlacement {
   id: string;
   face: EnclosureFace;
@@ -63,9 +74,7 @@ export interface DesignerParameters {
   shellMaterialId: string;
   panelPlacements: PanelPlacement[];
   connectorPlacements: ConnectorPlacement[];
-  antennaEnabled: boolean;
-  antennaDefinitionId: string;
-  antennaOffset: number;
+  antennaPlacements: AntennaPlacement[];
   closureFastenerId: string;
   ventPattern: VentPattern;
   ventRows: number;

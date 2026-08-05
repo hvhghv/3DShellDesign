@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import * as THREE from "three";
 import { DEFAULT_PARAMETERS } from "../domain/enclosure";
 import type { MagnetSupportType, SelectablePart } from "../domain/model";
 import { buildPreviewModel, disposePreviewModel } from "./buildPreviewModel";
@@ -116,6 +117,59 @@ describe("surface placement preview", () => {
     expect(
       model.children.filter((child) => child.name === "connector-transform-connector-2"),
     ).toHaveLength(1);
+    const firstGroup = model.getObjectByName("connector-transform-connector-1");
+    const connectorOpening = firstGroup?.getObjectByName("connector-1-opening");
+    expect(connectorOpening?.parent).toBe(firstGroup);
+    expect(connectorOpening).toBeInstanceOf(THREE.LineSegments);
+    expect(connectorOpening).not.toBeInstanceOf(THREE.Mesh);
+    const connectorKeepout = firstGroup?.getObjectByName("connector-1-keepout");
+    expect(connectorKeepout?.parent).toBe(firstGroup);
+    expect(connectorKeepout).toBeInstanceOf(THREE.LineSegments);
+    expect(connectorKeepout).not.toBeInstanceOf(THREE.Mesh);
+    disposePreviewModel(model);
+  });
+
+  it("renders each antenna as an independently transformable group", () => {
+    const model = buildPreviewModel(
+      {
+        ...DEFAULT_PARAMETERS,
+        antennaPlacements: [
+          {
+            id: "antenna-1",
+            definitionId: "sma-bulkhead-whip",
+            surface: "back",
+            panelId: null,
+            offsetU: -15,
+            offsetV: 0,
+            rotation: 0,
+            cutoutDiameter: 6.8,
+          },
+          {
+            id: "antenna-2",
+            definitionId: "adhesive-fpc-antenna",
+            surface: "right",
+            panelId: null,
+            offsetU: 8,
+            offsetV: 0,
+            rotation: 90,
+            cutoutDiameter: 0,
+          },
+        ],
+      },
+      "antenna",
+      false,
+      null,
+      null,
+      null,
+      "antenna-1",
+    );
+
+    expect(model.getObjectByName("antenna-transform-antenna-1")).toBeDefined();
+    expect(model.getObjectByName("antenna-transform-antenna-2")).toBeDefined();
+    const antennaKeepout = model.getObjectByName("antenna-1-keepout");
+    expect(antennaKeepout?.parent?.name).toBe("antenna-transform-antenna-1");
+    expect(antennaKeepout).toBeInstanceOf(THREE.LineSegments);
+    expect(antennaKeepout).not.toBeInstanceOf(THREE.Mesh);
     disposePreviewModel(model);
   });
 });

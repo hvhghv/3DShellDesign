@@ -56,13 +56,78 @@ describe("enclosure domain", () => {
   it("checks antenna edge distance", () => {
     const issues = validateDesign({
       ...DEFAULT_PARAMETERS,
-      antennaEnabled: true,
-      antennaOffset: 52,
+      antennaPlacements: [
+        {
+          id: "antenna-1",
+          definitionId: "sma-bulkhead-whip",
+          surface: "back",
+          panelId: null,
+          offsetU: 52,
+          offsetV: 0,
+          rotation: 0,
+          cutoutDiameter: 6.8,
+        },
+      ],
     });
 
     expect(issues).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ id: "antenna-edge-distance", part: "antenna" }),
+        expect.objectContaining({
+          id: "antenna-edge-distance-antenna-1",
+          part: "antenna",
+        }),
+      ]),
+    );
+  });
+
+  it("migrates the legacy single antenna fields", () => {
+    const parameters = normalizeDesignerParameters({
+      ...DEFAULT_PARAMETERS,
+      antennaPlacements: undefined,
+      antennaEnabled: true,
+      antennaDefinitionId: "rp-sma-bulkhead-whip",
+      antennaOffset: 18,
+    });
+
+    expect(parameters.antennaPlacements).toEqual([
+      expect.objectContaining({
+        id: "antenna-1",
+        definitionId: "rp-sma-bulkhead-whip",
+        surface: "back",
+        offsetU: 18,
+        cutoutDiameter: 6.8,
+      }),
+    ]);
+    expect(parameters).not.toHaveProperty("antennaEnabled");
+    expect(parameters).not.toHaveProperty("antennaDefinitionId");
+    expect(parameters).not.toHaveProperty("antennaOffset");
+  });
+
+  it("detects overlapping antenna and connector placements", () => {
+    const antenna = {
+      id: "antenna-1",
+      definitionId: "sma-bulkhead-whip",
+      surface: "front" as const,
+      panelId: null,
+      offsetU: 0,
+      offsetV: 0,
+      rotation: 0 as const,
+      cutoutDiameter: 6.8,
+    };
+    const issues = validateDesign({
+      ...DEFAULT_PARAMETERS,
+      connectorPlacements: [
+        { ...DEFAULT_PARAMETERS.connectorPlacements[0], offsetU: 0, offsetV: 0 },
+      ],
+      antennaPlacements: [antenna, { ...antenna, id: "antenna-2", offsetU: 5 }],
+    });
+
+    expect(issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: "antenna-overlap-antenna-1-antenna-2" }),
+        expect.objectContaining({
+          id: "antenna-connector-overlap-antenna-1-connector-1",
+        }),
       ]),
     );
   });

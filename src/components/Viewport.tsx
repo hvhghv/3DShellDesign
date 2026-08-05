@@ -6,6 +6,7 @@ import { TransformControls } from "three/examples/jsm/controls/TransformControls
 import { buildPreviewModel, disposePreviewModel } from "../geometry/buildPreviewModel";
 import { useDesignerStore } from "../store/designerStore";
 import type { EnclosureFace, SelectablePart } from "../domain/model";
+import { getPlacementSurfaceOffsets } from "../domain/placements";
 
 function getEditableFeature(object: THREE.Object3D | null): THREE.Object3D | null {
   let current = object;
@@ -14,7 +15,8 @@ function getEditableFeature(object: THREE.Object3D | null): THREE.Object3D | nul
       current instanceof THREE.Group &&
       typeof current.userData.featureId === "string" &&
       (current.userData.featureKind === "panel" ||
-        current.userData.featureKind === "connector")
+        current.userData.featureKind === "connector" ||
+        current.userData.featureKind === "antenna")
     ) {
       return current;
     }
@@ -26,7 +28,7 @@ function getEditableFeature(object: THREE.Object3D | null): THREE.Object3D | nul
 function findEditableFeature(
   root: THREE.Object3D,
   featureId: string,
-  featureKind: "panel" | "connector",
+  featureKind: "panel" | "connector" | "antenna",
 ): THREE.Object3D | null {
   let result: THREE.Object3D | null = null;
   root.traverse((child) => {
@@ -87,7 +89,7 @@ function commitFeatureTransform(object: THREE.Object3D): void {
   const face = object.userData.face as EnclosureFace | undefined;
   if (!featureId || !face) return;
 
-  if (state.transformMode === "move") {
+  if (state.transformMode === "move" || featureKind === "antenna") {
     let [offsetU, offsetV] = getSurfaceCoordinates(
       face,
       object.position,
@@ -97,15 +99,26 @@ function commitFeatureTransform(object: THREE.Object3D): void {
       const connector = state.parameters.connectorPlacements.find(
         (placement) => placement.id === featureId,
       );
-      const panel =
-        connector?.surface === "panel"
-          ? state.parameters.panelPlacements.find(
-              (placement) => placement.id === connector.panelId,
-            )
-          : null;
-      offsetU -= panel?.offsetU ?? 0;
-      offsetV -= panel?.offsetV ?? 0;
+      if (!connector) return;
+      [offsetU, offsetV] = getPlacementSurfaceOffsets(
+        connector,
+        state.parameters,
+        offsetU,
+        offsetV,
+      );
       state.updateConnectorPlacement(featureId, { offsetU, offsetV });
+    } else if (featureKind === "antenna") {
+      const antenna = state.parameters.antennaPlacements.find(
+        (placement) => placement.id === featureId,
+      );
+      if (!antenna) return;
+      [offsetU, offsetV] = getPlacementSurfaceOffsets(
+        antenna,
+        state.parameters,
+        offsetU,
+        offsetV,
+      );
+      state.updateAntennaPlacement(featureId, { offsetU, offsetV });
     } else if (featureKind === "panel") {
       state.updatePanelPlacement(featureId, { offsetU, offsetV });
     }
@@ -317,7 +330,7 @@ export function Viewport() {
       const feature = getEditableFeature(hit?.object ?? null);
       if (feature) {
         setSelectedFeature(
-          feature.userData.featureKind as "panel" | "connector",
+          feature.userData.featureKind as "panel" | "connector" | "antenna",
           feature.userData.featureId as string,
         );
         return;
@@ -401,12 +414,18 @@ export function Viewport() {
     if (
       transformControls &&
       selectedFeatureId &&
-      (selectedPart === "panel" || selectedPart === "connector")
+      (selectedPart === "panel" ||
+        selectedPart === "connector" ||
+        selectedPart === "antenna")
     ) {
       const feature = findEditableFeature(model, selectedFeatureId, selectedPart);
       if (feature) {
         attachedFeatureRef.current = feature;
-        transformControls.setMode(transformMode === "move" ? "translate" : "scale");
+        transformControls.setMode(
+          selectedPart === "antenna" || transformMode === "move"
+            ? "translate"
+            : "scale",
+        );
         configureTransformAxes(transformControls, feature.userData.face as EnclosureFace);
         transformControls.attach(feature);
       } else {
@@ -463,30 +482,37 @@ export function Viewport() {
         className="viewport-canvas"
         data-focused-part={focusedPart ?? "all"}
         data-selected-feature={selectedFeatureId ?? "none"}
-        data-transform-mode={transformMode}
+        data-transform-mode={selectedPart === "antenna" ? "move" : transformMode}
         data-reference-kind={stepPreview ? "step" : pcbReference ? pcbReference.format : "parametric"}
         ref={hostRef}
       />
       <div className="viewport-transform-controls" role="group" aria-label="3D 编辑工具">
         <button
-          className={`icon-button ${transformMode === "move" ? "is-active" : ""}`}
+          className={`icon-button ${transformMode === "move" || selectedPart === "antenna" ? "is-active" : ""}`}
           type="button"
-          disabled={selectedPart !== "panel" && selectedPart !== "connector"}
+          disabled={
+            selectedPart !== "panel" &&
+            selectedPart !== "connector" &&
+            selectedPart !== "antenna"
+          }
           onClick={() => setTransformMode("move")}
           title="移动选中对象"
           aria-label="移动选中对象"
-          aria-pressed={transformMode === "move"}
+          aria-pressed={transformMode === "move" || selectedPart === "antenna"}
         >
           <Move3D size={17} />
         </button>
         <button
-          className={`icon-button ${transformMode === "scale" ? "is-active" : ""}`}
+          className={`icon-button ${transformMode === "scale" && selectedPart !== "antenna" ? "is-active" : ""}`}
           type="button"
-          disabled={selectedPart !== "panel" && selectedPart !== "connector"}
+          disabled={
+            selectedPart !== "panel" &&
+            selectedPart !== "connector"
+          }
           onClick={() => setTransformMode("scale")}
           title="缩放选中对象"
           aria-label="缩放选中对象"
-          aria-pressed={transformMode === "scale"}
+          aria-pressed={transformMode === "scale" && selectedPart !== "antenna"}
         >
           <Scaling size={17} />
         </button>

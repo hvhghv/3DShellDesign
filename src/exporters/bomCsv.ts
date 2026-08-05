@@ -53,8 +53,8 @@ export function createBomCsv(
       `${getConnectorSurfaceLabel(placement, parameters)}；${connector.toleranceRules.description}`,
     ]);
   }
-  if (parameters.antennaEnabled) {
-    const antenna = getAntennaDefinition(parameters.antennaDefinitionId);
+  for (const placement of parameters.antennaPlacements) {
+    const antenna = getAntennaDefinition(placement.definitionId);
     rows.push([
       projectName,
       antenna.name,

@@ -14,6 +14,7 @@ import { getClosurePoints, MAGNET_GEOMETRY } from "../domain/magnetSupport";
 import {
   getPanelPlacement,
   getRotatedCutoutSize,
+  resolveAntennaFace,
   resolveConnectorFace,
 } from "../domain/placements";
 import { getCenteredMountingHoles } from "../domain/pcbReference";
@@ -772,30 +773,25 @@ function buildBase(
     );
   }
 
-  if (parameters.antennaEnabled) {
-    const antenna = getAntennaDefinition(parameters.antennaDefinitionId);
-    if (antenna.enclosureCutout) {
-      const antennaCenterZ =
-        parameters.bottomThickness +
-        parameters.standoffHeight +
-        parameters.pcbThickness / 2 +
-        antenna.heightAboveBoardCenter;
-      let cutter = module.Manifold.cylinder(
-        parameters.wallThickness * 3,
-        antenna.enclosureCutout.diameter / 2,
-        antenna.enclosureCutout.diameter / 2,
-        32,
-        false,
-      );
-      cutter = rotateAndDispose(cutter, -90, 0, 0);
-      cutter = translateAndDispose(
-        cutter,
-        parameters.antennaOffset,
-        -dimensions.outsideWidth / 2 - parameters.wallThickness,
-        antennaCenterZ,
-      );
-      base = subtractAndDispose(base, cutter);
-    }
+  for (const placement of parameters.antennaPlacements) {
+    const antenna = getAntennaDefinition(placement.definitionId);
+    if (!antenna.enclosureCutout || placement.surface === "panel") continue;
+    const face = resolveAntennaFace(placement, parameters);
+    if (face === "top") continue;
+    base = subtractAndDispose(
+      base,
+      createFaceCutter(
+        module,
+        face,
+        placement.offsetU,
+        placement.offsetV,
+        placement.cutoutDiameter,
+        placement.cutoutDiameter,
+        placement.cutoutDiameter / 2,
+        parameters,
+        dimensions,
+      ),
+    );
   }
 
   return base;
@@ -1015,6 +1011,27 @@ function buildLid(
       ),
     );
   }
+  for (const placement of parameters.antennaPlacements) {
+    const antenna = getAntennaDefinition(placement.definitionId);
+    if (
+      !antenna.enclosureCutout ||
+      placement.surface === "panel" ||
+      resolveAntennaFace(placement, parameters) !== "top"
+    ) continue;
+    lid = subtractAndDispose(
+      lid,
+      createTopCutter(
+        module,
+        placement.offsetU,
+        placement.offsetV,
+        placement.cutoutDiameter,
+        placement.cutoutDiameter,
+        placement.cutoutDiameter / 2,
+        parameters,
+        lipHeight,
+      ),
+    );
+  }
   return lid;
 }
 
@@ -1077,6 +1094,24 @@ function buildPanel(
       );
     }
     panel = subtractAndDispose(panel, cutter);
+  }
+  for (const placement of parameters.antennaPlacements) {
+    if (placement.surface !== "panel" || placement.panelId !== selectedPanel.id) {
+      continue;
+    }
+    const antenna = getAntennaDefinition(placement.definitionId);
+    if (!antenna.enclosureCutout || placement.cutoutDiameter <= 0) continue;
+    panel = subtractAndDispose(
+      panel,
+      cylinderAt(
+        module,
+        placement.cutoutDiameter / 2,
+        selectedPanel.thickness + 0.4,
+        placement.offsetU,
+        placement.offsetV,
+        -0.2,
+      ),
+    );
   }
   return panel;
 }

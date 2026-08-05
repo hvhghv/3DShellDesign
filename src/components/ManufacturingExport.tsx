@@ -163,12 +163,10 @@ export function ManufacturingExport() {
             ...placement,
             definition: getConnectorDefinition(placement.definitionId),
           })),
-          antenna: parameters.antennaEnabled
-            ? {
-                definition: getAntennaDefinition(parameters.antennaDefinitionId),
-                offset: parameters.antennaOffset,
-              }
-            : null,
+          antennas: parameters.antennaPlacements.map((placement) => ({
+            ...placement,
+            definition: getAntennaDefinition(placement.definitionId),
+          })),
           fastener:
             parameters.closureType === "screw"
               ? getFastenerDefinition(parameters.closureFastenerId)

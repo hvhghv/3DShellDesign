@@ -48,6 +48,37 @@ describe("panel SVG exporter", () => {
     expect(svg).toContain('width="7" height="12"');
   });
 
+  it("includes only physical antenna cutouts mounted to the panel", () => {
+    const svg = createPanelSvg({
+      ...DEFAULT_PARAMETERS,
+      antennaPlacements: [
+        {
+          id: "antenna-1",
+          definitionId: "sma-bulkhead-whip",
+          surface: "panel",
+          panelId: "panel-1",
+          offsetU: 10,
+          offsetV: -4,
+          rotation: 0,
+          cutoutDiameter: 6.8,
+        },
+        {
+          id: "antenna-2",
+          definitionId: "adhesive-fpc-antenna",
+          surface: "panel",
+          panelId: "panel-1",
+          offsetU: -10,
+          offsetV: 4,
+          rotation: 0,
+          cutoutDiameter: 0,
+        },
+      ],
+    });
+
+    expect(svg.match(/<circle /g)).toHaveLength(5);
+    expect(svg).toContain('r="3.4"');
+  });
+
   it("exports only the connectors bound to the requested panel instance", () => {
     const connector = DEFAULT_PARAMETERS.connectorPlacements[0];
     const parameters = {

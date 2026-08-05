@@ -1,4 +1,5 @@
 import type {
+  AntennaPlacement,
   ConnectorPlacement,
   ConnectorSurface,
   DesignerParameters,
@@ -7,7 +8,10 @@ import type {
   PlacementRotation,
   PanelPlacement,
 } from "./model";
-import { getConnectorDefinition } from "../libraries/components";
+import {
+  getAntennaDefinition,
+  getConnectorDefinition,
+} from "../libraries/components";
 
 export const ENCLOSURE_FACE_OPTIONS: ReadonlyArray<{
   id: EnclosureFace;
@@ -48,6 +52,15 @@ export function getConnectorSurfaceLabel(
   return panel ? `可更换面板（${getFaceLabel(panel.face)}）` : "可更换面板";
 }
 
+export function getAntennaSurfaceLabel(
+  placement: AntennaPlacement,
+  parameters: DesignerParameters,
+): string {
+  if (placement.surface !== "panel") return getFaceLabel(placement.surface);
+  const panel = getPanelPlacement(parameters, placement.panelId);
+  return panel ? `面板（${getFaceLabel(panel.face)}）` : "面板";
+}
+
 export function getPanelPlacement(
   parameters: DesignerParameters,
   panelId: string | null,
@@ -56,6 +69,22 @@ export function getPanelPlacement(
     return parameters.panelPlacements.find((panel) => panel.id === panelId) ?? null;
   }
   return parameters.panelPlacements[0] ?? null;
+}
+
+export function getPlacementSurfaceOffsets(
+  placement: Pick<ConnectorPlacement, "surface" | "panelId">,
+  parameters: Pick<DesignerParameters, "panelPlacements">,
+  surfaceU: number,
+  surfaceV: number,
+): readonly [number, number] {
+  const panel =
+    placement.surface === "panel"
+      ? parameters.panelPlacements.find((item) => item.id === placement.panelId)
+      : null;
+  return [
+    surfaceU - (panel?.offsetU ?? 0),
+    surfaceV - (panel?.offsetV ?? 0),
+  ];
 }
 
 export function getPanelLabel(
@@ -81,15 +110,22 @@ export function getFaceSize(
 }
 
 export function resolveConnectorFace(
-  placement: ConnectorPlacement,
+  placement: Pick<ConnectorPlacement, "surface" | "panelId">,
   parameters: DesignerParameters,
 ): EnclosureFace {
   if (placement.surface !== "panel") return placement.surface;
   return getPanelPlacement(parameters, placement.panelId)?.face ?? "top";
 }
 
+export function resolveAntennaFace(
+  placement: AntennaPlacement,
+  parameters: DesignerParameters,
+): EnclosureFace {
+  return resolveConnectorFace(placement, parameters);
+}
+
 export function getConnectorSurfaceSize(
-  placement: ConnectorPlacement,
+  placement: Pick<ConnectorPlacement, "surface" | "panelId">,
   parameters: DesignerParameters,
   dimensions: EnclosureDimensions,
 ): readonly [number, number] {
@@ -98,6 +134,14 @@ export function getConnectorSurfaceSize(
   }
   const panel = getPanelPlacement(parameters, placement.panelId);
   return panel ? [panel.width, panel.height] : [0, 0];
+}
+
+export function getAntennaSurfaceSize(
+  placement: AntennaPlacement,
+  parameters: DesignerParameters,
+  dimensions: EnclosureDimensions,
+): readonly [number, number] {
+  return getConnectorSurfaceSize(placement, parameters, dimensions);
 }
 
 export function getRotatedCutoutSize(
@@ -124,6 +168,39 @@ export function createConnectorPlacement(
     rotation: 0,
     cutoutWidth: definition.panelCutout.width,
     cutoutHeight: definition.panelCutout.height,
+  };
+}
+
+export function createAntennaPlacement(
+  parameters: Pick<
+    DesignerParameters,
+    | "baseHeight"
+    | "bottomThickness"
+    | "standoffHeight"
+    | "pcbThickness"
+  >,
+  definitionId: string,
+  id: string,
+  surface: ConnectorSurface = "back",
+): AntennaPlacement {
+  const definition = getAntennaDefinition(definitionId);
+  const centerHeight =
+    parameters.bottomThickness +
+    parameters.standoffHeight +
+    parameters.pcbThickness / 2 +
+    definition.heightAboveBoardCenter;
+  return {
+    id,
+    definitionId: definition.id,
+    surface,
+    panelId: null,
+    offsetU: 0,
+    offsetV:
+      surface === "front" || surface === "back"
+        ? centerHeight - parameters.baseHeight / 2
+        : 0,
+    rotation: 0,
+    cutoutDiameter: definition.enclosureCutout?.diameter ?? 0,
   };
 }
 

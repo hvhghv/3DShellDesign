@@ -1,5 +1,13 @@
-import { getPanelMountingPoints } from "../domain/enclosure";
+import {
+  getPanelMountingPoints,
+  PANEL_SCREW_CLEARANCE_RADIUS,
+} from "../domain/enclosure";
 import type { DesignerParameters } from "../domain/model";
+import { PANEL_SCREW_HEAD_RECESS_RADIUS } from "../domain/screwRecess";
+import {
+  PANEL_MAGNET_RADIUS,
+  PANEL_SNAP_POST_RADIUS,
+} from "../domain/panelMounting";
 import { getPanelPlacement, getRotatedCutoutSize } from "../domain/placements";
 import {
   getAntennaDefinition,
@@ -62,17 +70,37 @@ export function createPanelDxf(
     ...pair(0, "SECTION"),
     ...pair(2, "ENTITIES"),
   ];
-  appendRoundedPolyline(lines, 0, 0, width, height, 3.2);
+  appendRoundedPolyline(lines, 0, 0, width, height, panel.cornerRadius);
   if (panel.mountingType !== "slide") {
-    const radiusValue = panel.mountingType === "screw" ? 1.3 : 2.15;
     for (const [x, y] of getPanelMountingPoints(panel)) {
+      const radiusValue =
+        panel.mountingType === "screw"
+          ? PANEL_SCREW_CLEARANCE_RADIUS
+          : panel.mountingType === "magnet"
+            ? PANEL_MAGNET_RADIUS
+            : PANEL_SNAP_POST_RADIUS;
+      const layer =
+        panel.mountingType === "screw"
+          ? "CUT"
+          : panel.mountingType === "magnet"
+            ? "BACK_POCKET"
+            : "SNAP_POST";
       lines.push(
         ...pair(0, "CIRCLE"),
-        ...pair(8, "CUT"),
+        ...pair(8, layer),
         ...pair(10, format(x + width / 2)),
         ...pair(20, format(y + height / 2)),
         ...pair(40, format(radiusValue)),
       );
+      if (panel.mountingType === "screw" && panel.screwHeadRecessEnabled) {
+        lines.push(
+          ...pair(0, "CIRCLE"),
+          ...pair(8, "POCKET"),
+          ...pair(10, format(x + width / 2)),
+          ...pair(20, format(y + height / 2)),
+          ...pair(40, format(PANEL_SCREW_HEAD_RECESS_RADIUS)),
+        );
+      }
     }
   }
   for (const placement of parameters.connectorPlacements) {

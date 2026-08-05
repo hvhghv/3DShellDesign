@@ -5,12 +5,28 @@ import {
   deriveEnclosureDimensions,
   normalizeDesignerParameters,
 } from "../domain/enclosure";
+import {
+  constrainCustomComponent,
+  createCustomComponent,
+} from "../domain/customComponents";
+import {
+  applyBatteryPreset,
+  constrainBatteryCompartment,
+  createBatteryCompartment,
+} from "../domain/batteries";
 import type {
   AntennaPlacement,
+  BatteryCompartmentPlacement,
+  BatteryPreset,
   ConnectorPlacement,
+  ConnectorSurface,
+  CustomComponentPlacement,
+  CustomComponentShape,
   DesignerParameters,
+  EnclosureFace,
   InspectorTab,
   PcbReference,
+  PcbReferencePlacement,
   PanelPlacement,
   ProjectSnapshot,
   SelectablePart,
@@ -31,27 +47,46 @@ import { queueProjectCache, readProjectCache } from "./projectCache";
 const STORAGE_KEY = "3dshell-designer.project.v1";
 type CacheStatus = "restoring" | "saving" | "saved" | "error";
 export type TransformMode = "move" | "scale";
+export type EditableFeaturePart =
+  | "pcb"
+  | "panel"
+  | "connector"
+  | "antenna"
+  | "custom"
+  | "battery";
 
 interface DesignerState {
   projectName: string;
   parameters: DesignerParameters;
   pcbReference: PcbReference | null;
   stepPreview: StepPreview | null;
+  pcbPreviews: Record<string, StepPreview>;
+  customComponentPreviews: Record<string, StepPreview>;
   selectedPart: SelectablePart;
   selectedFeatureId: string | null;
   focusedPart: SelectablePart | null;
   inspectorTab: InspectorTab;
   showGrid: boolean;
   exploded: boolean;
+  lidTransparent: boolean;
+  hiddenFaces: EnclosureFace[];
+  hiddenFeatureIds: string[];
+  lockedFeatureIds: string[];
   cameraResetToken: number;
   cachedAt: string | null;
   cacheStatus: CacheStatus;
   transformMode: TransformMode;
+  canUndo: boolean;
+  canRedo: boolean;
   setParameter: <Key extends keyof DesignerParameters>(
     key: Key,
     value: DesignerParameters[Key],
   ) => void;
-  addConnectorPlacement: (definitionId?: string) => void;
+  addConnectorPlacement: (
+    definitionId?: string,
+    surface?: ConnectorSurface,
+    panelId?: string | null,
+  ) => void;
   updateConnectorPlacement: (
     id: string,
     changes: Partial<Omit<ConnectorPlacement, "id">>,
@@ -64,36 +99,176 @@ interface DesignerState {
     changes: Partial<Omit<PanelPlacement, "id">>,
   ) => void;
   removePanelPlacement: (id: string) => void;
-  addAntennaPlacement: (definitionId?: string) => void;
+  addAntennaPlacement: (
+    definitionId?: string,
+    surface?: ConnectorSurface,
+    panelId?: string | null,
+  ) => void;
   updateAntennaPlacement: (
     id: string,
     changes: Partial<Omit<AntennaPlacement, "id">>,
   ) => void;
   setAntennaDefinition: (placementId: string, definitionId: string) => void;
   removeAntennaPlacement: (id: string) => void;
+  addCustomComponent: (
+    shape: CustomComponentShape,
+    name?: string,
+    preview?: StepPreview,
+  ) => void;
+  updateCustomComponent: (
+    id: string,
+    changes: Partial<Omit<CustomComponentPlacement, "id">>,
+  ) => void;
+  removeCustomComponent: (id: string) => void;
+  addBatteryCompartment: (preset?: BatteryPreset) => void;
+  updateBatteryCompartment: (
+    id: string,
+    changes: Partial<Omit<BatteryCompartmentPlacement, "id">>,
+  ) => void;
+  setBatteryPreset: (id: string, preset: BatteryPreset) => void;
+  removeBatteryCompartment: (id: string) => void;
+  duplicateFeature: (part: EditableFeaturePart, id: string) => void;
+  undo: () => void;
+  redo: () => void;
+  clearHistory: () => void;
   setEnclosureTemplate: (id: string) => void;
   setSelectedPart: (part: SelectablePart) => void;
-  setSelectedFeature: (part: "panel" | "connector" | "antenna", id: string) => void;
+  setSelectedFeature: (
+    part: EditableFeaturePart,
+    id: string,
+  ) => void;
   setTransformMode: (mode: TransformMode) => void;
   focusSelectedPart: () => void;
   showAllParts: () => void;
   setInspectorTab: (tab: InspectorTab) => void;
   toggleGrid: () => void;
   toggleExploded: () => void;
+  toggleLidTransparency: () => void;
+  toggleFaceVisibility: (face: EnclosureFace) => void;
+  showAllFaces: () => void;
+  toggleFeatureVisibility: (id: string) => void;
+  showAllFeatures: () => void;
+  toggleFeatureLock: (id: string) => void;
   resetCamera: () => void;
   resetProject: () => void;
   setPcbReference: (reference: PcbReference) => void;
   setStepReference: (reference: PcbReference, preview: StepPreview) => void;
-  clearPcbReference: () => void;
+  updatePcbReferencePlacement: (
+    id: string,
+    changes: Partial<Omit<PcbReferencePlacement, "id" | "reference">>,
+  ) => void;
+  clearPcbReference: (id?: string) => void;
   loadProject: (snapshot: ProjectSnapshot) => void;
   restoreCachedProject: () => Promise<void>;
+}
+
+interface DesignerHistorySnapshot {
+  projectName: string;
+  parameters: DesignerParameters;
+  pcbReference: PcbReference | null;
+  stepPreview: StepPreview | null;
+  pcbPreviews: Record<string, StepPreview>;
+  customComponentPreviews: Record<string, StepPreview>;
+  selectedPart: SelectablePart;
+  selectedFeatureId: string | null;
+  focusedPart: SelectablePart | null;
+  inspectorTab: InspectorTab;
+}
+
+interface DesignerHistoryEntry {
+  snapshot: DesignerHistorySnapshot;
+  scope: string;
+  timestamp: number;
+}
+
+const HISTORY_LIMIT = 60;
+const HISTORY_COALESCE_MS = 650;
+const historyPast: DesignerHistoryEntry[] = [];
+const historyFuture: DesignerHistoryEntry[] = [];
+let historyApplying = false;
+
+function captureHistorySnapshot(state: DesignerState): DesignerHistorySnapshot {
+  return {
+    projectName: state.projectName,
+    parameters: state.parameters,
+    pcbReference: state.pcbReference,
+    stepPreview: state.stepPreview,
+    pcbPreviews: state.pcbPreviews,
+    customComponentPreviews: state.customComponentPreviews,
+    selectedPart: state.selectedPart,
+    selectedFeatureId: state.selectedFeatureId,
+    focusedPart: state.focusedPart,
+    inspectorTab: state.inspectorTab,
+  };
+}
+
+function getHistoryShape(parameters: DesignerParameters): string {
+  return [
+    parameters.pcbReferences.length,
+    parameters.panelPlacements.length,
+    parameters.connectorPlacements.length,
+    parameters.antennaPlacements.length,
+    parameters.customComponents.length,
+    parameters.batteryCompartments.length,
+  ].join(":");
+}
+
+function getValidFeatureIds(parameters: DesignerParameters): Set<string> {
+  return new Set([
+    ...parameters.pcbReferences.map((item) => item.id),
+    ...parameters.panelPlacements.map((item) => item.id),
+    ...parameters.connectorPlacements.map((item) => item.id),
+    ...parameters.antennaPlacements.map((item) => item.id),
+    ...parameters.customComponents.map((item) => item.id),
+    ...parameters.batteryCompartments.map((item) => item.id),
+  ]);
+}
+
+function getHistoryScope(previous: DesignerState, next: DesignerState): string {
+  return `${previous.selectedPart}:${previous.selectedFeatureId ?? "none"}:${getHistoryShape(previous.parameters)}>${getHistoryShape(next.parameters)}`;
 }
 
 function isPartAvailable(part: SelectablePart, parameters: DesignerParameters): boolean {
   if (part === "panel") return parameters.panelPlacements.length > 0;
   if (part === "connector") return parameters.connectorPlacements.length > 0;
   if (part === "antenna") return parameters.antennaPlacements.length > 0;
+  if (part === "custom") return parameters.customComponents.length > 0;
+  if (part === "battery") return parameters.batteryCompartments.length > 0;
   return true;
+}
+
+function createPcbReferencePlacement(
+  reference: PcbReference,
+  id: string,
+  index = 0,
+): PcbReferencePlacement {
+  return {
+    id,
+    reference,
+    offsetX: 0,
+    offsetZ: 0,
+    elevation: index * 5,
+    rotation: 0,
+  };
+}
+
+function getPrimaryPreview(
+  references: readonly PcbReferencePlacement[],
+  previews: Record<string, StepPreview>,
+): StepPreview | null {
+  const id = references[0]?.id;
+  return id ? previews[id] ?? null : null;
+}
+
+function withLegacyPcbReference(
+  parameters: DesignerParameters,
+  reference: PcbReference | null | undefined,
+): DesignerParameters {
+  if (!reference || parameters.pcbReferences.length > 0) return parameters;
+  return {
+    ...parameters,
+    pcbReferences: [createPcbReferencePlacement(reference, "pcb-1")],
+  };
 }
 
 function loadPersistedProject(): Pick<
@@ -118,7 +293,10 @@ function loadPersistedProject(): Pick<
     return {
       projectName:
         typeof snapshot.name === "string" ? snapshot.name : fallback.projectName,
-      parameters: normalizeDesignerParameters(snapshot.parameters),
+      parameters: withLegacyPcbReference(
+        normalizeDesignerParameters(snapshot.parameters),
+        snapshot.pcbReference,
+      ),
       pcbReference: snapshot.pcbReference ?? null,
       cachedAt: typeof snapshot.updatedAt === "string" ? snapshot.updatedAt : null,
     };
@@ -146,7 +324,12 @@ function persistSnapshot(
     } catch {
       // IndexedDB remains available as the larger, asynchronous fallback.
     }
-    void queueProjectCache(snapshot, stepPreview)
+    void queueProjectCache(
+      snapshot,
+      stepPreview,
+      cachedPcbPreviews,
+      cachedCustomComponentPreviews,
+    )
       .then(() => {
         if (useDesignerStore.getState().cachedAt === snapshot.updatedAt) {
           useDesignerStore.setState({ cacheStatus: "saved" });
@@ -162,6 +345,8 @@ function persistSnapshot(
 }
 
 const persistedProject = loadPersistedProject();
+let cachedPcbPreviews: Record<string, StepPreview> = {};
+let cachedCustomComponentPreviews: Record<string, StepPreview> = {};
 
 function constrainParameters(parameters: DesignerParameters): DesignerParameters {
   return constrainSurfacePlacements(
@@ -170,21 +355,43 @@ function constrainParameters(parameters: DesignerParameters): DesignerParameters
   );
 }
 
-export const useDesignerStore = create<DesignerState>((set) => ({
+function resolvePlacementTarget(
+  panels: readonly PanelPlacement[],
+  surface: ConnectorSurface,
+  panelId: string | null,
+  fallbackSurface: EnclosureFace,
+): { surface: ConnectorSurface; panelId: string | null } {
+  if (surface !== "panel") return { surface, panelId: null };
+  const panel =
+    panels.find((candidate) => candidate.id === panelId) ?? panels[0] ?? null;
+  return panel
+    ? { surface: "panel", panelId: panel.id }
+    : { surface: fallbackSurface, panelId: null };
+}
+
+export const useDesignerStore = create<DesignerState>((set, get) => ({
   projectName: persistedProject.projectName,
   parameters: persistedProject.parameters,
   pcbReference: persistedProject.pcbReference,
   stepPreview: null,
+  pcbPreviews: {},
+  customComponentPreviews: {},
   selectedPart: "project",
   selectedFeatureId: null,
   focusedPart: null,
   inspectorTab: "dimensions",
   showGrid: true,
   exploded: false,
+  lidTransparent: false,
+  hiddenFaces: [],
+  hiddenFeatureIds: [],
+  lockedFeatureIds: [],
   cameraResetToken: 0,
   cachedAt: persistedProject.cachedAt,
   cacheStatus: "restoring",
   transformMode: "move",
+  canUndo: false,
+  canRedo: false,
   setParameter: (key, value) =>
     set((state) => {
       const nextParameters = constrainParameters({
@@ -242,6 +449,7 @@ export const useDesignerStore = create<DesignerState>((set) => ({
     }),
   updatePanelPlacement: (id, changes) =>
     set((state) => {
+      if (state.lockedFeatureIds.includes(id)) return {};
       const parameters = constrainParameters({
         ...state.parameters,
         panelPlacements: state.parameters.panelPlacements.map((panel) =>
@@ -275,6 +483,10 @@ export const useDesignerStore = create<DesignerState>((set) => ({
                     10,
                     Math.max(0.5, changes.thickness ?? panel.thickness),
                   ),
+                  insetDepth: Math.min(
+                    9.5,
+                    Math.max(0, changes.insetDepth ?? panel.insetDepth),
+                  ),
                 };
               })()
             : panel,
@@ -297,6 +509,7 @@ export const useDesignerStore = create<DesignerState>((set) => ({
     }),
   removePanelPlacement: (id) =>
     set((state) => {
+      if (state.lockedFeatureIds.includes(id)) return {};
       const removed = state.parameters.panelPlacements.find((panel) => panel.id === id);
       const panelPlacements = state.parameters.panelPlacements.filter(
         (panel) => panel.id !== id,
@@ -348,14 +561,30 @@ export const useDesignerStore = create<DesignerState>((set) => ({
         cacheStatus: "saving",
       };
     }),
-  addConnectorPlacement: (definitionId = "usb-c-receptacle") =>
+  addConnectorPlacement: (
+    definitionId = "usb-c-receptacle",
+    requestedSurface = "front",
+    requestedPanelId = null,
+  ) =>
     set((state) => {
       const id = `connector-${Date.now().toString(36)}-${state.parameters.connectorPlacements.length + 1}`;
+      const target = resolvePlacementTarget(
+        state.parameters.panelPlacements,
+        requestedSurface,
+        requestedPanelId,
+        "front",
+      );
+      const placement = createConnectorPlacement(
+        definitionId,
+        id,
+        target.surface,
+      );
+      placement.panelId = target.panelId;
       const parameters = constrainParameters({
         ...state.parameters,
         connectorPlacements: [
           ...state.parameters.connectorPlacements,
-          createConnectorPlacement(definitionId, id),
+          placement,
         ],
       });
       const snapshot = persistSnapshot(
@@ -376,6 +605,7 @@ export const useDesignerStore = create<DesignerState>((set) => ({
     }),
   updateConnectorPlacement: (id, changes) =>
     set((state) => {
+      if (state.lockedFeatureIds.includes(id)) return {};
       const parameters = constrainParameters({
         ...state.parameters,
         connectorPlacements: state.parameters.connectorPlacements.map((placement) =>
@@ -420,6 +650,7 @@ export const useDesignerStore = create<DesignerState>((set) => ({
     }),
   setConnectorDefinition: (placementId, connectorDefinitionId) =>
     set((state) => {
+      if (state.lockedFeatureIds.includes(placementId)) return {};
       const definition = getConnectorDefinition(connectorDefinitionId);
       const parameters = constrainParameters({
         ...state.parameters,
@@ -451,6 +682,7 @@ export const useDesignerStore = create<DesignerState>((set) => ({
     }),
   removeConnectorPlacement: (id) =>
     set((state) => {
+      if (state.lockedFeatureIds.includes(id)) return {};
       const parameters = constrainParameters({
         ...state.parameters,
         connectorPlacements: state.parameters.connectorPlacements.filter(
@@ -482,14 +714,26 @@ export const useDesignerStore = create<DesignerState>((set) => ({
         cacheStatus: "saving",
       };
     }),
-  addAntennaPlacement: (definitionId = "sma-bulkhead-whip") =>
+  addAntennaPlacement: (
+    definitionId = "sma-bulkhead-whip",
+    requestedSurface = "back",
+    requestedPanelId = null,
+  ) =>
     set((state) => {
       const id = `antenna-${Date.now().toString(36)}-${state.parameters.antennaPlacements.length + 1}`;
+      const target = resolvePlacementTarget(
+        state.parameters.panelPlacements,
+        requestedSurface,
+        requestedPanelId,
+        "back",
+      );
       const placement = createAntennaPlacement(
         state.parameters,
         definitionId,
         id,
+        target.surface,
       );
+      placement.panelId = target.panelId;
       const parameters = constrainParameters({
         ...state.parameters,
         antennaPlacements: [...state.parameters.antennaPlacements, placement],
@@ -512,6 +756,7 @@ export const useDesignerStore = create<DesignerState>((set) => ({
     }),
   updateAntennaPlacement: (id, changes) =>
     set((state) => {
+      if (state.lockedFeatureIds.includes(id)) return {};
       const parameters = constrainParameters({
         ...state.parameters,
         antennaPlacements: state.parameters.antennaPlacements.map((placement) =>
@@ -555,6 +800,7 @@ export const useDesignerStore = create<DesignerState>((set) => ({
     }),
   setAntennaDefinition: (placementId, antennaDefinitionId) =>
     set((state) => {
+      if (state.lockedFeatureIds.includes(placementId)) return {};
       const antenna = getAntennaDefinition(antennaDefinitionId);
       const parameters = constrainParameters({
         ...state.parameters,
@@ -585,6 +831,7 @@ export const useDesignerStore = create<DesignerState>((set) => ({
     }),
   removeAntennaPlacement: (id) =>
     set((state) => {
+      if (state.lockedFeatureIds.includes(id)) return {};
       const antennaPlacements = state.parameters.antennaPlacements.filter(
         (placement) => placement.id !== id,
       );
@@ -617,6 +864,429 @@ export const useDesignerStore = create<DesignerState>((set) => ({
         cacheStatus: "saving",
       };
     }),
+  addCustomComponent: (shape, name, preview) =>
+    set((state) => {
+      const id = `custom-${Date.now().toString(36)}-${state.parameters.customComponents.length + 1}`;
+      const component = createCustomComponent(
+        state.parameters,
+        id,
+        shape,
+        name,
+        preview,
+      );
+      if (preview) {
+        cachedCustomComponentPreviews = {
+          ...cachedCustomComponentPreviews,
+          [id]: preview,
+        };
+      }
+      const parameters = {
+        ...state.parameters,
+        customComponents: [...state.parameters.customComponents, component],
+      };
+      const snapshot = persistSnapshot(
+        state.projectName,
+        parameters,
+        state.pcbReference,
+        state.stepPreview,
+      );
+      return {
+        parameters,
+        customComponentPreviews: cachedCustomComponentPreviews,
+        selectedPart: "custom",
+        selectedFeatureId: id,
+        inspectorTab: "structure",
+        focusedPart: state.focusedPart ? "custom" : null,
+        cachedAt: snapshot.updatedAt,
+        cacheStatus: "saving",
+      };
+    }),
+  updateCustomComponent: (id, changes) =>
+    set((state) => {
+      if (state.lockedFeatureIds.includes(id)) return {};
+      const parameters = {
+        ...state.parameters,
+        customComponents: state.parameters.customComponents.map((component) => {
+          if (component.id !== id) return component;
+          const next = { ...component, ...changes };
+          if (
+            next.shape === "cylinder" &&
+            (changes.width !== undefined || changes.depth !== undefined)
+          ) {
+            const diameter = changes.width ?? changes.depth ?? component.width;
+            next.width = diameter;
+            next.depth = diameter;
+          }
+          return constrainCustomComponent(next);
+        }),
+      };
+      const snapshot = persistSnapshot(
+        state.projectName,
+        parameters,
+        state.pcbReference,
+        state.stepPreview,
+      );
+      return {
+        parameters,
+        selectedPart: "custom",
+        selectedFeatureId: id,
+        focusedPart: state.focusedPart ? "custom" : null,
+        cachedAt: snapshot.updatedAt,
+        cacheStatus: "saving",
+      };
+    }),
+  removeCustomComponent: (id) =>
+    set((state) => {
+      if (state.lockedFeatureIds.includes(id)) return {};
+      const customComponents = state.parameters.customComponents.filter(
+        (component) => component.id !== id,
+      );
+      cachedCustomComponentPreviews = { ...cachedCustomComponentPreviews };
+      delete cachedCustomComponentPreviews[id];
+      const parameters = { ...state.parameters, customComponents };
+      const snapshot = persistSnapshot(
+        state.projectName,
+        parameters,
+        state.pcbReference,
+        state.stepPreview,
+      );
+      const nextComponent = customComponents[0] ?? null;
+      return {
+        parameters,
+        customComponentPreviews: cachedCustomComponentPreviews,
+        selectedPart:
+          state.selectedPart === "custom" && !nextComponent
+            ? "project"
+            : state.selectedPart,
+        selectedFeatureId:
+          state.selectedPart === "custom" && state.selectedFeatureId === id
+            ? nextComponent?.id ?? null
+            : state.selectedFeatureId,
+        focusedPart:
+          state.focusedPart === "custom" && !nextComponent
+            ? null
+            : state.focusedPart,
+        cachedAt: snapshot.updatedAt,
+        cacheStatus: "saving",
+      };
+    }),
+  addBatteryCompartment: (preset = "aa") =>
+    set((state) => {
+      const id = `battery-${Date.now().toString(36)}-${state.parameters.batteryCompartments.length + 1}`;
+      const compartment = createBatteryCompartment(id, preset);
+      const parameters = {
+        ...state.parameters,
+        batteryCompartments: [
+          ...state.parameters.batteryCompartments,
+          compartment,
+        ],
+      };
+      const snapshot = persistSnapshot(
+        state.projectName,
+        parameters,
+        state.pcbReference,
+        state.stepPreview,
+      );
+      return {
+        parameters,
+        selectedPart: "battery",
+        selectedFeatureId: id,
+        inspectorTab: "structure",
+        focusedPart: state.focusedPart ? "battery" : null,
+        cachedAt: snapshot.updatedAt,
+        cacheStatus: "saving",
+      };
+    }),
+  updateBatteryCompartment: (id, changes) =>
+    set((state) => {
+      if (state.lockedFeatureIds.includes(id)) return {};
+      const parameters = {
+        ...state.parameters,
+        batteryCompartments: state.parameters.batteryCompartments.map(
+          (compartment) => {
+            if (compartment.id !== id) return compartment;
+            let next = constrainBatteryCompartment({
+              ...compartment,
+              ...changes,
+            });
+            if (
+              next.preset !== "custom" &&
+              (changes.cellCount !== undefined ||
+                changes.wallThickness !== undefined ||
+                changes.clearance !== undefined)
+            ) {
+              next = applyBatteryPreset(next, next.preset, next.cellCount);
+            }
+            return next;
+          },
+        ),
+      };
+      const snapshot = persistSnapshot(
+        state.projectName,
+        parameters,
+        state.pcbReference,
+        state.stepPreview,
+      );
+      return {
+        parameters,
+        selectedPart: "battery",
+        selectedFeatureId: id,
+        focusedPart: state.focusedPart ? "battery" : null,
+        cachedAt: snapshot.updatedAt,
+        cacheStatus: "saving",
+      };
+    }),
+  setBatteryPreset: (id, preset) =>
+    set((state) => {
+      if (state.lockedFeatureIds.includes(id)) return {};
+      const parameters = {
+        ...state.parameters,
+        batteryCompartments: state.parameters.batteryCompartments.map(
+          (compartment) =>
+            compartment.id === id
+              ? applyBatteryPreset(compartment, preset)
+              : compartment,
+        ),
+      };
+      const snapshot = persistSnapshot(
+        state.projectName,
+        parameters,
+        state.pcbReference,
+        state.stepPreview,
+      );
+      return {
+        parameters,
+        selectedPart: "battery",
+        selectedFeatureId: id,
+        focusedPart: state.focusedPart ? "battery" : null,
+        cachedAt: snapshot.updatedAt,
+        cacheStatus: "saving",
+      };
+    }),
+  removeBatteryCompartment: (id) =>
+    set((state) => {
+      if (state.lockedFeatureIds.includes(id)) return {};
+      const batteryCompartments = state.parameters.batteryCompartments.filter(
+        (compartment) => compartment.id !== id,
+      );
+      const parameters = { ...state.parameters, batteryCompartments };
+      const snapshot = persistSnapshot(
+        state.projectName,
+        parameters,
+        state.pcbReference,
+        state.stepPreview,
+      );
+      const nextCompartment = batteryCompartments[0] ?? null;
+      return {
+        parameters,
+        selectedPart:
+          state.selectedPart === "battery" && !nextCompartment
+            ? "project"
+            : state.selectedPart,
+        selectedFeatureId:
+          state.selectedPart === "battery" && state.selectedFeatureId === id
+            ? nextCompartment?.id ?? null
+            : state.selectedFeatureId,
+        focusedPart:
+          state.focusedPart === "battery" && !nextCompartment
+            ? null
+            : state.focusedPart,
+        cachedAt: snapshot.updatedAt,
+        cacheStatus: "saving",
+      };
+    }),
+  duplicateFeature: (part, id) =>
+    set((state) => {
+      const suffix = `${Date.now().toString(36)}-${Math.floor(Math.random() * 1000)}`;
+      const nextId = `${part}-${suffix}`;
+      let nextParameters: DesignerParameters;
+      let pcbPreviews = state.pcbPreviews;
+      let customComponentPreviews = state.customComponentPreviews;
+
+      if (part === "panel") {
+        const source = state.parameters.panelPlacements.find((item) => item.id === id);
+        if (!source) return {};
+        nextParameters = {
+          ...state.parameters,
+          panelPlacements: [
+            ...state.parameters.panelPlacements,
+            { ...source, id: nextId, offsetU: source.offsetU + 3, offsetV: source.offsetV + 3 },
+          ],
+        };
+      } else if (part === "connector") {
+        const source = state.parameters.connectorPlacements.find((item) => item.id === id);
+        if (!source) return {};
+        const quarterTurn = source.rotation === 90 || source.rotation === 270;
+        const duplicateOffset =
+          (quarterTurn ? source.cutoutHeight : source.cutoutWidth) + 3;
+        nextParameters = {
+          ...state.parameters,
+          connectorPlacements: [
+            ...state.parameters.connectorPlacements,
+            { ...source, id: nextId, offsetU: source.offsetU + duplicateOffset },
+          ],
+        };
+      } else if (part === "antenna") {
+        const source = state.parameters.antennaPlacements.find((item) => item.id === id);
+        if (!source) return {};
+        nextParameters = {
+          ...state.parameters,
+          antennaPlacements: [
+            ...state.parameters.antennaPlacements,
+            { ...source, id: nextId, offsetU: source.offsetU + 3, offsetV: source.offsetV + 3 },
+          ],
+        };
+      } else if (part === "custom") {
+        const source = state.parameters.customComponents.find((item) => item.id === id);
+        if (!source) return {};
+        nextParameters = {
+          ...state.parameters,
+          customComponents: [
+            ...state.parameters.customComponents,
+            {
+              ...source,
+              id: nextId,
+              name: `${source.name} 副本`,
+              positionX: source.positionX + 5,
+              positionZ: source.positionZ + 5,
+            },
+          ],
+        };
+        if (state.customComponentPreviews[id]) {
+          customComponentPreviews = {
+            ...state.customComponentPreviews,
+            [nextId]: state.customComponentPreviews[id],
+          };
+        }
+      } else if (part === "battery") {
+        const source = state.parameters.batteryCompartments.find((item) => item.id === id);
+        if (!source) return {};
+        nextParameters = {
+          ...state.parameters,
+          batteryCompartments: [
+            ...state.parameters.batteryCompartments,
+            { ...source, id: nextId, offsetX: source.offsetX + 5, offsetZ: source.offsetZ + 5 },
+          ],
+        };
+      } else {
+        const source = state.parameters.pcbReferences.find((item) => item.id === id);
+        if (!source) return {};
+        nextParameters = {
+          ...state.parameters,
+          pcbReferences: [
+            ...state.parameters.pcbReferences,
+            { ...source, id: nextId, offsetX: source.offsetX + 5, offsetZ: source.offsetZ + 5 },
+          ],
+        };
+        if (state.pcbPreviews[id]) {
+          pcbPreviews = { ...state.pcbPreviews, [nextId]: state.pcbPreviews[id] };
+        }
+      }
+
+      const parameters = constrainParameters(nextParameters);
+      cachedPcbPreviews = pcbPreviews;
+      cachedCustomComponentPreviews = customComponentPreviews;
+      const pcbReference = parameters.pcbReferences[0]?.reference ?? state.pcbReference;
+      const stepPreview = getPrimaryPreview(parameters.pcbReferences, pcbPreviews);
+      const snapshot = persistSnapshot(
+        state.projectName,
+        parameters,
+        pcbReference,
+        stepPreview,
+      );
+      return {
+        parameters,
+        pcbReference,
+        stepPreview,
+        pcbPreviews,
+        customComponentPreviews,
+        selectedPart: part,
+        selectedFeatureId: nextId,
+        inspectorTab: "structure",
+        focusedPart: state.focusedPart ? part : null,
+        cachedAt: snapshot.updatedAt,
+        cacheStatus: "saving",
+      };
+    }),
+  undo: () => {
+    const target = historyPast.pop();
+    if (!target) return;
+    const current = get();
+    historyFuture.push({
+      snapshot: captureHistorySnapshot(current),
+      scope: "redo",
+      timestamp: Date.now(),
+    });
+    historyApplying = true;
+    try {
+      cachedPcbPreviews = target.snapshot.pcbPreviews;
+      cachedCustomComponentPreviews = target.snapshot.customComponentPreviews;
+      const persisted = persistSnapshot(
+        target.snapshot.projectName,
+        target.snapshot.parameters,
+        target.snapshot.pcbReference,
+        target.snapshot.stepPreview,
+      );
+      const validFeatureIds = getValidFeatureIds(target.snapshot.parameters);
+      set({
+        ...target.snapshot,
+        hiddenFeatureIds: current.hiddenFeatureIds.filter((id) =>
+          validFeatureIds.has(id),
+        ),
+        lockedFeatureIds: current.lockedFeatureIds.filter((id) =>
+          validFeatureIds.has(id),
+        ),
+        canUndo: historyPast.length > 0,
+        canRedo: true,
+        cachedAt: persisted.updatedAt,
+        cacheStatus: "saving",
+      });
+    } finally {
+      historyApplying = false;
+    }
+  },
+  redo: () => {
+    const target = historyFuture.pop();
+    if (!target) return;
+    const current = get();
+    historyPast.push({
+      snapshot: captureHistorySnapshot(current),
+      scope: "undo",
+      timestamp: Date.now(),
+    });
+    historyApplying = true;
+    try {
+      cachedPcbPreviews = target.snapshot.pcbPreviews;
+      cachedCustomComponentPreviews = target.snapshot.customComponentPreviews;
+      const persisted = persistSnapshot(
+        target.snapshot.projectName,
+        target.snapshot.parameters,
+        target.snapshot.pcbReference,
+        target.snapshot.stepPreview,
+      );
+      const validFeatureIds = getValidFeatureIds(target.snapshot.parameters);
+      set({
+        ...target.snapshot,
+        hiddenFeatureIds: current.hiddenFeatureIds.filter((id) =>
+          validFeatureIds.has(id),
+        ),
+        lockedFeatureIds: current.lockedFeatureIds.filter((id) =>
+          validFeatureIds.has(id),
+        ),
+        canUndo: true,
+        canRedo: historyFuture.length > 0,
+        cachedAt: persisted.updatedAt,
+        cacheStatus: "saving",
+      });
+    } finally {
+      historyApplying = false;
+    }
+  },
+  clearHistory: () => {
+    historyPast.length = 0;
+    historyFuture.length = 0;
+    set({ canUndo: false, canRedo: false });
+  },
   setEnclosureTemplate: (enclosureTemplateId) =>
     set((state) => {
       const template = getEnclosureTemplate(enclosureTemplateId);
@@ -650,12 +1320,18 @@ export const useDesignerStore = create<DesignerState>((set) => ({
     set((state) => ({
       selectedPart,
       selectedFeatureId:
-        selectedPart === "panel"
+        selectedPart === "pcb"
+          ? state.parameters.pcbReferences[0]?.id ?? null
+          : selectedPart === "panel"
           ? state.parameters.panelPlacements[0]?.id ?? null
           : selectedPart === "connector"
             ? state.parameters.connectorPlacements[0]?.id ?? null
             : selectedPart === "antenna"
               ? state.parameters.antennaPlacements[0]?.id ?? null
+              : selectedPart === "custom"
+                ? state.parameters.customComponents[0]?.id ?? null
+                : selectedPart === "battery"
+                  ? state.parameters.batteryCompartments[0]?.id ?? null
             : null,
       focusedPart:
         selectedPart === "project" ? null : state.focusedPart ? selectedPart : null,
@@ -676,43 +1352,96 @@ export const useDesignerStore = create<DesignerState>((set) => ({
   setInspectorTab: (inspectorTab) => set({ inspectorTab }),
   toggleGrid: () => set((state) => ({ showGrid: !state.showGrid })),
   toggleExploded: () => set((state) => ({ exploded: !state.exploded })),
+  toggleLidTransparency: () =>
+    set((state) => ({ lidTransparent: !state.lidTransparent })),
+  toggleFaceVisibility: (face) =>
+    set((state) => ({
+      hiddenFaces: state.hiddenFaces.includes(face)
+        ? state.hiddenFaces.filter((candidate) => candidate !== face)
+        : [...state.hiddenFaces, face],
+    })),
+  showAllFaces: () => set({ hiddenFaces: [] }),
+  toggleFeatureVisibility: (id) =>
+    set((state) => ({
+      hiddenFeatureIds: state.hiddenFeatureIds.includes(id)
+        ? state.hiddenFeatureIds.filter((candidate) => candidate !== id)
+        : [...state.hiddenFeatureIds, id],
+    })),
+  showAllFeatures: () => set({ hiddenFeatureIds: [] }),
+  toggleFeatureLock: (id) =>
+    set((state) => ({
+      lockedFeatureIds: state.lockedFeatureIds.includes(id)
+        ? state.lockedFeatureIds.filter((candidate) => candidate !== id)
+        : [...state.lockedFeatureIds, id],
+    })),
   resetCamera: () =>
     set((state) => ({ cameraResetToken: state.cameraResetToken + 1 })),
   resetProject: () => {
+    cachedPcbPreviews = {};
+    cachedCustomComponentPreviews = {};
     const snapshot = persistSnapshot("PCB 控制器外壳", DEFAULT_PARAMETERS, null, null);
     set({
       projectName: "PCB 控制器外壳",
       parameters: DEFAULT_PARAMETERS,
       pcbReference: null,
       stepPreview: null,
+      pcbPreviews: {},
+      customComponentPreviews: {},
       selectedPart: "project",
       selectedFeatureId: null,
       focusedPart: null,
       inspectorTab: "dimensions",
       exploded: false,
+      lidTransparent: false,
+      hiddenFaces: [],
+      hiddenFeatureIds: [],
+      lockedFeatureIds: [],
       cachedAt: snapshot.updatedAt,
       cacheStatus: "saving",
     });
   },
   setPcbReference: (pcbReference) =>
     set((state) => {
+      const firstReference = state.parameters.pcbReferences.length === 0;
+      const id = `pcb-${Date.now().toString(36)}-${state.parameters.pcbReferences.length + 1}`;
+      const pcbReferences = [
+        ...state.parameters.pcbReferences,
+        createPcbReferencePlacement(
+          pcbReference,
+          id,
+          state.parameters.pcbReferences.length,
+        ),
+      ];
       const parameters = constrainParameters({
         ...state.parameters,
-        pcbLength: Number(
-          (pcbReference.bounds.maxX - pcbReference.bounds.minX).toFixed(3),
-        ),
-        pcbWidth: Number(
-          (pcbReference.bounds.maxY - pcbReference.bounds.minY).toFixed(3),
-        ),
-        pcbThickness: pcbReference.thickness,
+        pcbReferences,
+        ...(firstReference
+          ? {
+              pcbLength: Number(
+                (pcbReference.bounds.maxX - pcbReference.bounds.minX).toFixed(3),
+              ),
+              pcbWidth: Number(
+                (pcbReference.bounds.maxY - pcbReference.bounds.minY).toFixed(3),
+              ),
+              pcbThickness: pcbReference.thickness,
+            }
+          : {}),
       });
-      const snapshot = persistSnapshot(state.projectName, parameters, pcbReference, null);
+      const primaryReference = pcbReferences[0]?.reference ?? null;
+      const primaryPreview = getPrimaryPreview(pcbReferences, cachedPcbPreviews);
+      const snapshot = persistSnapshot(
+        state.projectName,
+        parameters,
+        primaryReference,
+        primaryPreview,
+      );
       return {
         parameters,
-        pcbReference,
-        stepPreview: null,
+        pcbReference: primaryReference,
+        stepPreview: primaryPreview,
+        pcbPreviews: cachedPcbPreviews,
         selectedPart: "pcb",
-        selectedFeatureId: null,
+        selectedFeatureId: id,
         focusedPart: state.focusedPart ? "pcb" : null,
         cachedAt: snapshot.updatedAt,
         cacheStatus: "saving",
@@ -720,55 +1449,156 @@ export const useDesignerStore = create<DesignerState>((set) => ({
     }),
   setStepReference: (pcbReference, stepPreview) =>
     set((state) => {
+      const firstReference = state.parameters.pcbReferences.length === 0;
+      const id = `pcb-${Date.now().toString(36)}-${state.parameters.pcbReferences.length + 1}`;
+      const pcbReferences = [
+        ...state.parameters.pcbReferences,
+        createPcbReferencePlacement(
+          pcbReference,
+          id,
+          state.parameters.pcbReferences.length,
+        ),
+      ];
+      cachedPcbPreviews = { ...cachedPcbPreviews, [id]: stepPreview };
       const parameters = constrainParameters({
         ...state.parameters,
-        pcbLength: Number(
-          (pcbReference.bounds.maxX - pcbReference.bounds.minX).toFixed(3),
-        ),
-        pcbWidth: Number(
-          (pcbReference.bounds.maxY - pcbReference.bounds.minY).toFixed(3),
-        ),
+        pcbReferences,
+        ...(firstReference
+          ? {
+              pcbLength: Number(
+                (pcbReference.bounds.maxX - pcbReference.bounds.minX).toFixed(3),
+              ),
+              pcbWidth: Number(
+                (pcbReference.bounds.maxY - pcbReference.bounds.minY).toFixed(3),
+              ),
+              pcbThickness: pcbReference.thickness,
+            }
+          : {}),
         componentHeight: Math.max(
           state.parameters.componentHeight,
           Number((pcbReference.overallHeight ?? 0).toFixed(3)),
         ),
       });
+      const primaryReference = pcbReferences[0]?.reference ?? null;
+      const primaryPreview = getPrimaryPreview(pcbReferences, cachedPcbPreviews);
       const snapshot = persistSnapshot(
         state.projectName,
         parameters,
-        pcbReference,
-        stepPreview,
+        primaryReference,
+        primaryPreview,
       );
       return {
         parameters,
-        pcbReference,
-        stepPreview,
+        pcbReference: primaryReference,
+        stepPreview: primaryPreview,
+        pcbPreviews: cachedPcbPreviews,
         selectedPart: "pcb",
-        selectedFeatureId: null,
+        selectedFeatureId: id,
         focusedPart: state.focusedPart ? "pcb" : null,
         cachedAt: snapshot.updatedAt,
         cacheStatus: "saving",
       };
     }),
-  clearPcbReference: () =>
+  updatePcbReferencePlacement: (id, changes) =>
     set((state) => {
-      const snapshot = persistSnapshot(state.projectName, state.parameters, null, null);
+      if (state.lockedFeatureIds.includes(id)) return {};
+      const parameters = {
+        ...state.parameters,
+        pcbReferences: state.parameters.pcbReferences.map((placement) =>
+          placement.id === id
+            ? {
+                ...placement,
+                ...changes,
+                offsetX: Math.min(
+                  500,
+                  Math.max(-500, changes.offsetX ?? placement.offsetX),
+                ),
+                offsetZ: Math.min(
+                  500,
+                  Math.max(-500, changes.offsetZ ?? placement.offsetZ),
+                ),
+                elevation: Math.min(
+                  300,
+                  Math.max(0, changes.elevation ?? placement.elevation),
+                ),
+              }
+            : placement,
+        ),
+      };
+      const snapshot = persistSnapshot(
+        state.projectName,
+        parameters,
+        parameters.pcbReferences[0]?.reference ?? null,
+        getPrimaryPreview(parameters.pcbReferences, cachedPcbPreviews),
+      );
       return {
-        pcbReference: null,
-        stepPreview: null,
+        parameters,
+        selectedPart: "pcb",
+        selectedFeatureId: id,
+        focusedPart: state.focusedPart ? "pcb" : null,
+        cachedAt: snapshot.updatedAt,
+        cacheStatus: "saving",
+      };
+    }),
+  clearPcbReference: (requestedId) =>
+    set((state) => {
+      const id = requestedId ?? state.parameters.pcbReferences[0]?.id;
+      if (!id) return {};
+      if (state.lockedFeatureIds.includes(id)) return {};
+      const pcbReferences = state.parameters.pcbReferences.filter(
+        (placement) => placement.id !== id,
+      );
+      cachedPcbPreviews = { ...cachedPcbPreviews };
+      delete cachedPcbPreviews[id];
+      const parameters = { ...state.parameters, pcbReferences };
+      const primaryReference = pcbReferences[0]?.reference ?? null;
+      const primaryPreview = getPrimaryPreview(pcbReferences, cachedPcbPreviews);
+      const snapshot = persistSnapshot(
+        state.projectName,
+        parameters,
+        primaryReference,
+        primaryPreview,
+      );
+      return {
+        parameters,
+        pcbReference: primaryReference,
+        stepPreview: primaryPreview,
+        pcbPreviews: cachedPcbPreviews,
+        selectedPart:
+          state.selectedPart === "pcb" && pcbReferences.length === 0
+            ? "project"
+            : state.selectedPart,
+        selectedFeatureId:
+          state.selectedPart === "pcb" && state.selectedFeatureId === id
+            ? pcbReferences[0]?.id ?? null
+            : state.selectedFeatureId,
+        focusedPart:
+          state.focusedPart === "pcb" && pcbReferences.length === 0
+            ? null
+            : state.focusedPart,
         cachedAt: snapshot.updatedAt,
         cacheStatus: "saving",
       };
     }),
   loadProject: (snapshot) => {
-    const parameters = normalizeDesignerParameters(snapshot.parameters);
-    const pcbReference = snapshot.pcbReference ?? null;
+    cachedPcbPreviews = {};
+    cachedCustomComponentPreviews = {};
+    const parameters = withLegacyPcbReference(
+      normalizeDesignerParameters(snapshot.parameters),
+      snapshot.pcbReference,
+    );
+    const pcbReference = parameters.pcbReferences[0]?.reference ?? null;
     const persisted = persistSnapshot(snapshot.name, parameters, pcbReference, null);
     set({
       projectName: snapshot.name,
       parameters,
       pcbReference,
       stepPreview: null,
+      pcbPreviews: {},
+      customComponentPreviews: {},
+      hiddenFaces: [],
+      hiddenFeatureIds: [],
+      lockedFeatureIds: [],
       selectedPart: "project",
       selectedFeatureId: null,
       focusedPart: null,
@@ -788,11 +1618,30 @@ export const useDesignerStore = create<DesignerState>((set) => ({
         if (!Number.isFinite(cachedTime) || cachedTime < currentTime) {
           return { cacheStatus: "saved" };
         }
+        const parameters = withLegacyPcbReference(
+          normalizeDesignerParameters(cached.snapshot.parameters),
+          cached.snapshot.pcbReference,
+        );
+        cachedPcbPreviews = cached.pcbPreviews ?? {};
+        if (
+          Object.keys(cachedPcbPreviews).length === 0 &&
+          cached.stepPreview &&
+          parameters.pcbReferences[0]
+        ) {
+          cachedPcbPreviews = {
+            [parameters.pcbReferences[0].id]: cached.stepPreview,
+          };
+        }
+        cachedCustomComponentPreviews = cached.customComponentPreviews ?? {};
         return {
           projectName: cached.snapshot.name,
-          parameters: normalizeDesignerParameters(cached.snapshot.parameters),
-          pcbReference: cached.snapshot.pcbReference ?? null,
-          stepPreview: cached.stepPreview,
+          parameters,
+          pcbReference: parameters.pcbReferences[0]?.reference ?? null,
+          stepPreview: getPrimaryPreview(parameters.pcbReferences, cachedPcbPreviews),
+          pcbPreviews: cachedPcbPreviews,
+          customComponentPreviews: cachedCustomComponentPreviews,
+          hiddenFeatureIds: [],
+          lockedFeatureIds: [],
           selectedFeatureId: null,
           focusedPart: null,
           cachedAt: cached.snapshot.updatedAt,
@@ -804,6 +1653,47 @@ export const useDesignerStore = create<DesignerState>((set) => ({
     }
   },
 }));
+
+useDesignerStore.subscribe((state, previous) => {
+  if (
+    historyApplying ||
+    previous.cacheStatus === "restoring" ||
+    (state.parameters === previous.parameters &&
+      state.projectName === previous.projectName &&
+      state.pcbReference === previous.pcbReference &&
+      state.stepPreview === previous.stepPreview &&
+      state.pcbPreviews === previous.pcbPreviews &&
+      state.customComponentPreviews === previous.customComponentPreviews)
+  ) {
+    return;
+  }
+
+  const timestamp = Date.now();
+  const scope = getHistoryScope(previous, state);
+  const last = historyPast[historyPast.length - 1];
+  if (
+    !last ||
+    last.scope !== scope ||
+    timestamp - last.timestamp > HISTORY_COALESCE_MS
+  ) {
+    historyPast.push({
+      snapshot: captureHistorySnapshot(previous),
+      scope,
+      timestamp,
+    });
+    if (historyPast.length > HISTORY_LIMIT) historyPast.shift();
+  } else {
+    last.timestamp = timestamp;
+  }
+  historyFuture.length = 0;
+  const validFeatureIds = getValidFeatureIds(state.parameters);
+  useDesignerStore.setState({
+    canUndo: historyPast.length > 0,
+    canRedo: false,
+    hiddenFeatureIds: state.hiddenFeatureIds.filter((id) => validFeatureIds.has(id)),
+    lockedFeatureIds: state.lockedFeatureIds.filter((id) => validFeatureIds.has(id)),
+  });
+});
 
 export function createProjectSnapshot(
   name: string,

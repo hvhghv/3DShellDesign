@@ -8,6 +8,27 @@ export interface CenteredMountingHole {
   x: number;
   y: number;
   diameter: number;
+  elevation?: number;
+}
+
+export function getAssemblyMountingHoles(
+  parameters: DesignerParameters,
+  legacyReference: PcbReference | null,
+): CenteredMountingHole[] {
+  if (parameters.pcbReferences.length === 0) {
+    return getCenteredMountingHoles(parameters, legacyReference);
+  }
+  return parameters.pcbReferences.flatMap((placement) => {
+    const angle = (placement.rotation * Math.PI) / 180;
+    const cosine = Math.cos(angle);
+    const sine = Math.sin(angle);
+    return getCenteredMountingHoles(parameters, placement.reference).map((hole) => ({
+      x: placement.offsetX + hole.x * cosine + hole.y * sine,
+      y: placement.offsetZ - hole.x * sine + hole.y * cosine,
+      diameter: hole.diameter,
+      elevation: placement.elevation,
+    }));
+  });
 }
 
 export function getCenteredMountingHoles(

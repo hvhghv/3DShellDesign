@@ -22,6 +22,39 @@ describe("panel DXF exporter", () => {
     expect(dxf).not.toContain("\r\nCIRCLE\r\n");
   });
 
+  it("writes screw head recesses on a separate pocket layer", () => {
+    const dxf = createPanelDxf({
+      ...DEFAULT_PARAMETERS,
+      panelPlacements: DEFAULT_PARAMETERS.panelPlacements.map((panel) => ({
+        ...panel,
+        screwHeadRecessEnabled: true,
+      })),
+    });
+
+    expect(dxf.match(/\r\nCIRCLE\r\n/g)).toHaveLength(8);
+    expect(dxf.match(/\r\n8\r\nPOCKET\r\n/g)).toHaveLength(4);
+  });
+
+  it("uses non-cut layers for magnets and integrated snap posts", () => {
+    const magneticDxf = createPanelDxf({
+      ...DEFAULT_PARAMETERS,
+      panelPlacements: DEFAULT_PARAMETERS.panelPlacements.map((panel) => ({
+        ...panel,
+        mountingType: "magnet",
+      })),
+    });
+    expect(magneticDxf.match(/\r\n8\r\nBACK_POCKET\r\n/g)).toHaveLength(4);
+
+    const snapDxf = createPanelDxf({
+      ...DEFAULT_PARAMETERS,
+      panelPlacements: DEFAULT_PARAMETERS.panelPlacements.map((panel) => ({
+        ...panel,
+        mountingType: "snap",
+      })),
+    });
+    expect(snapDxf.match(/\r\n8\r\nSNAP_POST\r\n/g)).toHaveLength(4);
+  });
+
   it("includes circular and rounded connector cutouts mounted to the panel", () => {
     const connector = DEFAULT_PARAMETERS.connectorPlacements[0];
     const dxf = createPanelDxf({

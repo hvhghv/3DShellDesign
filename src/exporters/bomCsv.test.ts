@@ -43,4 +43,18 @@ describe("BOM CSV exporter", () => {
     expect(csv).toContain("圆形磁铁,8,直径 6 x 1.8 mm");
     expect(csv).toContain("四周内翻边；装配前确认磁极");
   });
+
+  it("records panel magnets and removable lid pins", () => {
+    const csv = createBomCsv("快拆外壳", {
+      ...DEFAULT_PARAMETERS,
+      closureType: "pin",
+      panelPlacements: DEFAULT_PARAMETERS.panelPlacements.map((panel) => ({
+        ...panel,
+        mountingType: "magnet",
+      })),
+    });
+
+    expect(csv).toContain("面板 1 固定件,8,直径 4.3 mm 圆形磁铁");
+    expect(csv).toContain("快拆销轴,2,直径 2.5 mm 带拉环销");
+  });
 });

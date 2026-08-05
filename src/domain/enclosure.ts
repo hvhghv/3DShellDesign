@@ -3,6 +3,11 @@ import { getAntennaDefinition, getConnectorDefinition } from "../libraries/compo
 import { getVentPatternPoints } from "./patterns";
 import { MAGNET_GEOMETRY } from "./magnetSupport";
 import {
+  constrainBatteryCompartment,
+  createBatteryCompartment,
+  getBatteryPreset,
+} from "./batteries";
+import {
   createConnectorPlacement,
   createAntennaPlacement,
   createPanelPlacement,
@@ -20,15 +25,34 @@ import {
   resolveAntennaFace,
   resolveConnectorFace,
 } from "./placements";
+import { DEFAULT_SCREW_HEAD_RECESS_DEPTH } from "./screwRecess";
 import type {
   AntennaPlacement,
+  BatteryCompartmentPlacement,
   ConnectorPlacement,
+  CustomComponentPlacement,
+  ClosureType,
   DesignerParameters,
   EnclosureDimensions,
   PcbReference,
+  PcbReferencePlacement,
   PanelPlacement,
   ValidationIssue,
 } from "./model";
+
+const CLOSURE_TYPES: readonly ClosureType[] = [
+  "screw",
+  "magnet",
+  "snap",
+  "latch",
+  "slide",
+  "hinge",
+  "pin",
+];
+
+function isClosureType(value: unknown): value is ClosureType {
+  return CLOSURE_TYPES.some((type) => type === value);
+}
 
 export const DEFAULT_PARAMETERS: DesignerParameters = {
   enclosureTemplateId: "rounded-split",
@@ -55,6 +79,13 @@ export const DEFAULT_PARAMETERS: DesignerParameters = {
       width: 62.64,
       height: 40.56,
       thickness: 2,
+      insetDepth: 0,
+      cornerRadius: 3.2,
+      borderWidth: 2,
+      mountingInsetX: 5,
+      mountingInsetY: 5,
+      screwHeadRecessEnabled: false,
+      screwHeadRecessDepth: DEFAULT_SCREW_HEAD_RECESS_DEPTH,
       mountingType: "screw",
       materialId: "acrylic-clear",
     },
@@ -63,13 +94,23 @@ export const DEFAULT_PARAMETERS: DesignerParameters = {
     createConnectorPlacement("usb-c-receptacle", "connector-1"),
   ],
   antennaPlacements: [],
+  customComponents: [],
+  batteryCompartments: [],
+  pcbReferences: [],
   closureFastenerId: "m3-self-tapping",
+  closureScrewHeadRecessEnabled: false,
+  closureScrewHeadRecessDepth: DEFAULT_SCREW_HEAD_RECESS_DEPTH,
   ventPattern: "none",
   ventRows: 3,
   ventColumns: 5,
   ventHoleSize: 4,
   ventSpacing: 2,
 };
+
+export const PANEL_SCREW_CLEARANCE_RADIUS = 1.6;
+export const PANEL_SCREW_HEAD_RADIUS = 2.5;
+export const PANEL_SCREW_PILOT_RADIUS = 1.15;
+export const PANEL_SCREW_TAB_RADIUS = 4;
 
 export function deriveEnclosureDimensions(
   parameters: DesignerParameters,
@@ -97,8 +138,8 @@ export function deriveEnclosureDimensions(
 export function getPanelMountingPoints(
   panel: PanelPlacement,
 ): Array<readonly [number, number]> {
-  const x = Math.max(1.5, panel.width / 2 - 5);
-  const y = Math.max(1.5, panel.height / 2 - 5);
+  const x = Math.max(1.5, panel.width / 2 - panel.mountingInsetX);
+  const y = Math.max(1.5, panel.height / 2 - panel.mountingInsetY);
   return [
     [-x, -y],
     [x, -y],
@@ -116,7 +157,7 @@ interface LegacyDesignerParameters extends Partial<DesignerParameters> {
   panelEnabled?: boolean;
   panelMaterialId?: string;
   panelThickness?: number;
-  panelMountingType?: "screw" | "magnet" | "slide";
+  panelMountingType?: "screw" | "magnet" | "snap" | "slide";
   panelFace?: unknown;
   panelOffsetU?: number;
   panelOffsetV?: number;
@@ -179,8 +220,23 @@ export function normalizeDesignerParameters(value: unknown): DesignerParameters 
         width: Math.max(6, finiteOr(raw.width, defaultWidth)),
         height: Math.max(6, finiteOr(raw.height, defaultHeight)),
         thickness: Math.max(0.5, finiteOr(raw.thickness, 2)),
+        insetDepth: Math.max(0, finiteOr(raw.insetDepth, 0)),
+        cornerRadius: Math.max(0, finiteOr(raw.cornerRadius, 3.2)),
+        borderWidth: Math.max(0.8, finiteOr(raw.borderWidth, 2)),
+        mountingInsetX: Math.max(2, finiteOr(raw.mountingInsetX, 5)),
+        mountingInsetY: Math.max(2, finiteOr(raw.mountingInsetY, 5)),
+        screwHeadRecessEnabled: raw.screwHeadRecessEnabled === true,
+        screwHeadRecessDepth: Math.max(
+          0.1,
+          finiteOr(
+            raw.screwHeadRecessDepth,
+            DEFAULT_SCREW_HEAD_RECESS_DEPTH,
+          ),
+        ),
         mountingType:
-          raw.mountingType === "magnet" || raw.mountingType === "slide"
+          raw.mountingType === "magnet" ||
+          raw.mountingType === "snap" ||
+          raw.mountingType === "slide"
             ? raw.mountingType
             : "screw",
         materialId:
@@ -199,8 +255,16 @@ export function normalizeDesignerParameters(value: unknown): DesignerParameters 
         offsetU: finiteOr(candidate.panelOffsetU, 0),
         offsetV: finiteOr(candidate.panelOffsetV, 0),
         thickness: finiteOr(candidate.panelThickness, 2),
+        insetDepth: 0,
+        cornerRadius: 3.2,
+        borderWidth: 2,
+        mountingInsetX: 5,
+        mountingInsetY: 5,
+        screwHeadRecessEnabled: false,
+        screwHeadRecessDepth: DEFAULT_SCREW_HEAD_RECESS_DEPTH,
         mountingType:
           candidate.panelMountingType === "magnet" ||
+          candidate.panelMountingType === "snap" ||
           candidate.panelMountingType === "slide"
             ? candidate.panelMountingType
             : "screw",
@@ -321,12 +385,139 @@ export function normalizeDesignerParameters(value: unknown): DesignerParameters 
     antennaPlacements = [];
   }
 
+  const customComponents: CustomComponentPlacement[] = Array.isArray(
+    candidate.customComponents,
+  )
+    ? candidate.customComponents.map((component, index) => {
+        const raw =
+          component && typeof component === "object"
+            ? (component as Partial<CustomComponentPlacement>)
+            : {};
+        const shape =
+          raw.shape === "cylinder" || raw.shape === "model" ? raw.shape : "box";
+        return {
+          id:
+            typeof raw.id === "string" && raw.id
+              ? raw.id
+              : `custom-${index + 1}`,
+          name:
+            typeof raw.name === "string" && raw.name
+              ? raw.name
+              : `自定义组件 ${index + 1}`,
+          shape,
+          width: Math.max(0.5, finiteOr(raw.width, 12)),
+          height: Math.max(0.5, finiteOr(raw.height, 8)),
+          depth: Math.max(0.5, finiteOr(raw.depth, shape === "cylinder" ? 12 : 10)),
+          positionX: finiteOr(raw.positionX, 0),
+          positionY: finiteOr(
+            raw.positionY,
+            dimensionSource.bottomThickness +
+              dimensionSource.standoffHeight +
+              dimensionSource.pcbThickness +
+              4,
+          ),
+          positionZ: finiteOr(raw.positionZ, 0),
+          rotationX: finiteOr(raw.rotationX, 0),
+          rotationY: finiteOr(raw.rotationY, 0),
+          rotationZ: finiteOr(raw.rotationZ, 0),
+          color:
+            typeof raw.color === "string" && /^#[0-9a-f]{6}$/i.test(raw.color)
+              ? raw.color
+              : "#4f7f6a",
+          sourceName:
+            typeof raw.sourceName === "string" && raw.sourceName
+              ? raw.sourceName
+              : null,
+        };
+      })
+    : [];
+
+  const pcbReferences: PcbReferencePlacement[] = Array.isArray(
+    candidate.pcbReferences,
+  )
+    ? candidate.pcbReferences.flatMap((placement, index) => {
+        if (!placement || typeof placement !== "object") return [];
+        const raw = placement as Partial<PcbReferencePlacement>;
+        const reference = raw.reference;
+        if (
+          !reference ||
+          typeof reference !== "object" ||
+          typeof reference.sourceName !== "string" ||
+          !reference.bounds
+        ) {
+          return [];
+        }
+        return [{
+          id:
+            typeof raw.id === "string" && raw.id ? raw.id : `pcb-${index + 1}`,
+          reference,
+          offsetX: finiteOr(raw.offsetX, 0),
+          offsetZ: finiteOr(raw.offsetZ, 0),
+          elevation: Math.max(0, finiteOr(raw.elevation, 0)),
+          rotation: isPlacementRotation(raw.rotation) ? raw.rotation : 0,
+        }];
+      })
+    : [];
+
+  const batteryCompartments: BatteryCompartmentPlacement[] = Array.isArray(
+    candidate.batteryCompartments,
+  )
+    ? candidate.batteryCompartments.map((compartment, index) => {
+        const raw =
+          compartment && typeof compartment === "object"
+            ? (compartment as Partial<BatteryCompartmentPlacement>)
+            : {};
+        const fallback = createBatteryCompartment(
+          typeof raw.id === "string" && raw.id
+            ? raw.id
+            : `battery-${index + 1}`,
+          raw.preset === "aaa" ||
+            raw.preset === "aa" ||
+            raw.preset === "18650" ||
+            raw.preset === "lipo" ||
+            raw.preset === "custom"
+            ? raw.preset
+            : "aa",
+        );
+        return constrainBatteryCompartment({
+          ...fallback,
+          ...raw,
+          id: fallback.id,
+          preset: fallback.preset,
+          cellCount: finiteOr(raw.cellCount, fallback.cellCount),
+          width: finiteOr(raw.width, fallback.width),
+          depth: finiteOr(raw.depth, fallback.depth),
+          height: finiteOr(raw.height, fallback.height),
+          wallThickness: finiteOr(raw.wallThickness, fallback.wallThickness),
+          clearance: finiteOr(raw.clearance, fallback.clearance),
+          offsetX: finiteOr(raw.offsetX, 0),
+          offsetZ: finiteOr(raw.offsetZ, 0),
+          rotation: isPlacementRotation(raw.rotation) ? raw.rotation : 0,
+        });
+      })
+    : [];
+
   const normalized = {
     ...DEFAULT_PARAMETERS,
     ...candidate,
     panelPlacements,
     connectorPlacements,
     antennaPlacements,
+    customComponents,
+    batteryCompartments,
+    pcbReferences,
+    closureType: isClosureType(candidate.closureType)
+      ? candidate.closureType
+      : DEFAULT_PARAMETERS.closureType,
+    closureScrewHeadRecessEnabled:
+      candidate.closureScrewHeadRecessEnabled === true,
+    closureScrewHeadRecessDepth: Math.max(
+      0.1,
+      finiteOr(
+        candidate.closureScrewHeadRecessDepth,
+        DEFAULT_SCREW_HEAD_RECESS_DEPTH,
+      ),
+    ),
   } as DesignerParameters & Record<string, unknown>;
   for (const key of [
     "typeCPortEnabled",
@@ -401,7 +592,10 @@ export function validateDesign(
     });
   }
 
-  if (parameters.closureType === "snap" && !material.supportsSnapFit) {
+  if (
+    (parameters.closureType === "snap" || parameters.closureType === "latch") &&
+    !material.supportsSnapFit
+  ) {
     issues.push({
       id: "snap-material",
       level: "warning",
@@ -459,6 +653,15 @@ export function validateDesign(
         level: "error",
         title: `面板 ${index + 1} 厚度不足`,
         detail: `${panelMaterial.shortName} 建议至少 ${panelMaterial.minWall.toFixed(1)} mm`,
+        part: "panel",
+      });
+    }
+    if (panel.mountingType === "snap" && !panelMaterial.supportsSnapFit) {
+      issues.push({
+        id: `panel-snap-material-${panel.id}`,
+        level: "warning",
+        title: `面板 ${index + 1} 材料不适合弹性卡扣`,
+        detail: `${panelMaterial.shortName} 缺少反复弯曲能力，建议改用 PETG/PA 或磁吸固定`,
         part: "panel",
       });
     }
@@ -779,14 +982,89 @@ export function validateDesign(
     }
   }
 
-  if (pcbReference && pcbReference.unsupportedOutlineElements > 0) {
-    issues.push({
-      id: "pcb-outline-partial",
-      level: "warning",
-      title: "PCB 板框包含未支持图元",
-      detail: `${pcbReference.unsupportedOutlineElements} 段仅计入已识别边界，请核对外形尺寸`,
-      part: "pcb",
-    });
+  const referencePlacements =
+    parameters.pcbReferences.length > 0
+      ? parameters.pcbReferences
+      : pcbReference
+        ? [{
+            id: "pcb-legacy",
+            reference: pcbReference,
+            offsetX: 0,
+            offsetZ: 0,
+            elevation: 0,
+            rotation: 0 as const,
+          }]
+        : [];
+  for (const placement of referencePlacements) {
+    const reference = placement.reference;
+    if (reference.unsupportedOutlineElements > 0) {
+      issues.push({
+        id: `pcb-outline-partial-${placement.id}`,
+        level: "warning",
+        title: "PCB 板框包含未支持图元",
+        detail: `${reference.unsupportedOutlineElements} 段仅计入已识别边界，请核对外形尺寸`,
+        part: "pcb",
+      });
+    }
+    const rawLength = reference.bounds.maxX - reference.bounds.minX;
+    const rawWidth = reference.bounds.maxY - reference.bounds.minY;
+    const quarterTurn = placement.rotation === 90 || placement.rotation === 270;
+    const length = quarterTurn ? rawWidth : rawLength;
+    const width = quarterTurn ? rawLength : rawWidth;
+    if (
+      Math.abs(placement.offsetX) + length / 2 > dimensions.insideLength / 2 ||
+      Math.abs(placement.offsetZ) + width / 2 > dimensions.insideWidth / 2
+    ) {
+      issues.push({
+        id: `pcb-outside-${placement.id}`,
+        level: "error",
+        title: "PCB 超出壳体内部",
+        detail: "调整该 PCB 的 X/Z 偏移、旋转或增大壳体尺寸",
+        part: "pcb",
+      });
+    }
+  }
+
+  for (const component of parameters.customComponents) {
+    if (
+      Math.abs(component.positionX) + component.width / 2 >
+        dimensions.insideLength / 2 ||
+      Math.abs(component.positionZ) + component.depth / 2 >
+        dimensions.insideWidth / 2 ||
+      component.positionY - component.height / 2 < parameters.bottomThickness ||
+      component.positionY + component.height / 2 > parameters.baseHeight
+    ) {
+      issues.push({
+        id: `custom-outside-${component.id}`,
+        level: "warning",
+        title: "自定义组件超出壳体内部",
+        detail: "调整组件位置或壳体尺寸，并复核旋转后的实际包络",
+        part: "custom",
+      });
+    }
+  }
+
+  for (const compartment of parameters.batteryCompartments) {
+    const quarterTurn =
+      compartment.rotation === 90 || compartment.rotation === 270;
+    const width = quarterTurn ? compartment.depth : compartment.width;
+    const depth = quarterTurn ? compartment.width : compartment.depth;
+    const preset = getBatteryPreset(compartment.preset);
+    if (
+      Math.abs(compartment.offsetX) + width / 2 > dimensions.insideLength / 2 ||
+      Math.abs(compartment.offsetZ) + depth / 2 > dimensions.insideWidth / 2 ||
+      parameters.bottomThickness +
+        Math.max(compartment.height, preset.cellHeight + 0.2) >
+        parameters.baseHeight
+    ) {
+      issues.push({
+        id: `battery-outside-${compartment.id}`,
+        level: "error",
+        title: "电池仓超出壳体内部",
+        detail: "调整电池仓偏移、旋转、槽位数量或增大壳体尺寸",
+        part: "battery",
+      });
+    }
   }
 
   if (issues.length === 0) {
@@ -822,6 +1100,7 @@ export function clampParameter(
     cornerRadius: [0.5, 30],
     standoffHeight: [0, 30],
     lidThickness: [0.8, 8],
+    closureScrewHeadRecessDepth: [0.1, 7.6],
     ventRows: [1, 12],
     ventColumns: [1, 16],
     ventHoleSize: [1.5, 12],

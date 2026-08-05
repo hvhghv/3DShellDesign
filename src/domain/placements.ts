@@ -12,6 +12,10 @@ import {
   getAntennaDefinition,
   getConnectorDefinition,
 } from "../libraries/components";
+import {
+  clampScrewHeadRecessDepth,
+  DEFAULT_SCREW_HEAD_RECESS_DEPTH,
+} from "./screwRecess";
 
 export const ENCLOSURE_FACE_OPTIONS: ReadonlyArray<{
   id: EnclosureFace;
@@ -209,7 +213,72 @@ export function constrainPanelPlacement(
     width: roundPlacementMeasurement(placement.width),
     height: roundPlacementMeasurement(placement.height),
     thickness: roundPlacementMeasurement(placement.thickness),
+    insetDepth: roundPlacementMeasurement(
+      Math.min(getPanelMaxInsetDepth(placement, parameters), placement.insetDepth),
+    ),
+    cornerRadius: roundPlacementMeasurement(
+      Math.min(
+        Math.max(0, placement.cornerRadius),
+        Math.max(0, Math.min(placement.width, placement.height) / 2 - 0.2),
+      ),
+    ),
+    borderWidth: roundPlacementMeasurement(
+      Math.min(
+        Math.max(0.8, placement.borderWidth),
+        Math.max(0.8, Math.min(placement.width, placement.height) / 2 - 2),
+      ),
+    ),
+    mountingInsetX: roundPlacementMeasurement(
+      Math.min(
+        Math.max(2, placement.mountingInsetX),
+        Math.max(2, placement.width / 2 - 2),
+      ),
+    ),
+    mountingInsetY: roundPlacementMeasurement(
+      Math.min(
+        Math.max(2, placement.mountingInsetY),
+        Math.max(2, placement.height / 2 - 2),
+      ),
+    ),
+    screwHeadRecessEnabled: placement.screwHeadRecessEnabled === true,
+    screwHeadRecessDepth: roundPlacementMeasurement(
+      clampScrewHeadRecessDepth(
+        placement.thickness,
+        placement.screwHeadRecessDepth,
+      ),
+    ),
   };
+}
+
+export function getPanelOpeningSize(
+  panel: Pick<PanelPlacement, "width" | "height" | "borderWidth">,
+): readonly [number, number] {
+  return [
+    Math.max(2, panel.width - panel.borderWidth * 2),
+    Math.max(2, panel.height - panel.borderWidth * 2),
+  ];
+}
+
+export function getPanelInnerCornerRadius(
+  panel: Pick<PanelPlacement, "cornerRadius" | "borderWidth">,
+): number {
+  return Math.max(0.4, panel.cornerRadius - panel.borderWidth);
+}
+
+export function getPanelMaxInsetDepth(
+  panel: Pick<PanelPlacement, "face" | "thickness">,
+  parameters: Pick<
+    DesignerParameters,
+    "wallThickness" | "bottomThickness" | "lidThickness"
+  >,
+): number {
+  const surfaceThickness =
+    panel.face === "top"
+      ? parameters.lidThickness
+      : panel.face === "bottom"
+        ? parameters.bottomThickness
+        : parameters.wallThickness;
+  return Math.max(0, Math.min(panel.thickness, surfaceThickness - 0.4));
 }
 
 export function constrainConnectorPlacement(
@@ -266,10 +335,21 @@ export function constrainSurfacePlacements(
   parameters: DesignerParameters,
   dimensions: EnclosureDimensions,
 ): DesignerParameters {
-  const panelPlacements = parameters.panelPlacements.map((placement) =>
-    constrainPanelPlacement(placement, parameters, dimensions),
+  const constrainedParameters = {
+    ...parameters,
+    closureScrewHeadRecessEnabled:
+      parameters.closureScrewHeadRecessEnabled === true,
+    closureScrewHeadRecessDepth: roundPlacementMeasurement(
+      clampScrewHeadRecessDepth(
+        parameters.lidThickness,
+        parameters.closureScrewHeadRecessDepth,
+      ),
+    ),
+  };
+  const panelPlacements = constrainedParameters.panelPlacements.map((placement) =>
+    constrainPanelPlacement(placement, constrainedParameters, dimensions),
   );
-  const withPanels = { ...parameters, panelPlacements };
+  const withPanels = { ...constrainedParameters, panelPlacements };
   return {
     ...withPanels,
     connectorPlacements: withPanels.connectorPlacements.map((placement) =>
@@ -378,6 +458,13 @@ export function createPanelPlacement(
     width,
     height,
     thickness: 2,
+    insetDepth: 0,
+    cornerRadius: 3.2,
+    borderWidth: 2,
+    mountingInsetX: 5,
+    mountingInsetY: 5,
+    screwHeadRecessEnabled: false,
+    screwHeadRecessDepth: DEFAULT_SCREW_HEAD_RECESS_DEPTH,
     mountingType: "screw",
     materialId: "acrylic-clear",
   };

@@ -1,11 +1,18 @@
-export type ClosureType = "screw" | "magnet" | "snap" | "slide" | "hinge";
+export type ClosureType =
+  | "screw"
+  | "magnet"
+  | "snap"
+  | "latch"
+  | "slide"
+  | "hinge"
+  | "pin";
 export type MagnetSupportType =
   | "corner-shelf"
   | "wall-bracket"
   | "perimeter-flange"
   | "floor-column";
 export type VentPattern = "none" | "circle" | "slot" | "honeycomb";
-export type PanelMountingType = "screw" | "magnet" | "slide";
+export type PanelMountingType = "screw" | "magnet" | "snap" | "slide";
 export type EnclosureFace = "top" | "bottom" | "front" | "back" | "left" | "right";
 export type ConnectorSurface = EnclosureFace | "panel";
 export type PlacementRotation = 0 | 90 | 180 | 270;
@@ -41,8 +48,50 @@ export interface PanelPlacement {
   width: number;
   height: number;
   thickness: number;
+  insetDepth: number;
+  cornerRadius: number;
+  borderWidth: number;
+  mountingInsetX: number;
+  mountingInsetY: number;
+  screwHeadRecessEnabled: boolean;
+  screwHeadRecessDepth: number;
   mountingType: PanelMountingType;
   materialId: string;
+}
+
+export type CustomComponentShape = "box" | "cylinder" | "model";
+
+export interface CustomComponentPlacement {
+  id: string;
+  name: string;
+  shape: CustomComponentShape;
+  width: number;
+  height: number;
+  depth: number;
+  positionX: number;
+  positionY: number;
+  positionZ: number;
+  rotationX: number;
+  rotationY: number;
+  rotationZ: number;
+  color: string;
+  sourceName: string | null;
+}
+
+export type BatteryPreset = "aaa" | "aa" | "18650" | "lipo" | "custom";
+
+export interface BatteryCompartmentPlacement {
+  id: string;
+  preset: BatteryPreset;
+  cellCount: number;
+  width: number;
+  depth: number;
+  height: number;
+  wallThickness: number;
+  clearance: number;
+  offsetX: number;
+  offsetZ: number;
+  rotation: PlacementRotation;
 }
 
 export type InspectorTab = "dimensions" | "structure" | "materials";
@@ -54,7 +103,9 @@ export type SelectablePart =
   | "lid"
   | "panel"
   | "connector"
-  | "antenna";
+  | "antenna"
+  | "custom"
+  | "battery";
 
 export interface DesignerParameters {
   enclosureTemplateId: string;
@@ -75,7 +126,12 @@ export interface DesignerParameters {
   panelPlacements: PanelPlacement[];
   connectorPlacements: ConnectorPlacement[];
   antennaPlacements: AntennaPlacement[];
+  customComponents: CustomComponentPlacement[];
+  batteryCompartments: BatteryCompartmentPlacement[];
+  pcbReferences: PcbReferencePlacement[];
   closureFastenerId: string;
+  closureScrewHeadRecessEnabled: boolean;
+  closureScrewHeadRecessDepth: number;
   ventPattern: VentPattern;
   ventRows: number;
   ventColumns: number;
@@ -127,6 +183,15 @@ export interface PcbReference {
   drillHoleCount?: number;
   overallHeight?: number;
   triangleCount?: number;
+}
+
+export interface PcbReferencePlacement {
+  id: string;
+  reference: PcbReference;
+  offsetX: number;
+  offsetZ: number;
+  elevation: number;
+  rotation: PlacementRotation;
 }
 
 export interface StepPreviewMesh {

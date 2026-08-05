@@ -9,6 +9,8 @@ export interface CachedProjectRecord {
   id: typeof CURRENT_PROJECT_ID;
   snapshot: ProjectSnapshot;
   stepPreview: StepPreview | null;
+  pcbPreviews?: Record<string, StepPreview>;
+  customComponentPreviews?: Record<string, StepPreview>;
 }
 
 function openDatabase(): Promise<IDBDatabase | null> {
@@ -96,8 +98,16 @@ async function drainProjectCache(): Promise<void> {
 export function queueProjectCache(
   snapshot: ProjectSnapshot,
   stepPreview: StepPreview | null,
+  pcbPreviews: Record<string, StepPreview> = {},
+  customComponentPreviews: Record<string, StepPreview> = {},
 ): Promise<void> {
-  pendingRecord = { id: CURRENT_PROJECT_ID, snapshot, stepPreview };
+  pendingRecord = {
+    id: CURRENT_PROJECT_ID,
+    snapshot,
+    stepPreview,
+    pcbPreviews,
+    customComponentPreviews,
+  };
   const completion = new Promise<void>((resolve, reject) => {
     pendingWaiters.push({ resolve, reject });
   });

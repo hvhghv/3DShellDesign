@@ -177,7 +177,7 @@ export const MATERIALS: MaterialProfile[] = [
 ];
 
 export const SHELL_MATERIALS = MATERIALS.filter((material) => !material.panelOnly);
-export const PANEL_MATERIALS = MATERIALS.filter((material) => material.panelOnly);
+export const PANEL_MATERIALS = MATERIALS;
 
 export function getMaterial(id: string): MaterialProfile {
   return MATERIALS.find((material) => material.id === id) ?? MATERIALS[1];

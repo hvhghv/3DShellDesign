@@ -36,7 +36,7 @@ export interface ConnectorDefinition {
   };
   terminalSpec?: {
     pitch: number;
-    positions: 2 | 4 | 5;
+    positions: number;
   };
 }
 
@@ -196,6 +196,70 @@ export const TERMINAL_CONNECTOR_DEFINITIONS: ConnectorDefinition[] =
     ),
   );
 
+interface FpcFamily {
+  id: "05" | "10";
+  pitch: number;
+  height: number;
+  depth: number;
+  housingExtra: number;
+}
+
+const FPC_FAMILIES: readonly FpcFamily[] = [
+  { id: "05", pitch: 0.5, height: 2.2, depth: 5.5, housingExtra: 4 },
+  { id: "10", pitch: 1, height: 3, depth: 6.5, housingExtra: 4.5 },
+];
+
+const FPC_POSITIONS = Array.from({ length: 36 }, (_, index) => index + 5);
+
+function createFpcDefinition(
+  family: FpcFamily,
+  positions: number,
+): ConnectorDefinition {
+  const pitchLabel = family.pitch.toFixed(1);
+  const width = family.pitch * (positions - 1) + family.housingExtra;
+  return {
+    id: `fpc-${positions}p-${family.id}`,
+    name: `${pitchLabel} mm ${positions}P FPC 端子`,
+    category: "fpc",
+    visualGeometry: {
+      shape: "rounded-rectangle",
+      width,
+      height: family.height,
+      depth: family.depth,
+      color: "#d7c7a4",
+    },
+    panelCutout: {
+      shape: "rounded-rectangle",
+      width: width + 1.5,
+      height: family.height + 1.8,
+      cornerRadius: 0.8,
+    },
+    boardAlignment: { heightAboveBoardCenter: family.height / 2 + 0.4 },
+    keepoutVolumes: [
+      {
+        role: "wiring",
+        width: width + 4.5,
+        height: family.height + 5.8,
+        depth: 35,
+      },
+    ],
+    toleranceRules: {
+      xyClearance: 0.3,
+      description: `${pitchLabel} mm ${positions}P FPC 软排线穿出包络，不代替锁扣操作校核`,
+    },
+    metadata: {
+      bomName: `${pitchLabel} mm ${positions}-pin FPC connector`,
+      notes: "FPC 端子高度、锁扣方向和补强板厚度需按具体器件图纸复核。",
+    },
+    terminalSpec: { pitch: family.pitch, positions },
+  };
+}
+
+export const FPC_CONNECTOR_DEFINITIONS: ConnectorDefinition[] =
+  FPC_FAMILIES.flatMap((family) =>
+    FPC_POSITIONS.map((positions) => createFpcDefinition(family, positions)),
+  );
+
 export const CONNECTOR_DEFINITIONS: ConnectorDefinition[] = [
   {
     id: "usb-c-receptacle",
@@ -253,17 +317,7 @@ export const CONNECTOR_DEFINITIONS: ConnectorDefinition[] = [
     metadata: { bomName: "RJ45 receptacle", notes: "带灯、带磁和屏蔽型号高度不同，需按器件图校核。" },
   },
   ...TERMINAL_CONNECTOR_DEFINITIONS,
-  {
-    id: "fpc-20p-05",
-    name: "0.5 mm 20P FPC 端子",
-    category: "fpc",
-    visualGeometry: { shape: "rounded-rectangle", width: 13.5, height: 2.2, depth: 5.5, color: "#d7c7a4" },
-    panelCutout: { shape: "rounded-rectangle", width: 15, height: 4, cornerRadius: 0.8 },
-    boardAlignment: { heightAboveBoardCenter: 1.5 },
-    keepoutVolumes: [{ role: "wiring", width: 18, height: 8, depth: 35 }],
-    toleranceRules: { xyClearance: 0.3, description: "仅为软排线穿出包络，不代替锁扣操作校核" },
-    metadata: { bomName: "0.5 mm 20-pin FPC connector", notes: "FPC 通常不直接贴壳，建议优先使用独立排线槽。" },
-  },
+  ...FPC_CONNECTOR_DEFINITIONS,
 ];
 
 export const ANTENNA_DEFINITIONS: AntennaDefinition[] = [

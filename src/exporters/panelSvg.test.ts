@@ -23,6 +23,41 @@ describe("panel SVG exporter", () => {
     ).toThrow("没有可导出的面板");
   });
 
+  it("marks enabled screw head recesses as depth-qualified pockets", () => {
+    const svg = createPanelSvg({
+      ...DEFAULT_PARAMETERS,
+      panelPlacements: DEFAULT_PARAMETERS.panelPlacements.map((panel) => ({
+        ...panel,
+        screwHeadRecessEnabled: true,
+        screwHeadRecessDepth: 1.2,
+      })),
+    });
+
+    expect(svg.match(/class="pocket"/g)).toHaveLength(4);
+    expect(svg.match(/data-depth="1.2"/g)).toHaveLength(4);
+    expect(svg.match(/<circle /g)).toHaveLength(8);
+  });
+
+  it("distinguishes magnetic back pockets and integrated snap posts", () => {
+    const magneticSvg = createPanelSvg({
+      ...DEFAULT_PARAMETERS,
+      panelPlacements: DEFAULT_PARAMETERS.panelPlacements.map((panel) => ({
+        ...panel,
+        mountingType: "magnet",
+      })),
+    });
+    expect(magneticSvg.match(/class="back-pocket"/g)).toHaveLength(4);
+
+    const snapSvg = createPanelSvg({
+      ...DEFAULT_PARAMETERS,
+      panelPlacements: DEFAULT_PARAMETERS.panelPlacements.map((panel) => ({
+        ...panel,
+        mountingType: "snap",
+      })),
+    });
+    expect(snapSvg.match(/class="snap-post"/g)).toHaveLength(4);
+  });
+
   it("includes connector cutouts mounted to the panel", () => {
     const connector = DEFAULT_PARAMETERS.connectorPlacements[0];
     const svg = createPanelSvg({

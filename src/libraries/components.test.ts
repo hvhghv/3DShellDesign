@@ -3,6 +3,7 @@ import {
   ANTENNA_DEFINITIONS,
   CONNECTOR_DEFINITIONS,
   FASTENER_DEFINITIONS,
+  FPC_CONNECTOR_DEFINITIONS,
   TERMINAL_CONNECTOR_DEFINITIONS,
   getAntennaDefinition,
   getConnectorDefinition,
@@ -46,6 +47,30 @@ describe("component library", () => {
         );
       }
     }
+  });
+
+  it("provides 5P through 40P FPC connectors at common pitches", () => {
+    expect(FPC_CONNECTOR_DEFINITIONS).toHaveLength(72);
+    for (const pitch of [0.5, 1]) {
+      for (let positions = 5; positions <= 40; positions += 1) {
+        expect(
+          FPC_CONNECTOR_DEFINITIONS.find(
+            (definition) =>
+              definition.terminalSpec?.pitch === pitch &&
+              definition.terminalSpec.positions === positions,
+          ),
+        ).toEqual(
+          expect.objectContaining({
+            category: "fpc",
+            panelCutout: expect.objectContaining({
+              width: expect.any(Number),
+              height: expect.any(Number),
+            }),
+          }),
+        );
+      }
+    }
+    expect(getConnectorDefinition("fpc-20p-05").panelCutout.width).toBe(15);
   });
 
   it("provides screw, heat-set insert and hex nut closure recipes", () => {

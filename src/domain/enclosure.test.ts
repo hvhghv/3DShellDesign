@@ -174,6 +174,67 @@ describe("enclosure domain", () => {
     expect(panel.height).toBeCloseTo(12.48, 3);
   });
 
+  it("keeps screw head recesses opt-in when loading older projects", () => {
+    const legacyPanel = {
+      ...DEFAULT_PARAMETERS.panelPlacements[0],
+    } as Record<string, unknown>;
+    delete legacyPanel.screwHeadRecessEnabled;
+    delete legacyPanel.screwHeadRecessDepth;
+    const legacy = { ...DEFAULT_PARAMETERS } as Record<string, unknown>;
+    delete legacy.closureScrewHeadRecessEnabled;
+    delete legacy.closureScrewHeadRecessDepth;
+
+    const parameters = normalizeDesignerParameters({
+      ...legacy,
+      panelPlacements: [legacyPanel],
+    });
+
+    expect(parameters.closureScrewHeadRecessEnabled).toBe(false);
+    expect(parameters.closureScrewHeadRecessDepth).toBe(1.2);
+    expect(parameters.panelPlacements[0]).toEqual(
+      expect.objectContaining({
+        screwHeadRecessEnabled: false,
+        screwHeadRecessDepth: 1.2,
+      }),
+    );
+  });
+
+  it("loads quick-release closures and panel snap mounts", () => {
+    const parameters = normalizeDesignerParameters({
+      ...DEFAULT_PARAMETERS,
+      closureType: "latch",
+      panelPlacements: DEFAULT_PARAMETERS.panelPlacements.map((panel) => ({
+        ...panel,
+        mountingType: "snap",
+        materialId: "petg",
+      })),
+    });
+
+    expect(parameters.closureType).toBe("latch");
+    expect(parameters.panelPlacements[0].mountingType).toBe("snap");
+    expect(
+      validateDesign(parameters).find((issue) =>
+        issue.id.startsWith("panel-snap-material"),
+      ),
+    ).toBeUndefined();
+  });
+
+  it("warns when a sheet panel uses an integrated snap post", () => {
+    const issues = validateDesign({
+      ...DEFAULT_PARAMETERS,
+      panelPlacements: DEFAULT_PARAMETERS.panelPlacements.map((panel) => ({
+        ...panel,
+        mountingType: "snap",
+      })),
+    });
+
+    expect(issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: "panel-snap-material-panel-1" }),
+      ]),
+    );
+  });
+
   it("repairs out-of-bounds panel offsets from cached projects", () => {
     const parameters = normalizeDesignerParameters({
       ...DEFAULT_PARAMETERS,

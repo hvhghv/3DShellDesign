@@ -1,6 +1,16 @@
-import { getPanelMountingPoints } from "../domain/enclosure";
+import {
+  getPanelMountingPoints,
+  PANEL_SCREW_CLEARANCE_RADIUS,
+} from "../domain/enclosure";
 import { getMaterial } from "../domain/materials";
 import type { DesignerParameters } from "../domain/model";
+import { PANEL_SCREW_HEAD_RECESS_RADIUS } from "../domain/screwRecess";
+import {
+  getPanelMagnetPocketDepth,
+  PANEL_MAGNET_RADIUS,
+  PANEL_SNAP_POST_DEPTH,
+  PANEL_SNAP_POST_RADIUS,
+} from "../domain/panelMounting";
 import { getPanelPlacement, getRotatedCutoutSize } from "../domain/placements";
 import {
   getAntennaDefinition,
@@ -28,7 +38,7 @@ export function createPanelSvg(
   if (!panel) throw new Error("当前设计没有可导出的面板");
   const width = panel.width;
   const height = panel.height;
-  const radius = Math.min(3.2, width / 2, height / 2);
+  const radius = Math.min(panel.cornerRadius, width / 2, height / 2);
   const material = getMaterial(panel.materialId);
   const path = [
     `M ${format(radius)} 0`,
@@ -45,9 +55,28 @@ export function createPanelSvg(
   const mountingHoles =
     panel.mountingType === "slide"
       ? []
-      : getPanelMountingPoints(panel).map(([x, y]) => {
-          const radius = panel.mountingType === "screw" ? 1.3 : 2.15;
-          return `  <circle cx="${format(x + width / 2)}" cy="${format(height / 2 - y)}" r="${format(radius)}" fill="none" stroke="#000000" stroke-width="0.1" vector-effect="non-scaling-stroke"/>`;
+      : getPanelMountingPoints(panel).flatMap(([x, y]) => {
+          const centerX = format(x + width / 2);
+          const centerY = format(height / 2 - y);
+          if (panel.mountingType === "magnet") {
+            return [
+              `  <circle class="back-pocket" data-depth="${format(getPanelMagnetPocketDepth(panel.thickness))}" cx="${centerX}" cy="${centerY}" r="${format(PANEL_MAGNET_RADIUS)}" fill="none" stroke="#996515" stroke-width="0.1" stroke-dasharray="0.8 0.5" vector-effect="non-scaling-stroke"/>`,
+            ];
+          }
+          if (panel.mountingType === "snap") {
+            return [
+              `  <circle class="snap-post" data-depth="${format(PANEL_SNAP_POST_DEPTH)}" cx="${centerX}" cy="${centerY}" r="${format(PANEL_SNAP_POST_RADIUS)}" fill="none" stroke="#286746" stroke-width="0.1" stroke-dasharray="0.5 0.4" vector-effect="non-scaling-stroke"/>`,
+            ];
+          }
+          const holes = [
+            `  <circle cx="${centerX}" cy="${centerY}" r="${format(PANEL_SCREW_CLEARANCE_RADIUS)}" fill="none" stroke="#000000" stroke-width="0.1" vector-effect="non-scaling-stroke"/>`,
+          ];
+          if (panel.screwHeadRecessEnabled) {
+            holes.push(
+              `  <circle class="pocket" data-depth="${format(panel.screwHeadRecessDepth)}" cx="${centerX}" cy="${centerY}" r="${format(PANEL_SCREW_HEAD_RECESS_RADIUS)}" fill="none" stroke="#666666" stroke-width="0.1" stroke-dasharray="0.8 0.5" vector-effect="non-scaling-stroke"/>`,
+            );
+          }
+          return holes;
         });
   const connectorCutouts = parameters.connectorPlacements
     .filter(

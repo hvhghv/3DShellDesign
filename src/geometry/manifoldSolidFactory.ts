@@ -3,7 +3,13 @@ import type {
   ManifoldToplevel,
   SimplePolygon,
 } from "manifold-3d";
-import { deriveEnclosureDimensions, getPanelMountingPoints } from "../domain/enclosure";
+import {
+  deriveEnclosureDimensions,
+  getPanelMountingPoints,
+  PANEL_SCREW_CLEARANCE_RADIUS,
+  PANEL_SCREW_PILOT_RADIUS,
+  PANEL_SCREW_TAB_RADIUS,
+} from "../domain/enclosure";
 import type {
   DesignerParameters,
   EnclosureDimensions,
@@ -13,12 +19,30 @@ import type {
 import { getClosurePoints, MAGNET_GEOMETRY } from "../domain/magnetSupport";
 import {
   getPanelPlacement,
+  getPanelInnerCornerRadius,
+  getPanelOpeningSize,
   getRotatedCutoutSize,
   resolveAntennaFace,
   resolveConnectorFace,
 } from "../domain/placements";
-import { getCenteredMountingHoles } from "../domain/pcbReference";
+import { getAssemblyMountingHoles } from "../domain/pcbReference";
 import { getVentPatternPoints } from "../domain/patterns";
+import {
+  getPanelMagnetPocketDepth,
+  getPanelScrewMountingTab,
+  PANEL_MAGNET_RADIUS,
+  PANEL_SNAP_LIP_DEPTH,
+  PANEL_SNAP_LIP_RADIUS,
+  PANEL_SNAP_POST_DEPTH,
+  PANEL_SNAP_POST_RADIUS,
+  PANEL_SNAP_SOCKET_RADIUS,
+} from "../domain/panelMounting";
+import {
+  getClosureScrewHeadRecessDepth,
+  getClosureScrewHeadRecessRadius,
+  getPanelScrewHeadRecessDepth,
+  PANEL_SCREW_HEAD_RECESS_RADIUS,
+} from "../domain/screwRecess";
 import {
   getAntennaDefinition,
   getConnectorDefinition,
@@ -231,6 +255,173 @@ function createFaceCutter(
     );
   }
   return translateAndDispose(cutter, u, v, -thickness);
+}
+
+function createFacePocketCutter(
+  module: ManifoldToplevel,
+  face: Exclude<EnclosureFace, "top">,
+  u: number,
+  v: number,
+  width: number,
+  height: number,
+  radius: number,
+  depth: number,
+  parameters: DesignerParameters,
+  dimensions: EnclosureDimensions,
+): ManifoldSolid {
+  const safeDepth = Math.max(0.1, depth + 0.1);
+  let cutter = extrudePlate(
+    module,
+    width,
+    height,
+    Math.min(radius, width / 2, height / 2),
+    safeDepth,
+  );
+
+  if (face === "front") {
+    cutter = rotateAndDispose(cutter, 90, 0, 0);
+    return translateAndDispose(
+      cutter,
+      u,
+      dimensions.outsideWidth / 2 + 0.05,
+      parameters.baseHeight / 2 + v,
+    );
+  }
+  if (face === "back") {
+    cutter = rotateAndDispose(cutter, -90, 0, 0);
+    return translateAndDispose(
+      cutter,
+      u,
+      -dimensions.outsideWidth / 2 - 0.05,
+      parameters.baseHeight / 2 + v,
+    );
+  }
+  if (face === "right") {
+    cutter = rotateAndDispose(cutter, 90, 0, 0);
+    cutter = rotateAndDispose(cutter, 0, 0, 90);
+    return translateAndDispose(
+      cutter,
+      dimensions.outsideLength / 2 - depth - 0.05,
+      u,
+      parameters.baseHeight / 2 + v,
+    );
+  }
+  if (face === "left") {
+    cutter = rotateAndDispose(cutter, 90, 0, 0);
+    cutter = rotateAndDispose(cutter, 0, 0, -90);
+    return translateAndDispose(
+      cutter,
+      -dimensions.outsideLength / 2 + depth + 0.05,
+      u,
+      parameters.baseHeight / 2 + v,
+    );
+  }
+  return translateAndDispose(cutter, u, v, -0.05);
+}
+
+function createFaceAxialCylinder(
+  module: ManifoldToplevel,
+  face: Exclude<EnclosureFace, "top">,
+  u: number,
+  v: number,
+  radius: number,
+  depth: number,
+  parameters: DesignerParameters,
+  dimensions: EnclosureDimensions,
+): ManifoldSolid {
+  let solid = module.Manifold.cylinder(depth, radius, radius, 32, false);
+  if (face === "front") {
+    solid = rotateAndDispose(solid, 90, 0, 0);
+    return translateAndDispose(
+      solid,
+      u,
+      dimensions.outsideWidth / 2 + 0.05,
+      parameters.baseHeight / 2 + v,
+    );
+  }
+  if (face === "back") {
+    solid = rotateAndDispose(solid, -90, 0, 0);
+    return translateAndDispose(
+      solid,
+      u,
+      -dimensions.outsideWidth / 2 - 0.05,
+      parameters.baseHeight / 2 + v,
+    );
+  }
+  if (face === "right") {
+    solid = rotateAndDispose(solid, 90, 0, 0);
+    solid = rotateAndDispose(solid, 0, 0, 90);
+    return translateAndDispose(
+      solid,
+      dimensions.outsideLength / 2 - depth + 0.05,
+      u,
+      parameters.baseHeight / 2 + v,
+    );
+  }
+  if (face === "left") {
+    solid = rotateAndDispose(solid, 90, 0, 0);
+    solid = rotateAndDispose(solid, 0, 0, -90);
+    return translateAndDispose(
+      solid,
+      -dimensions.outsideLength / 2 + depth - 0.05,
+      u,
+      parameters.baseHeight / 2 + v,
+    );
+  }
+  return translateAndDispose(solid, u, v, -0.05);
+}
+
+function createFaceAxialBox(
+  module: ManifoldToplevel,
+  face: Exclude<EnclosureFace, "top">,
+  u: number,
+  v: number,
+  width: number,
+  height: number,
+  depth: number,
+  parameters: DesignerParameters,
+  dimensions: EnclosureDimensions,
+): ManifoldSolid {
+  let solid = module.Manifold.cube([width, height, depth], true);
+  if (face === "front") {
+    solid = rotateAndDispose(solid, 90, 0, 0);
+    return translateAndDispose(
+      solid,
+      u,
+      dimensions.outsideWidth / 2 - depth / 2 + 0.05,
+      parameters.baseHeight / 2 + v,
+    );
+  }
+  if (face === "back") {
+    solid = rotateAndDispose(solid, -90, 0, 0);
+    return translateAndDispose(
+      solid,
+      u,
+      -dimensions.outsideWidth / 2 + depth / 2 - 0.05,
+      parameters.baseHeight / 2 + v,
+    );
+  }
+  if (face === "right") {
+    solid = rotateAndDispose(solid, 90, 0, 0);
+    solid = rotateAndDispose(solid, 0, 0, 90);
+    return translateAndDispose(
+      solid,
+      dimensions.outsideLength / 2 - depth / 2 + 0.05,
+      u,
+      parameters.baseHeight / 2 + v,
+    );
+  }
+  if (face === "left") {
+    solid = rotateAndDispose(solid, 90, 0, 0);
+    solid = rotateAndDispose(solid, 0, 0, -90);
+    return translateAndDispose(
+      solid,
+      -dimensions.outsideLength / 2 + depth / 2 - 0.05,
+      u,
+      parameters.baseHeight / 2 + v,
+    );
+  }
+  return translateAndDispose(solid, u, v, depth / 2 - 0.05);
 }
 
 function createTopCutter(
@@ -464,6 +655,24 @@ function applyBasePanelFeatures(
   for (const panel of parameters.panelPlacements) {
     if (panel.face === "top") continue;
     const face = panel.face;
+    const [openingWidth, openingHeight] = getPanelOpeningSize(panel);
+    if (panel.insetDepth > 0) {
+      result = subtractAndDispose(
+        result,
+        createFacePocketCutter(
+          module,
+          face,
+          panel.offsetU,
+          panel.offsetV,
+          panel.width + 0.3,
+          panel.height + 0.3,
+          panel.cornerRadius + 0.15,
+          panel.insetDepth,
+          parameters,
+          dimensions,
+        ),
+      );
+    }
     result = subtractAndDispose(
       result,
       createFaceCutter(
@@ -471,9 +680,9 @@ function applyBasePanelFeatures(
         face,
         panel.offsetU,
         panel.offsetV,
-        panel.width - 4,
-        panel.height - 4,
-        3.5,
+        openingWidth,
+        openingHeight,
+        getPanelInnerCornerRadius(panel),
         parameters,
         dimensions,
       ),
@@ -495,22 +704,83 @@ function applyBasePanelFeatures(
         );
       }
     } else {
-      const radius = panel.mountingType === "screw" ? 1.3 : 2.15;
       for (const [pointU, pointV] of getPanelMountingPoints(panel)) {
-        result = subtractAndDispose(
-          result,
-          createFaceCutter(
-            module,
-            face,
-            panel.offsetU + pointU,
-            panel.offsetV + pointV,
-            radius * 2,
-            radius * 2,
-            radius,
-            parameters,
-            dimensions,
-          ),
-        );
+        if (panel.mountingType === "screw") {
+          const surfaceThickness =
+            face === "bottom"
+              ? parameters.bottomThickness
+              : parameters.wallThickness;
+          const tabDepth = surfaceThickness + 0.1;
+          const bridge = getPanelScrewMountingTab(
+            panel,
+            pointU,
+            pointV,
+            PANEL_SCREW_TAB_RADIUS,
+          );
+          result = unionAndDispose(
+            result,
+            createFaceAxialBox(
+              module,
+              face,
+              panel.offsetU + bridge.centerU,
+              panel.offsetV + bridge.centerV,
+              bridge.width,
+              bridge.height,
+              tabDepth,
+              parameters,
+              dimensions,
+            ),
+          );
+          result = subtractAndDispose(
+            result,
+            createFaceAxialCylinder(
+              module,
+              face,
+              panel.offsetU + pointU,
+              panel.offsetV + pointV,
+              PANEL_SCREW_PILOT_RADIUS,
+              tabDepth + 0.2,
+              parameters,
+              dimensions,
+            ),
+          );
+        } else if (panel.mountingType === "magnet") {
+          const surfaceThickness =
+            face === "bottom"
+              ? parameters.bottomThickness
+              : parameters.wallThickness;
+          const pocketDepth = getPanelMagnetPocketDepth(surfaceThickness);
+          result = subtractAndDispose(
+            result,
+            createFacePocketCutter(
+              module,
+              face,
+              panel.offsetU + pointU,
+              panel.offsetV + pointV,
+              PANEL_MAGNET_RADIUS * 2,
+              PANEL_MAGNET_RADIUS * 2,
+              PANEL_MAGNET_RADIUS,
+              pocketDepth,
+              parameters,
+              dimensions,
+            ),
+          );
+        } else {
+          result = subtractAndDispose(
+            result,
+            createFaceCutter(
+              module,
+              face,
+              panel.offsetU + pointU,
+              panel.offsetV + pointV,
+              PANEL_SNAP_SOCKET_RADIUS * 2,
+              PANEL_SNAP_SOCKET_RADIUS * 2,
+              PANEL_SNAP_SOCKET_RADIUS,
+              parameters,
+              dimensions,
+            ),
+          );
+        }
       }
     }
   }
@@ -584,6 +854,48 @@ function applyVentPattern(
   return result;
 }
 
+function applyBatteryCompartments(
+  module: ManifoldToplevel,
+  source: ManifoldSolid,
+  parameters: DesignerParameters,
+): ManifoldSolid {
+  let result = source;
+  for (const placement of parameters.batteryCompartments) {
+    const innerWidth = Math.max(2, placement.width - placement.wallThickness * 2);
+    const innerDepth = Math.max(2, placement.depth - placement.wallThickness * 2);
+    let tray = extrudeRing(
+      module,
+      placement.width,
+      placement.depth,
+      innerWidth,
+      innerDepth,
+      Math.min(3, placement.width / 4, placement.depth / 4),
+      Math.min(2, innerWidth / 4, innerDepth / 4),
+      placement.height + 0.1,
+      parameters.bottomThickness - 0.1,
+    );
+    if (placement.cellCount > 1 && placement.preset !== "lipo") {
+      const spacing = innerDepth / placement.cellCount;
+      for (let index = 1; index < placement.cellCount; index += 1) {
+        const divider = cubeAt(
+          module,
+          [innerWidth, placement.wallThickness, placement.height + 0.1],
+          -innerWidth / 2,
+          -innerDepth / 2 + spacing * index - placement.wallThickness / 2,
+          parameters.bottomThickness - 0.1,
+        );
+        tray = unionAndDispose(tray, divider);
+      }
+    }
+    if (placement.rotation !== 0) {
+      tray = rotateAndDispose(tray, 0, 0, placement.rotation);
+    }
+    tray = translateAndDispose(tray, placement.offsetX, placement.offsetZ, 0);
+    result = unionAndDispose(result, tray);
+  }
+  return result;
+}
+
 function buildBase(
   module: ManifoldToplevel,
   parameters: DesignerParameters,
@@ -616,6 +928,7 @@ function buildBase(
   );
   base = unionAndDispose(base, wall);
   base = applyVentPattern(module, base, parameters);
+  base = applyBatteryCompartments(module, base, parameters);
 
   if (parameters.enclosureTemplateId === "wall-mount") {
     for (const x of [
@@ -672,15 +985,53 @@ function buildBase(
     }
   }
 
+  if (parameters.closureType === "pin") {
+    const pinZ = parameters.baseHeight - 0.8;
+    for (const y of [
+      -dimensions.outsideWidth / 2,
+      dimensions.outsideWidth / 2,
+    ]) {
+      for (const x of [
+        -dimensions.outsideLength / 2 + 6,
+        dimensions.outsideLength / 2 - 20,
+      ]) {
+        base = unionAndDispose(
+          base,
+          tubeAlongX(module, 14, 3.2, 1.35, x, y, pinZ),
+        );
+      }
+    }
+  }
+
+  if (parameters.closureType === "latch") {
+    const receiverV = parameters.baseHeight / 2 - 2.2;
+    for (const face of ["front", "back"] as const) {
+      base = subtractAndDispose(
+        base,
+        createFaceCutter(
+          module,
+          face,
+          0,
+          receiverV,
+          18,
+          2.4,
+          0.8,
+          parameters,
+          dimensions,
+        ),
+      );
+    }
+  }
+
   if (parameters.standoffHeight > 0.5) {
-    for (const hole of getCenteredMountingHoles(parameters, pcbReference)) {
+    for (const hole of getAssemblyMountingHoles(parameters, pcbReference)) {
       base = addBossWithPilotHole(
         module,
         base,
         hole.x,
         hole.y,
         parameters.bottomThickness,
-        parameters.standoffHeight,
+        parameters.standoffHeight + (hole.elevation ?? 0),
         Math.max(3.2, hole.diameter / 2 + 1.4),
         Math.max(0.8, hole.diameter / 2 - 0.25),
       );
@@ -849,8 +1200,14 @@ function buildLid(
       ),
     );
     for (const panel of topPanels) {
+      const inset = panel.insetDepth > 0;
+      const [openingWidth, openingHeight] = getPanelOpeningSize(panel);
       const openingSource = new module.CrossSection(
-        roundedRectangle(panel.width - 4, panel.height - 4, 3.5),
+        roundedRectangle(
+          inset ? panel.width + 0.3 : openingWidth,
+          inset ? panel.height + 0.3 : openingHeight,
+          inset ? panel.cornerRadius + 0.15 : getPanelInnerCornerRadius(panel),
+        ),
       );
       const opening = openingSource.translate(panel.offsetU, panel.offsetV);
       openingSource.delete();
@@ -875,6 +1232,24 @@ function buildLid(
   lid = unionAndDispose(lid, plate);
 
   for (const panel of topPanels) {
+    if (panel.insetDepth <= 0) continue;
+    const [openingWidth, openingHeight] = getPanelOpeningSize(panel);
+    let support = extrudeRing(
+      module,
+      panel.width + 0.3,
+      panel.height + 0.3,
+      openingWidth,
+      openingHeight,
+      panel.cornerRadius + 0.15,
+      getPanelInnerCornerRadius(panel),
+      parameters.lidThickness - panel.insetDepth,
+      lipHeight,
+    );
+    support = translateAndDispose(support, panel.offsetU, panel.offsetV, 0);
+    lid = unionAndDispose(lid, support);
+  }
+
+  for (const panel of topPanels) {
     if (panel.mountingType === "slide") {
       for (const y of [-panel.height / 2 - 1.2, panel.height / 2]) {
         const rail = cubeAt(
@@ -888,34 +1263,78 @@ function buildLid(
       }
     } else {
       for (const [x, y] of getPanelMountingPoints(panel)) {
-        const support = cubeAt(
-          module,
-          [8, 8, parameters.lidThickness],
-          panel.offsetU + x - 4,
-          panel.offsetV + y - 4,
-          lipHeight,
-        );
-        lid = unionAndDispose(lid, support);
-        const radius = panel.mountingType === "screw" ? 1.3 : 2.15;
-        const depth =
-          panel.mountingType === "screw"
-            ? parameters.lidThickness + 0.4
-            : Math.min(1.2, parameters.lidThickness);
-        const z =
-          panel.mountingType === "screw"
-            ? lipHeight - 0.2
-            : lipHeight + parameters.lidThickness - depth;
-        lid = subtractAndDispose(
-          lid,
+        if (panel.mountingType === "screw") {
+          const depth = parameters.lidThickness + 0.1;
+          const bridge = getPanelScrewMountingTab(
+            panel,
+            x,
+            y,
+            PANEL_SCREW_TAB_RADIUS,
+          );
+          lid = unionAndDispose(
+            lid,
+            cubeAt(
+              module,
+              [bridge.width, bridge.height, depth],
+              panel.offsetU + bridge.centerU - bridge.width / 2,
+              panel.offsetV + bridge.centerV - bridge.height / 2,
+              lipHeight - 0.05,
+            ),
+          );
+          lid = subtractAndDispose(
+            lid,
             cylinderAt(
               module,
-              radius,
+              PANEL_SCREW_PILOT_RADIUS,
+              depth + 0.2,
+              panel.offsetU + x,
+              panel.offsetV + y,
+              lipHeight - 0.15,
+            ),
+          );
+        } else if (panel.mountingType === "magnet") {
+          const support = cubeAt(
+            module,
+            [8, 8, parameters.lidThickness],
+            panel.offsetU + x - 4,
+            panel.offsetV + y - 4,
+            lipHeight,
+          );
+          lid = unionAndDispose(lid, support);
+           const depth = getPanelMagnetPocketDepth(parameters.lidThickness);
+          lid = subtractAndDispose(
+            lid,
+            cylinderAt(
+              module,
+              PANEL_MAGNET_RADIUS,
               depth,
               panel.offsetU + x,
               panel.offsetV + y,
-              z,
+              lipHeight + parameters.lidThickness - depth,
             ),
-        );
+          );
+        } else {
+          const supportDepth = PANEL_SNAP_POST_DEPTH;
+          const support = cubeAt(
+            module,
+            [7, 7, supportDepth + 0.1],
+            panel.offsetU + x - 3.5,
+            panel.offsetV + y - 3.5,
+            lipHeight - supportDepth,
+          );
+          lid = unionAndDispose(lid, support);
+          lid = subtractAndDispose(
+            lid,
+            cylinderAt(
+              module,
+              PANEL_SNAP_SOCKET_RADIUS,
+              supportDepth + parameters.lidThickness + 0.4,
+              panel.offsetU + x,
+              panel.offsetV + y,
+              lipHeight - supportDepth - 0.2,
+            ),
+          );
+        }
       }
     }
   }
@@ -926,6 +1345,7 @@ function buildLid(
     parameters.wallThickness,
   );
   if (parameters.closureType === "screw") {
+    const headRecessDepth = getClosureScrewHeadRecessDepth(parameters);
     for (const [x, y] of points) {
       const hole = cylinderAt(
         module,
@@ -936,6 +1356,17 @@ function buildLid(
         -1,
       );
       lid = subtractAndDispose(lid, hole);
+      if (headRecessDepth > 0) {
+        const headPocket = cylinderAt(
+          module,
+          getClosureScrewHeadRecessRadius(fastener.clearanceDiameter),
+          headRecessDepth + 0.1,
+          x,
+          y,
+          lipHeight + parameters.lidThickness - headRecessDepth,
+        );
+        lid = subtractAndDispose(lid, headPocket);
+      }
     }
   } else if (parameters.closureType === "magnet") {
     for (const [x, y] of points) {
@@ -966,6 +1397,40 @@ function buildLid(
     );
     lid = unionAndDispose(lid, frontTab);
     lid = unionAndDispose(lid, backTab);
+  } else if (parameters.closureType === "latch") {
+    const tabHeight = 7;
+    const frontTab = cubeAt(
+      module,
+      [16, 1.4, tabHeight],
+      -8,
+      dimensions.outsideWidth / 2 - 1.4,
+      -3,
+    );
+    const backTab = cubeAt(
+      module,
+      [16, 1.4, tabHeight],
+      -8,
+      -dimensions.outsideWidth / 2,
+      -3,
+    );
+    const frontHook = cubeAt(
+      module,
+      [18, 1.4, 1.2],
+      -9,
+      dimensions.outsideWidth / 2 - 0.2,
+      -2.8,
+    );
+    const backHook = cubeAt(
+      module,
+      [18, 1.4, 1.2],
+      -9,
+      -dimensions.outsideWidth / 2 - 1.2,
+      -2.8,
+    );
+    lid = unionAndDispose(lid, frontTab);
+    lid = unionAndDispose(lid, backTab);
+    lid = unionAndDispose(lid, frontHook);
+    lid = unionAndDispose(lid, backHook);
   } else if (parameters.closureType === "slide") {
     const stop = cubeAt(
       module,
@@ -988,6 +1453,16 @@ function buildLid(
         1.4,
       ),
     );
+  } else if (parameters.closureType === "pin") {
+    for (const y of [
+      -dimensions.outsideWidth / 2,
+      dimensions.outsideWidth / 2,
+    ]) {
+      lid = unionAndDispose(
+        lid,
+        tubeAlongX(module, 20, 3.2, 1.35, -10, y, 1.4),
+      );
+    }
   }
 
   for (const placement of parameters.connectorPlacements) {
@@ -1046,18 +1521,77 @@ function buildPanel(
     module,
     selectedPanel.width,
     selectedPanel.height,
-    3.2,
+    selectedPanel.cornerRadius,
     selectedPanel.thickness,
   );
   if (selectedPanel.mountingType !== "slide") {
-    const radius = selectedPanel.mountingType === "screw" ? 1.3 : 2.15;
-    const depth = selectedPanel.thickness + 0.4;
-    const z = -0.2;
     for (const [x, y] of getPanelMountingPoints(selectedPanel)) {
-      panel = subtractAndDispose(
-        panel,
-        cylinderAt(module, radius, depth, x, y, z),
-      );
+      if (selectedPanel.mountingType === "screw") {
+        panel = subtractAndDispose(
+          panel,
+          cylinderAt(
+            module,
+            PANEL_SCREW_CLEARANCE_RADIUS,
+            selectedPanel.thickness + 0.4,
+            x,
+            y,
+            -0.2,
+          ),
+        );
+        const headRecessDepth = getPanelScrewHeadRecessDepth(selectedPanel);
+        if (headRecessDepth > 0) {
+          panel = subtractAndDispose(
+            panel,
+            cylinderAt(
+              module,
+              PANEL_SCREW_HEAD_RECESS_RADIUS,
+              headRecessDepth + 0.1,
+              x,
+              y,
+              selectedPanel.thickness - headRecessDepth,
+            ),
+          );
+        }
+      } else if (selectedPanel.mountingType === "magnet") {
+        const pocketDepth = getPanelMagnetPocketDepth(selectedPanel.thickness);
+        panel = subtractAndDispose(
+          panel,
+          cylinderAt(
+            module,
+            PANEL_MAGNET_RADIUS,
+            pocketDepth + 0.1,
+            x,
+            y,
+            -0.1,
+          ),
+        );
+      } else {
+        panel = unionAndDispose(
+          panel,
+          cylinderAt(
+            module,
+            PANEL_SNAP_POST_RADIUS,
+            PANEL_SNAP_POST_DEPTH,
+            x,
+            y,
+            -PANEL_SNAP_POST_DEPTH,
+          ),
+        );
+        let lip = module.Manifold.cylinder(
+          PANEL_SNAP_LIP_DEPTH,
+          PANEL_SNAP_LIP_RADIUS,
+          PANEL_SNAP_POST_RADIUS,
+          32,
+          false,
+        );
+        lip = translateAndDispose(
+          lip,
+          x,
+          y,
+          -PANEL_SNAP_POST_DEPTH - PANEL_SNAP_LIP_DEPTH + 0.2,
+        );
+        panel = unionAndDispose(panel, lip);
+      }
     }
   }
   for (const placement of parameters.connectorPlacements) {

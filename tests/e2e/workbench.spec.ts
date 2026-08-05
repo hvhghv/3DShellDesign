@@ -1,6 +1,7 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import { strFromU8, unzipSync } from "fflate";
 import { readFile } from "node:fs/promises";
+import { Buffer } from "node:buffer";
 
 async function readScreenshotPixels(page: Page, canvas: Locator) {
   const screenshot = await canvas.screenshot({ type: "png" });
@@ -111,23 +112,113 @@ async function chooseDevice(
   page: Page,
   kind: "接口" | "天线",
   name: string,
+  surface?: string,
 ): Promise<void> {
   await page.getByRole("button", { name: `添加${kind}` }).click();
   const picker = page.getByRole("dialog", {
     name: kind === "接口" ? "添加接口器件选择器" : "添加天线选择器",
   });
   await expect(picker).toBeVisible();
+  if (surface) {
+    await picker.getByRole("combobox", { name: "安装位置" }).selectOption(surface);
+  }
   await picker.getByText(name, { exact: true }).click();
   await expect(picker).toHaveCount(0);
 }
 
-async function addConnector(page: Page, name = "USB Type-C 母座") {
-  await chooseDevice(page, "接口", name);
+async function addConnector(
+  page: Page,
+  name = "USB Type-C 母座",
+  surface?: string,
+) {
+  await chooseDevice(page, "接口", name, surface);
 }
 
-async function addAntenna(page: Page, name = "SMA 穿板棒状天线") {
-  await chooseDevice(page, "天线", name);
+async function addAntenna(
+  page: Page,
+  name = "SMA 穿板棒状天线",
+  surface?: string,
+) {
+  await chooseDevice(page, "天线", name, surface);
 }
+
+async function exportManufacturingStl(page: Page, option: string) {
+  await page
+    .locator(".tree-item")
+    .filter({ hasText: "PCB 控制器外壳" })
+    .click();
+  const exportSelect = page.getByRole("combobox", { name: "制造导出格式" });
+  await exportSelect.selectOption(option);
+  const downloadPromise = page.waitForEvent("download", { timeout: 90_000 });
+  await page.locator(".manufacturing-export button").click();
+  const path = await (await downloadPromise).path();
+  expect(path).not.toBeNull();
+  const mesh = readStlDimensions(await readFile(path!));
+  expect(mesh.connectedComponents).toBe(1);
+  return mesh;
+}
+
+test("camera orbit reaches the enclosure underside", async ({ page }, testInfo) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+
+  const viewport = page.locator(".viewport-canvas");
+  const canvas = viewport.locator("canvas");
+  await expect(canvas).toBeVisible();
+  const box = await canvas.boundingBox();
+  expect(box).not.toBeNull();
+
+  await page.mouse.move(box!.x + box!.width * 0.12, box!.y + box!.height * 0.84);
+  await page.mouse.down();
+  await page.mouse.move(
+    box!.x + box!.width * 0.12,
+    box!.y + box!.height * 0.14,
+    { steps: 16 },
+  );
+  await page.mouse.up();
+
+  await expect.poll(async () =>
+    Number(await viewport.getAttribute("data-camera-polar-angle")),
+  ).toBeGreaterThan(Math.PI / 2 + 0.1);
+  await expect(viewport).toHaveAttribute("data-camera-below-work-plane", "true");
+  await page.screenshot({
+    path: testInfo.outputPath("underside-orbit.png"),
+    fullPage: true,
+  });
+});
+
+test("independently hides and restores enclosure faces", async ({ page }, testInfo) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+
+  const canvas = page.locator(".viewport-canvas canvas");
+  await expect(canvas).toBeVisible();
+  const before = await canvas.screenshot({ type: "png" });
+  const frontToggle = page.getByRole("checkbox", { name: "前壁显示" });
+  const topToggle = page.getByRole("checkbox", { name: "顶盖显示" });
+  const bottomToggle = page.getByRole("checkbox", { name: "底板显示" });
+  await expect(frontToggle).toBeChecked();
+  await frontToggle.uncheck();
+  await expect(frontToggle).not.toBeChecked();
+  await expect(topToggle).toBeChecked();
+  await expect(bottomToggle).toBeChecked();
+  const frontHidden = await canvas.screenshot({ type: "png" });
+  expect(frontHidden.equals(before)).toBe(false);
+
+  await topToggle.uncheck();
+  await bottomToggle.uncheck();
+  await expect(topToggle).not.toBeChecked();
+  await expect(bottomToggle).not.toBeChecked();
+  await page.screenshot({
+    path: testInfo.outputPath("independent-face-visibility.png"),
+    fullPage: true,
+  });
+
+  await page.getByRole("button", { name: "显示全部壳体面" }).click();
+  await expect(frontToggle).toBeChecked();
+  await expect(topToggle).toBeChecked();
+  await expect(bottomToggle).toBeChecked();
+});
 
 test("desktop workbench renders a nonblank interactive enclosure", async ({ page }, testInfo) => {
   test.setTimeout(900_000);
@@ -166,7 +257,7 @@ test("desktop workbench renders a nonblank interactive enclosure", async ({ page
     "data-focused-part",
     "base",
   );
-  await page.getByRole("button", { name: "显示全部零件" }).click();
+  await page.getByRole("button", { name: "显示全部零件", exact: true }).click();
   await expect(page.locator(".viewport-canvas")).toHaveAttribute(
     "data-focused-part",
     "all",
@@ -214,7 +305,7 @@ test("desktop workbench renders a nonblank interactive enclosure", async ({ page
   let baseTriangleCount = 0;
   const exportCases = [
     { option: "base-stl", filename: "3dshell-base.stl", size: [108, 78, 24] },
-    { option: "lid-stl", filename: "3dshell-lid.stl", size: [108, 78, 4.2] },
+    { option: "lid-stl", filename: "3dshell-lid.stl", size: [108, 78, 4.25] },
     { option: "panel-stl:panel-1", filename: "3dshell-panel-1.stl", size: [62.64, 40.56, 2] },
   ] as const;
   for (const exportCase of exportCases) {
@@ -503,6 +594,13 @@ test("desktop workbench renders a nonblank interactive enclosure", async ({ page
   await page
     .getByRole("combobox", { name: "接口 1 安装位置" })
     .selectOption("top");
+  await page.locator(".tree-item").filter({ hasText: "面板 1" }).click();
+  await page
+    .getByRole("complementary", { name: "面板检查器" })
+    .locator(".field-row")
+    .filter({ hasText: "嵌入深度" })
+    .locator("input")
+    .fill("1.2");
   for (const panelFace of ["front", "back", "left", "right", "bottom"] as const) {
     await page.locator(".tree-item").filter({ hasText: "面板 1" }).click();
     await page.getByRole("combobox", { name: "面板所在面" }).selectOption(panelFace);
@@ -563,6 +661,7 @@ test("desktop workbench renders a nonblank interactive enclosure", async ({ page
   );
   await expect(page.getByText("controller.kicad_pcb", { exact: true })).toBeVisible();
   await expect(page.getByText(/2 个安装孔/)).toBeVisible();
+  await page.locator(".tree-item").filter({ hasText: "PCB 控制器外壳" }).click();
   await expect(page.locator(".field-row").filter({ hasText: "长度" }).locator("input")).toHaveValue("80");
   await expect(page.locator(".field-row").filter({ hasText: "宽度" }).locator("input")).toHaveValue("50");
 
@@ -585,6 +684,7 @@ test("desktop workbench renders a nonblank interactive enclosure", async ({ page
     page.getByText("controller-Edge_Cuts.gbr", { exact: true }),
   ).toBeVisible();
   await expect(page.getByText(/5 个钻孔 · 4 个安装孔候选/)).toBeVisible();
+  await page.locator(".tree-item").filter({ hasText: "PCB 控制器外壳" }).click();
   await expect(
     page.locator(".field-row").filter({ hasText: "长度" }).locator("input"),
   ).toHaveValue("80");
@@ -601,27 +701,32 @@ test("desktop workbench renders a nonblank interactive enclosure", async ({ page
   await expect(
     page.getByText(/STEP 1 个实体 · 12 三角面 · 高 10\.0 mm/),
   ).toBeVisible();
+  await page.locator(".tree-item").filter({ hasText: "PCB 控制器外壳" }).click();
   await expect(
     page.locator(".field-row").filter({ hasText: "长度" }).locator("input"),
-  ).toHaveValue("10");
+  ).toHaveValue("80");
   await expect(
     page.locator(".field-row").filter({ hasText: "宽度" }).locator("input"),
-  ).toHaveValue("10");
+  ).toHaveValue("50");
   const stepPixels = await readScreenshotPixels(page, canvas);
   expect(stepPixels.colorCount).toBeGreaterThan(20);
   await expect(page.locator(".viewport-canvas")).toHaveAttribute(
     "data-reference-kind",
-    "step",
+    "multiple",
   );
-  await expect(page.locator(".status-bar")).toContainText("已缓存");
+  await expect(page.locator(".status-bar")).toContainText(/缓存已就绪|已缓存/);
 
   await page.reload();
-  await expect(page.getByText("occt-cube-mm.step", { exact: true })).toBeVisible();
+  await expect(
+    page.locator(".tree-item").filter({ hasText: "occt-cube-mm.step" }),
+  ).toBeVisible();
   await expect(page.locator(".viewport-canvas")).toHaveAttribute(
     "data-reference-kind",
-    "step",
+    "multiple",
   );
-  await page.getByRole("button", { name: "移除 PCB 文件关联" }).click();
+  for (let index = 0; index < 3; index += 1) {
+    await page.getByRole("button", { name: "移除 PCB 文件关联" }).click();
+  }
   await page.getByRole("combobox", { name: "外壳模板" }).selectOption(
     "wall-mount",
   );
@@ -644,7 +749,7 @@ test("desktop workbench renders a nonblank interactive enclosure", async ({ page
   expect(pageErrors).toEqual([]);
 });
 
-test("device pickers create only the selected connector and antenna", async ({ page }) => {
+test("device pickers create only the selected connector and antenna", async ({ page }, testInfo) => {
   test.setTimeout(120_000);
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto("/");
@@ -656,19 +761,60 @@ test("device pickers create only the selected connector and antenna", async ({ p
     name: "添加接口器件选择器",
   });
   await expect(connectorPicker).toBeVisible();
+  const compactFpcPicker = connectorPicker.locator(".device-picker-fpc-group");
+  await expect(compactFpcPicker.getByRole("combobox", { name: "FPC 间距" })).toHaveValue(
+    "0.5",
+  );
+  await expect(compactFpcPicker.getByRole("combobox", { name: "FPC 针数" })).toHaveValue(
+    "5",
+  );
+  await expect(compactFpcPicker.locator(".device-picker-item")).toHaveCount(0);
+  await page.screenshot({
+    path: testInfo.outputPath("compact-fpc-picker.png"),
+    fullPage: true,
+  });
+  await page.keyboard.press("Escape");
+  await expect(connectorPicker).toHaveCount(0);
+  await page.getByRole("button", { name: "添加接口" }).click();
+  await expect(connectorPicker).toBeVisible();
   await expect(tree.locator(".tree-item").filter({ hasText: "USB Type-C 母座" })).toHaveCount(1);
+  await connectorPicker
+    .getByRole("searchbox", { name: "搜索添加接口器件" })
+    .fill("1.0 mm 40P FPC");
+  await connectorPicker
+    .locator(".device-picker-item")
+    .filter({ hasText: "1.0 mm 40P FPC 端子" })
+    .click();
+  await expect(
+    tree.locator(".tree-item").filter({ hasText: "1.0 mm 40P FPC 端子" }),
+  ).toBeVisible();
+  await expect(page.getByRole("combobox", { name: "接口 2 器件" })).toHaveValue(
+    "fpc-40p-10",
+  );
+
+  await page.getByRole("button", { name: "添加接口" }).click();
+  await expect(connectorPicker).toBeVisible();
   await connectorPicker.getByRole("searchbox", { name: "搜索添加接口器件" }).fill("1.25");
   await expect(connectorPicker.locator(".device-picker-item")).toHaveCount(3);
   await expect(connectorPicker.getByText("1.25 mm 2P 线对板端子", { exact: true })).toBeVisible();
   await expect(connectorPicker.getByText("1.25 mm 4P 线对板端子", { exact: true })).toBeVisible();
   await expect(connectorPicker.getByText("1.25 mm 5P 线对板端子", { exact: true })).toBeVisible();
+  expect(
+    await connectorPicker.evaluate(
+      (element) => element.scrollWidth - element.clientWidth,
+    ),
+  ).toBeLessThanOrEqual(1);
+  await page.screenshot({
+    path: testInfo.outputPath("connector-picker-surface.png"),
+    fullPage: true,
+  });
   await connectorPicker
     .locator(".device-picker-item")
     .filter({ hasText: "1.25 mm 4P 线对板端子" })
     .click();
   await expect(connectorPicker).toHaveCount(0);
   await expect(tree.locator(".tree-item").filter({ hasText: "1.25 mm 4P 线对板端子" })).toBeVisible();
-  await expect(page.getByRole("combobox", { name: "接口 2 器件" })).toHaveValue(
+  await expect(page.getByRole("combobox", { name: "接口 3 器件" })).toHaveValue(
     "terminal-125-4p",
   );
 
@@ -684,6 +830,95 @@ test("device pickers create only the selected connector and antenna", async ({ p
   await expect(page.getByRole("combobox", { name: "天线 1 类型" })).toHaveValue(
     "rp-sma-bulkhead-whip",
   );
+});
+
+test("searches, duplicates, undoes and redoes assembly features", async ({ page }, testInfo) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+  await expect(page.locator(".status-bar")).toContainText(/缓存已就绪|已缓存/);
+
+  const tree = page.locator(".tree-nav");
+  const connectorItems = tree.locator(".tree-item").filter({ hasText: "USB Type-C 母座" });
+  await expect(connectorItems).toHaveCount(1);
+  await connectorItems.first().click({ button: "right" });
+  const menu = page.getByRole("menu", { name: /USB Type-C 母座.*操作菜单/ });
+  await menu.getByRole("menuitem", { name: "复制" }).click();
+  await expect(connectorItems).toHaveCount(2);
+
+  const undoButton = page.getByRole("button", { name: "撤销", exact: true });
+  const redoButton = page.getByRole("button", { name: "重做", exact: true });
+  await expect(undoButton).toBeEnabled();
+  await undoButton.click();
+  await expect(connectorItems).toHaveCount(1);
+  await expect(redoButton).toBeEnabled();
+  await redoButton.click();
+  await expect(connectorItems).toHaveCount(2);
+
+  await connectorItems.last().click();
+  await page.keyboard.press("Control+d");
+  await expect(connectorItems).toHaveCount(3);
+  await page.keyboard.press("Control+z");
+  await expect(connectorItems).toHaveCount(2);
+
+  const search = page.getByRole("searchbox", { name: "筛选对象" });
+  await search.fill("USB Type-C");
+  await expect(connectorItems).toHaveCount(2);
+  await expect(page.getByText("2 个匹配", { exact: true })).toBeVisible();
+  await search.fill("不存在的对象");
+  await expect(connectorItems).toHaveCount(0);
+  await expect(page.getByText("0 个匹配", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "清除对象筛选" }).click();
+  await expect(connectorItems).toHaveCount(2);
+
+  await page.screenshot({
+    path: testInfo.outputPath("assembly-search-history.png"),
+    fullPage: true,
+  });
+});
+
+test("hides, locks and restores individual assembly features", async ({ page }, testInfo) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+  const connectorItem = page
+    .locator(".tree-item")
+    .filter({ hasText: "USB Type-C 母座" })
+    .first();
+  await connectorItem.click({ button: "right" });
+  let menu = page.getByRole("menu", { name: /USB Type-C 母座.*操作菜单/ });
+  await menu.getByRole("menuitem", { name: "隐藏" }).click();
+  await expect(connectorItem).toHaveClass(/is-feature-hidden/);
+  await expect(page.locator(".viewport-canvas")).toHaveAttribute(
+    "data-selected-feature-readonly",
+    "true",
+  );
+  const stateBanner = page.locator(".feature-state-banner");
+  await expect(stateBanner).toContainText("对象已隐藏");
+  await stateBanner.getByRole("button", { name: "显示对象" }).click();
+  await expect(connectorItem).not.toHaveClass(/is-feature-hidden/);
+
+  await connectorItem.click({ button: "right" });
+  menu = page.getByRole("menu", { name: /USB Type-C 母座.*操作菜单/ });
+  await menu.getByRole("menuitem", { name: "锁定" }).click();
+  await expect(connectorItem).toHaveClass(/is-feature-locked/);
+  await expect(stateBanner).toContainText("对象已锁定");
+  await expect(
+    page.getByRole("complementary", { name: "接口检查器" })
+      .locator("input")
+      .first(),
+  ).not.toBeEditable();
+  await page.keyboard.press("Delete");
+  await expect(connectorItem).toHaveCount(1);
+  await page.screenshot({
+    path: testInfo.outputPath("feature-visibility-locking.png"),
+    fullPage: true,
+  });
+  await stateBanner.getByRole("button", { name: "解锁对象" }).click();
+  await expect(connectorItem).not.toHaveClass(/is-feature-locked/);
+  await expect(page.locator(".viewport-canvas")).toHaveAttribute(
+    "data-selected-feature-readonly",
+    "false",
+  );
+
 });
 
 test("panel editor clamps placement and supports context deletion", async ({ page }, testInfo) => {
@@ -711,6 +946,7 @@ test("panel editor clamps placement and supports context deletion", async ({ pag
     .filter({ hasText: "横向偏移" })
     .locator("input");
   await horizontalOffset.fill("41.5");
+  await horizontalOffset.press("Enter");
   await expect(horizontalOffset).toHaveValue("20.68");
   expect(
     await panelInspector.evaluate(
@@ -732,6 +968,363 @@ test("panel editor clamps placement and supports context deletion", async ({ pag
   });
   await contextMenu.getByRole("menuitem", { name: "删除" }).click();
   await expect(panelItem).toHaveCount(0);
+});
+
+test("device pickers choose the target surface and Delete removes selections", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+
+  const connectorName = "1.25 mm 4P 线对板端子";
+  await addConnector(page, connectorName, "bottom");
+  const connectorItem = page.locator(".tree-item").filter({
+    hasText: connectorName,
+  });
+  await expect(connectorItem).toContainText("底板");
+  await expect(
+    page.getByRole("combobox", { name: "接口 2 安装位置" }),
+  ).toHaveValue("bottom");
+  await page.keyboard.press("Delete");
+  await expect(connectorItem).toHaveCount(0);
+
+  const antennaName = "RP-SMA 穿板棒状天线";
+  await addAntenna(page, antennaName, "left");
+  const antennaItem = page.locator(".tree-item").filter({ hasText: antennaName });
+  await expect(antennaItem).toContainText("左壁");
+  await expect(
+    page.getByRole("combobox", { name: "天线 1 安装位置" }),
+  ).toHaveValue("left");
+
+  const offsetInput = page
+    .getByRole("complementary", { name: "天线检查器" })
+    .locator(".field-row")
+    .filter({ hasText: "横向偏移" })
+    .locator("input");
+  await offsetInput.focus();
+  await page.keyboard.press("Delete");
+  await expect(antennaItem).toHaveCount(1);
+
+  await antennaItem.click();
+  await page.keyboard.press("Delete");
+  await expect(antennaItem).toHaveCount(0);
+
+  const panelItem = page.locator(".tree-item").filter({ hasText: "面板 1" });
+  await panelItem.click();
+  await page.keyboard.press("Delete");
+  await expect(panelItem).toHaveCount(0);
+});
+
+test("supports inset panels, custom geometry and multiple PCB references", async ({ page }, testInfo) => {
+  test.setTimeout(180_000);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+
+  await page.locator(".tree-item").filter({ hasText: "面板 1" }).click();
+  const panelInspector = page.getByRole("complementary", { name: "面板检查器" });
+  const insetInput = panelInspector
+    .locator(".field-row")
+    .filter({ hasText: "嵌入深度" })
+    .locator("input");
+  await insetInput.fill("1.2");
+  await expect(insetInput).toHaveValue("1.2");
+  await page.screenshot({
+    path: testInfo.outputPath("inset-panel.png"),
+    fullPage: true,
+  });
+  await page.locator(".tree-item").filter({ hasText: "PCB 控制器外壳" }).click();
+  const insetLidDownloadPromise = page.waitForEvent("download", { timeout: 60_000 });
+  await page
+    .getByRole("combobox", { name: "制造导出格式" })
+    .selectOption("lid-stl");
+  await page.locator(".manufacturing-export button").click();
+  const insetLidPath = await (await insetLidDownloadPromise).path();
+  expect(insetLidPath).not.toBeNull();
+  expect(readStlDimensions(await readFile(insetLidPath!)).triangleCount).toBeGreaterThan(100);
+
+  await page.getByRole("button", { name: "添加自定义组件" }).click();
+  let customPicker = page.getByRole("dialog", { name: "添加自定义组件选择器" });
+  await customPicker.getByRole("button", { name: "长方体" }).click();
+  let customInspector = page.getByRole("complementary", {
+    name: "自定义组件检查器",
+  });
+  await customInspector
+    .locator(".field-row")
+    .filter({ hasText: "宽度" })
+    .locator("input")
+    .fill("18");
+  await expect(
+    page.locator(".tree-item").filter({ hasText: "自定义长方体" }),
+  ).toContainText("18.0 × 8.0 × 10.0 mm");
+
+  await page.getByRole("button", { name: "添加自定义组件" }).click();
+  customPicker = page.getByRole("dialog", { name: "添加自定义组件选择器" });
+  await customPicker.getByRole("button", { name: "圆柱体" }).click();
+  await expect(
+    page.locator(".tree-item").filter({ hasText: "自定义圆柱体" }),
+  ).toBeVisible();
+
+  await page.getByRole("button", { name: "添加自定义组件" }).click();
+  const modelInput = page.locator('input[type="file"][accept=".step,.stp,.stl,.obj"]');
+  await modelInput.setInputFiles({
+    name: "sensor.obj",
+    mimeType: "text/plain",
+    buffer: Buffer.from([
+      "v 0 0 0",
+      "v 10 0 0",
+      "v 0 8 0",
+      "v 0 0 6",
+      "f 1 2 3",
+      "f 1 4 2",
+      "f 1 3 4",
+      "f 2 4 3",
+    ].join("\n")),
+  });
+  await expect(
+    page.locator(".tree-item").filter({ hasText: "sensor.obj" }),
+  ).toBeVisible();
+  customInspector = page.getByRole("complementary", {
+    name: "自定义组件检查器",
+  });
+  await expect(
+    customInspector.getByRole("combobox", { name: "自定义组件几何类型" }),
+  ).toHaveValue("model");
+  await page.getByRole("button", { name: "添加自定义组件" }).click();
+  await page
+    .locator('input[type="file"][accept=".step,.stp,.stl,.obj"]')
+    .setInputFiles("tests/fixtures/occt-cube-mm.step");
+  await expect(
+    page.locator(".tree-item").filter({ hasText: "occt-cube-mm.step" }),
+  ).toBeVisible({ timeout: 120_000 });
+  await page.getByRole("button", { name: "聚焦选中零件" }).click();
+  await expect(page.getByRole("status")).toContainText("仅显示：自定义组件");
+  await page.screenshot({
+    path: testInfo.outputPath("custom-components.png"),
+    fullPage: true,
+  });
+  await page.getByRole("button", { name: "显示全部零件", exact: true }).click();
+
+  const pcbBuffer = await readFile("tests/fixtures/controller.kicad_pcb");
+  await page.locator('input[type="file"][accept=".kicad_pcb"]').setInputFiles([
+    { name: "main.kicad_pcb", mimeType: "text/plain", buffer: pcbBuffer },
+    { name: "aux.kicad_pcb", mimeType: "text/plain", buffer: pcbBuffer },
+  ]);
+  const pcbItems = page.locator(".tree-item").filter({ hasText: /^PCB [12]/ });
+  await expect(pcbItems).toHaveCount(2);
+  await pcbItems.nth(1).click();
+  const pcbInspector = page.getByRole("complementary", { name: "PCB 检查器" });
+  const elevationInput = pcbInspector
+    .locator(".field-row")
+    .filter({ hasText: "抬高" })
+    .locator("input");
+  await expect(elevationInput).toHaveValue("5");
+  await elevationInput.fill("8");
+  await pcbInspector
+    .getByRole("combobox", { name: "PCB 2 平面旋转" })
+    .selectOption("180");
+  await expect(page.locator(".viewport-canvas")).toHaveAttribute(
+    "data-reference-kind",
+    "multiple",
+  );
+  await page.getByRole("button", { name: "聚焦选中零件" }).click();
+  await page.screenshot({
+    path: testInfo.outputPath("custom-components-multiple-pcb.png"),
+    fullPage: true,
+  });
+});
+
+test("supports battery trays and configurable panel screw mechanics", async ({ page }, testInfo) => {
+  test.setTimeout(180_000);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+
+  await page.locator(".tree-item").filter({ hasText: "面板 1" }).click();
+  const panelInspector = page.getByRole("complementary", { name: "面板检查器" });
+  const setPanelValue = async (label: string, value: string) => {
+    const input = panelInspector
+      .locator(".field-row")
+      .filter({ hasText: label })
+      .locator("input");
+    await input.fill(value);
+    await expect(input).toHaveValue(value);
+  };
+  await setPanelValue("嵌入深度", "0");
+  await setPanelValue("圆角半径", "7");
+  await setPanelValue("嵌入边框宽度", "3.5");
+  await setPanelValue("螺丝横向边距", "8");
+  await setPanelValue("螺丝纵向边距", "7");
+  await panelInspector
+    .getByRole("checkbox", { name: "面板螺丝头嵌入" })
+    .check();
+  await setPanelValue("螺丝沉孔深度", "1.3");
+
+  await page.locator(".tree-item").filter({ hasText: "PCB 控制器外壳" }).click();
+  await page
+    .getByRole("checkbox", { name: "顶盖螺丝头嵌入" })
+    .check();
+  const closureSection = page.locator(".inspector-section").filter({
+    has: page.getByRole("heading", { name: "顶盖固定" }),
+  });
+  const closureRecessDepth = closureSection.getByRole("spinbutton", {
+    name: "螺丝沉孔深度 mm",
+  });
+  await closureRecessDepth.fill("1.1");
+  await expect(closureRecessDepth).toHaveValue("1.1");
+
+  const lidTransparency = page.getByRole("checkbox", { name: "上盖半透明" });
+  await lidTransparency.check();
+  await expect(page.locator(".viewport-canvas")).toHaveAttribute(
+    "data-lid-transparent",
+    "true",
+  );
+  await page.screenshot({
+    path: testInfo.outputPath("flat-panel-screw-tabs.png"),
+    fullPage: true,
+  });
+
+  const exportSelect = page.getByRole("combobox", { name: "制造导出格式" });
+  await exportSelect.selectOption("lid-stl");
+  const lidDownloadPromise = page.waitForEvent("download", { timeout: 60_000 });
+  await page.locator(".manufacturing-export button").click();
+  const lidPath = await (await lidDownloadPromise).path();
+  expect(lidPath).not.toBeNull();
+  const lidMesh = readStlDimensions(await readFile(lidPath!));
+  expect(lidMesh.connectedComponents).toBe(1);
+  expect(lidMesh.dimensions[2]).toBeCloseTo(4.25, 1);
+
+  await exportSelect.selectOption("panel-stl:panel-1");
+  const panelDownloadPromise = page.waitForEvent("download", { timeout: 60_000 });
+  await page.locator(".manufacturing-export button").click();
+  const panelPath = await (await panelDownloadPromise).path();
+  expect(panelPath).not.toBeNull();
+  const panelMesh = readStlDimensions(await readFile(panelPath!));
+  expect(panelMesh.connectedComponents).toBe(1);
+  expect(panelMesh.dimensions[2]).toBeCloseTo(2, 1);
+
+  await page.getByRole("button", { name: "添加电池仓" }).click();
+  const batteryPicker = page.getByRole("dialog", { name: "添加电池仓选择器" });
+  await batteryPicker
+    .getByRole("button", { name: "AA 电池仓", exact: true })
+    .click();
+  const batteryInspector = page.getByRole("complementary", {
+    name: "电池仓检查器",
+  });
+  const slots = batteryInspector
+    .locator(".field-row")
+    .filter({ hasText: "槽位数量" })
+    .locator("input");
+  await slots.fill("3");
+  await expect(slots).toHaveValue("3");
+  await batteryInspector
+    .locator(".field-row")
+    .filter({ hasText: "X 偏移" })
+    .locator("input")
+    .fill("8");
+  await batteryInspector
+    .getByRole("combobox", { name: "电池仓 1 平面旋转" })
+    .selectOption("180");
+  await page.getByRole("button", { name: "聚焦选中零件" }).click();
+  await page.screenshot({
+    path: testInfo.outputPath("battery-tray.png"),
+    fullPage: true,
+  });
+  await page.getByRole("button", { name: "显示全部零件", exact: true }).click();
+
+  await page.locator(".tree-nav").getByRole("button", { name: /下壳/ }).click();
+  await exportSelect.selectOption("base-stl");
+  const baseDownloadPromise = page.waitForEvent("download", { timeout: 60_000 });
+  await page.locator(".manufacturing-export button").click();
+  const basePath = await (await baseDownloadPromise).path();
+  expect(basePath).not.toBeNull();
+  expect(readStlDimensions(await readFile(basePath!)).connectedComponents).toBe(1);
+});
+
+test("supports paired magnetic panel pockets", async ({ page }, testInfo) => {
+  test.setTimeout(180_000);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+  await page.getByRole("tab", { name: "结构" }).click();
+
+  const panelMounting = page.getByRole("combobox", { name: "面板固定方式" });
+  await panelMounting.selectOption("magnet");
+  await expect(
+    page.locator(".tree-item").filter({ hasText: "面板 1" }),
+  ).toContainText("磁吸");
+  await page.screenshot({
+    path: testInfo.outputPath("magnetic-panel.png"),
+    fullPage: true,
+  });
+  await test.step("export magnetic panel", async () => {
+    await exportManufacturingStl(page, "panel-stl:panel-1");
+  });
+  await test.step("export lid with matching magnetic pockets", async () => {
+    await exportManufacturingStl(page, "lid-stl");
+  });
+});
+
+test("supports integrated snap panel posts", async ({ page }, testInfo) => {
+  test.setTimeout(180_000);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+  await page.getByRole("tab", { name: "结构" }).click();
+
+  await page.getByRole("combobox", { name: "面板固定方式" }).selectOption("snap");
+  await page
+    .getByRole("combobox", { name: "面板 1 材料" })
+    .selectOption("petg");
+  await expect(page.getByText("面板 1 材料不适合弹性卡扣")).toHaveCount(0);
+  await page.screenshot({
+    path: testInfo.outputPath("snap-panel.png"),
+    fullPage: true,
+  });
+  const snapPanelMesh = await test.step("export integrated snap panel", () =>
+    exportManufacturingStl(page, "panel-stl:panel-1"),
+  );
+  expect(snapPanelMesh.dimensions[2]).toBeGreaterThan(4);
+  await test.step("export lid snap receivers", async () => {
+    await exportManufacturingStl(page, "lid-stl");
+  });
+});
+
+test("supports press-latch quick-release lids", async ({ page }, testInfo) => {
+  test.setTimeout(180_000);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+  await page.getByRole("tab", { name: "结构" }).click();
+  await page.getByRole("combobox", { name: "面板固定方式" }).selectOption("slide");
+  await page.locator(".tree-item").filter({ hasText: "PCB 控制器外壳" }).click();
+
+  await page.getByRole("button", { name: "快拆扣", exact: true }).click();
+  await page.screenshot({
+    path: testInfo.outputPath("quick-latch-lid.png"),
+    fullPage: true,
+  });
+  await test.step("export press-latch base", async () => {
+    await exportManufacturingStl(page, "base-stl");
+  });
+  await test.step("export press-latch lid", async () => {
+    await exportManufacturingStl(page, "lid-stl");
+  });
+});
+
+test("supports dual-pin quick-release lids", async ({ page }, testInfo) => {
+  test.setTimeout(180_000);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+  await page.getByRole("tab", { name: "结构" }).click();
+  await page.getByRole("combobox", { name: "面板固定方式" }).selectOption("slide");
+  await page.locator(".tree-item").filter({ hasText: "PCB 控制器外壳" }).click();
+  await page.getByRole("button", { name: "快拆销", exact: true }).click();
+  await page.screenshot({
+    path: testInfo.outputPath("quick-pin-lid.png"),
+    fullPage: true,
+  });
+  const pinBaseMesh = await test.step("export quick-pin base", () =>
+    exportManufacturingStl(page, "base-stl"),
+  );
+  const pinLidMesh = await test.step("export quick-pin lid", () =>
+    exportManufacturingStl(page, "lid-stl"),
+  );
+  expect(pinBaseMesh.dimensions[1]).toBeGreaterThan(78);
+  expect(pinLidMesh.dimensions[1]).toBeGreaterThan(78);
 });
 
 test("project parameters survive an immediate page reload", async ({ page }) => {
@@ -953,10 +1546,10 @@ test("3D transform handles edit the selected panel", async ({ page }, testInfo) 
     .locator(".field-row")
     .filter({ hasText: "横向偏移" })
     .locator("input");
-  const panelWidth = panelSection
-    .locator(".field-row")
-    .filter({ hasText: "宽度" })
-    .locator("input");
+  const panelWidth = panelSection.getByRole("spinbutton", {
+    name: "宽度 mm",
+    exact: true,
+  });
   await expect(horizontalOffset).toHaveValue("0");
   await expect(panelWidth).toHaveValue("62.64");
   const canvas = page.locator(".viewport-canvas canvas");
@@ -1001,6 +1594,18 @@ test("narrow workbench stays framed and keeps the 3D canvas visible", async ({ p
   await expect(inspector).toBeVisible();
   await page.waitForTimeout(700);
 
+  const pcbLength = inspector.getByRole("spinbutton", {
+    name: "长度 mm",
+    exact: true,
+  });
+  await pcbLength.click();
+  await pcbLength.press("Control+A");
+  await pcbLength.press("Backspace");
+  await expect(pcbLength).toHaveValue("");
+  await pcbLength.pressSequentially("120");
+  await pcbLength.press("Enter");
+  await expect(pcbLength).toHaveValue("120");
+
   const viewportBox = await viewport.boundingBox();
   const inspectorBox = await inspector.boundingBox();
   expect(viewportBox).not.toBeNull();
@@ -1017,6 +1622,28 @@ test("narrow workbench stays framed and keeps the 3D canvas visible", async ({ p
   const pixels = await readScreenshotPixels(page, canvas);
   expect(pixels.colorCount).toBeGreaterThan(16);
   expect(pixels.luminanceRange).toBeGreaterThan(30);
+
+  await page.getByRole("button", { name: "打开对象树" }).click();
+  await expect(page.locator(".workbench")).toHaveClass(/is-assembly-open/);
+  const assemblyPanel = page.getByRole("complementary", {
+    name: "装配体和特征树",
+  });
+  await expect
+    .poll(async () => (await assemblyPanel.boundingBox())?.x ?? -999)
+    .toBeGreaterThanOrEqual(-1);
+  const assemblyBox = await assemblyPanel.boundingBox();
+  expect(assemblyBox).not.toBeNull();
+  expect(assemblyBox!.x).toBeGreaterThanOrEqual(0);
+  await page.screenshot({
+    path: testInfo.outputPath("narrow-assembly-drawer.png"),
+    fullPage: true,
+  });
+  await page.locator(".mobile-panel-close").click();
+
+  await page.getByRole("button", { name: "更多工具" }).click();
+  const mobileTools = page.getByRole("menu", { name: "项目和视图工具" });
+  await expect(mobileTools.getByRole("menuitem", { name: "新建项目" })).toBeVisible();
+  await expect(mobileTools.getByRole("menuitem", { name: "打开项目" })).toBeVisible();
 
   await page.screenshot({
     path: testInfo.outputPath("narrow-workbench.png"),

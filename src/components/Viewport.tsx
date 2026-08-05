@@ -1,11 +1,12 @@
 import { useEffect, useRef } from "react";
-import { Eye, Focus, Move3D, Scaling } from "lucide-react";
+import { Eye, Focus, Move3D, Scaling, X } from "lucide-react";
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { TransformControls } from "three/examples/jsm/controls/TransformControls.js";
 import { buildPreviewModel, disposePreviewModel } from "../geometry/buildPreviewModel";
 import { useDesignerStore } from "../store/designerStore";
 import type { EnclosureFace, SelectablePart } from "../domain/model";
+import { SELECTABLE_PART_LABELS } from "../domain/parts";
 import { getPlacementSurfaceOffsets } from "../domain/placements";
 
 function getEditableFeature(object: THREE.Object3D | null): THREE.Object3D | null {
@@ -16,7 +17,10 @@ function getEditableFeature(object: THREE.Object3D | null): THREE.Object3D | nul
       typeof current.userData.featureId === "string" &&
       (current.userData.featureKind === "panel" ||
         current.userData.featureKind === "connector" ||
-        current.userData.featureKind === "antenna")
+        current.userData.featureKind === "antenna" ||
+        current.userData.featureKind === "pcb" ||
+        current.userData.featureKind === "custom" ||
+        current.userData.featureKind === "battery")
     ) {
       return current;
     }
@@ -28,7 +32,13 @@ function getEditableFeature(object: THREE.Object3D | null): THREE.Object3D | nul
 function findEditableFeature(
   root: THREE.Object3D,
   featureId: string,
-  featureKind: "panel" | "connector" | "antenna",
+  featureKind:
+    | "pcb"
+    | "panel"
+    | "connector"
+    | "antenna"
+    | "custom"
+    | "battery",
 ): THREE.Object3D | null {
   let result: THREE.Object3D | null = null;
   root.traverse((child) => {
@@ -82,12 +92,78 @@ function configureTransformAxes(
   controls.showXZ = controls.showX && controls.showZ;
 }
 
+function configureAllTransformAxes(controls: TransformControls): void {
+  controls.showX = true;
+  controls.showY = true;
+  controls.showZ = true;
+  controls.showXY = true;
+  controls.showYZ = true;
+  controls.showXZ = true;
+}
+
+function configureFloorTransformAxes(controls: TransformControls): void {
+  controls.showX = true;
+  controls.showY = false;
+  controls.showZ = true;
+  controls.showXY = false;
+  controls.showYZ = false;
+  controls.showXZ = true;
+}
+
 function commitFeatureTransform(object: THREE.Object3D): void {
   const state = useDesignerStore.getState();
   const featureId = object.userData.featureId as string | undefined;
   const featureKind = object.userData.featureKind as string | undefined;
   const face = object.userData.face as EnclosureFace | undefined;
-  if (!featureId || !face) return;
+  if (!featureId) return;
+
+  if (featureKind === "pcb") {
+    state.updatePcbReferencePlacement(featureId, {
+      offsetX: object.position.x,
+      offsetZ: object.position.z,
+      elevation:
+        object.position.y -
+        state.parameters.bottomThickness -
+        state.parameters.standoffHeight,
+    });
+    return;
+  }
+
+  if (featureKind === "custom") {
+    if (state.transformMode === "move") {
+      state.updateCustomComponent(featureId, {
+        positionX: object.position.x,
+        positionY: object.position.y,
+        positionZ: object.position.z,
+      });
+    } else {
+      const baseWidth = Number(object.userData.baseWidth);
+      const baseHeight = Number(object.userData.baseHeight);
+      const baseDepth = Number(object.userData.baseDepth);
+      if (
+        Number.isFinite(baseWidth) &&
+        Number.isFinite(baseHeight) &&
+        Number.isFinite(baseDepth)
+      ) {
+        state.updateCustomComponent(featureId, {
+          width: roundMeasurement(baseWidth * Math.abs(object.scale.x)),
+          height: roundMeasurement(baseHeight * Math.abs(object.scale.y)),
+          depth: roundMeasurement(baseDepth * Math.abs(object.scale.z)),
+        });
+      }
+    }
+    return;
+  }
+
+  if (featureKind === "battery") {
+    state.updateBatteryCompartment(featureId, {
+      offsetX: object.position.x,
+      offsetZ: object.position.z,
+    });
+    return;
+  }
+
+  if (!face) return;
 
   if (state.transformMode === "move" || featureKind === "antenna") {
     let [offsetU, offsetV] = getSurfaceCoordinates(
@@ -194,6 +270,14 @@ export function Viewport() {
   const parameters = useDesignerStore((state) => state.parameters);
   const pcbReference = useDesignerStore((state) => state.pcbReference);
   const stepPreview = useDesignerStore((state) => state.stepPreview);
+  const pcbPreviews = useDesignerStore((state) => state.pcbPreviews);
+  const customComponentPreviews = useDesignerStore(
+    (state) => state.customComponentPreviews,
+  );
+  const lidTransparent = useDesignerStore((state) => state.lidTransparent);
+  const hiddenFaces = useDesignerStore((state) => state.hiddenFaces);
+  const hiddenFeatureIds = useDesignerStore((state) => state.hiddenFeatureIds);
+  const lockedFeatureIds = useDesignerStore((state) => state.lockedFeatureIds);
   const selectedPart = useDesignerStore((state) => state.selectedPart);
   const selectedFeatureId = useDesignerStore((state) => state.selectedFeatureId);
   const transformMode = useDesignerStore((state) => state.transformMode);
@@ -238,7 +322,8 @@ export function Viewport() {
     controls.screenSpacePanning = true;
     controls.minDistance = 28;
     controls.maxDistance = 900;
-    controls.maxPolarAngle = Math.PI * 0.495;
+    controls.minPolarAngle = Math.PI * 0.03;
+    controls.maxPolarAngle = Math.PI * 0.97;
 
     const transformControls = new TransformControls(camera, renderer.domElement);
     transformControls.setSpace("world");
@@ -252,14 +337,11 @@ export function Viewport() {
       const dragging = Boolean(event.value);
       controls.enabled = !dragging;
       if (dragging) transformWasDragging = true;
-    };
-    const onTransformMouseUp = () => {
-      if (attachedFeatureRef.current) {
+      else if (transformWasDragging && attachedFeatureRef.current) {
         commitFeatureTransform(attachedFeatureRef.current);
       }
     };
     transformControls.addEventListener("dragging-changed", onDraggingChanged);
-    transformControls.addEventListener("mouseUp", onTransformMouseUp);
 
     const hemisphere = new THREE.HemisphereLight(0xffffff, 0x9ca79f, 2.2);
     scene.add(hemisphere);
@@ -272,6 +354,8 @@ export function Viewport() {
     keyLight.shadow.camera.right = 180;
     keyLight.shadow.camera.top = 180;
     keyLight.shadow.camera.bottom = -180;
+    keyLight.shadow.bias = -0.00015;
+    keyLight.shadow.normalBias = 0.65;
     scene.add(keyLight);
 
     const fillLight = new THREE.DirectionalLight(0xd9eee2, 1.35);
@@ -289,7 +373,24 @@ export function Viewport() {
 
     const grid = new THREE.GridHelper(600, 60, 0xaeb5af, 0xd9ddd9);
     grid.position.y = 0.02;
+    grid.userData.requestedVisible = useDesignerStore.getState().showGrid;
     scene.add(grid);
+
+    let belowWorkPlane = false;
+    const updateCameraState = () => {
+      const polarAngle = controls.getPolarAngle();
+      if (!belowWorkPlane && polarAngle > Math.PI / 2 + 0.035) {
+        belowWorkPlane = true;
+      } else if (belowWorkPlane && polarAngle < Math.PI / 2 - 0.035) {
+        belowWorkPlane = false;
+      }
+      host.dataset.cameraPolarAngle = controls.getPolarAngle().toFixed(4);
+      host.dataset.cameraBelowWorkPlane = String(belowWorkPlane);
+      ground.visible = !belowWorkPlane;
+      grid.visible = Boolean(grid.userData.requestedVisible) && !belowWorkPlane;
+    };
+    controls.addEventListener("change", updateCameraState);
+    updateCameraState();
 
     const resize = () => {
       const width = Math.max(1, host.clientWidth);
@@ -330,7 +431,13 @@ export function Viewport() {
       const feature = getEditableFeature(hit?.object ?? null);
       if (feature) {
         setSelectedFeature(
-          feature.userData.featureKind as "panel" | "connector" | "antenna",
+          feature.userData.featureKind as
+            | "pcb"
+            | "panel"
+            | "connector"
+            | "antenna"
+            | "custom"
+            | "battery",
           feature.userData.featureId as string,
         );
         return;
@@ -365,9 +472,9 @@ export function Viewport() {
       resizeObserver.disconnect();
       renderer.domElement.removeEventListener("pointerdown", onPointerDown);
       renderer.domElement.removeEventListener("pointerup", onPointerUp);
+      controls.removeEventListener("change", updateCameraState);
       controls.dispose();
       transformControls.removeEventListener("dragging-changed", onDraggingChanged);
-      transformControls.removeEventListener("mouseUp", onTransformMouseUp);
       transformControls.detach();
       scene.remove(transformHelper);
       transformControls.dispose();
@@ -406,6 +513,11 @@ export function Viewport() {
       stepPreview,
       focusedPart,
       selectedFeatureId,
+      pcbPreviews,
+      customComponentPreviews,
+      lidTransparent,
+      hiddenFaces,
+      hiddenFeatureIds,
     );
     scene.add(model);
     modelRef.current = model;
@@ -414,19 +526,36 @@ export function Viewport() {
     if (
       transformControls &&
       selectedFeatureId &&
+      !hiddenFeatureIds.includes(selectedFeatureId) &&
+      !lockedFeatureIds.includes(selectedFeatureId) &&
       (selectedPart === "panel" ||
         selectedPart === "connector" ||
-        selectedPart === "antenna")
+        selectedPart === "antenna" ||
+        selectedPart === "pcb" ||
+        selectedPart === "custom" ||
+        selectedPart === "battery")
     ) {
       const feature = findEditableFeature(model, selectedFeatureId, selectedPart);
       if (feature) {
         attachedFeatureRef.current = feature;
         transformControls.setMode(
-          selectedPart === "antenna" || transformMode === "move"
+          selectedPart === "antenna" ||
+            selectedPart === "pcb" ||
+            selectedPart === "battery" ||
+            transformMode === "move"
             ? "translate"
             : "scale",
         );
-        configureTransformAxes(transformControls, feature.userData.face as EnclosureFace);
+        if (selectedPart === "battery") {
+          configureFloorTransformAxes(transformControls);
+        } else if (selectedPart === "pcb" || selectedPart === "custom") {
+          configureAllTransformAxes(transformControls);
+        } else {
+          configureTransformAxes(
+            transformControls,
+            feature.userData.face as EnclosureFace,
+          );
+        }
         transformControls.attach(feature);
       } else {
         transformControls.detach();
@@ -459,6 +588,12 @@ export function Viewport() {
     focusedPart,
     parameters,
     pcbReference,
+    pcbPreviews,
+    customComponentPreviews,
+    hiddenFaces,
+    hiddenFeatureIds,
+    lidTransparent,
+    lockedFeatureIds,
     selectedFeatureId,
     selectedPart,
     stepPreview,
@@ -466,7 +601,11 @@ export function Viewport() {
   ]);
 
   useEffect(() => {
-    if (gridRef.current) gridRef.current.visible = showGrid;
+    if (!gridRef.current) return;
+    gridRef.current.userData.requestedVisible = showGrid;
+    const belowWorkPlane =
+      hostRef.current?.dataset.cameraBelowWorkPlane === "true";
+    gridRef.current.visible = showGrid && !belowWorkPlane;
   }, [showGrid]);
 
   useEffect(() => {
@@ -476,43 +615,96 @@ export function Viewport() {
     }
   }, [cameraResetToken]);
 
+  const selectedFeatureReadOnly = Boolean(
+    selectedFeatureId &&
+      (hiddenFeatureIds.includes(selectedFeatureId) ||
+        lockedFeatureIds.includes(selectedFeatureId)),
+  );
+
   return (
     <>
       <div
         className="viewport-canvas"
         data-focused-part={focusedPart ?? "all"}
         data-selected-feature={selectedFeatureId ?? "none"}
-        data-transform-mode={selectedPart === "antenna" ? "move" : transformMode}
-        data-reference-kind={stepPreview ? "step" : pcbReference ? pcbReference.format : "parametric"}
+        data-lid-transparent={String(lidTransparent)}
+        data-selected-feature-readonly={String(selectedFeatureReadOnly)}
+        data-transform-mode={
+          selectedPart === "antenna" ||
+          selectedPart === "pcb" ||
+          selectedPart === "battery"
+            ? "move"
+            : transformMode
+        }
+        data-reference-kind={
+          parameters.pcbReferences.length > 1
+            ? "multiple"
+            : parameters.pcbReferences.length === 1
+              ? parameters.pcbReferences[0].reference.format
+            : stepPreview
+              ? "step"
+              : pcbReference
+                ? pcbReference.format
+                : "parametric"
+        }
         ref={hostRef}
       />
+      {focusedPart ? (
+        <div className="viewport-focus-state" role="status">
+          <Focus size={14} />
+          <span>仅显示：{SELECTABLE_PART_LABELS[focusedPart]}</span>
+          <button
+            type="button"
+            onClick={showAllParts}
+            title="显示全部零件"
+            aria-label="退出聚焦并显示全部零件"
+          >
+            <X size={14} />
+          </button>
+        </div>
+      ) : null}
       <div className="viewport-transform-controls" role="group" aria-label="3D 编辑工具">
         <button
-          className={`icon-button ${transformMode === "move" || selectedPart === "antenna" ? "is-active" : ""}`}
+          className={`icon-button ${transformMode === "move" || selectedPart === "antenna" || selectedPart === "pcb" || selectedPart === "battery" ? "is-active" : ""}`}
           type="button"
           disabled={
-            selectedPart !== "panel" &&
-            selectedPart !== "connector" &&
-            selectedPart !== "antenna"
+            selectedFeatureReadOnly ||
+            (selectedPart !== "panel" &&
+              selectedPart !== "connector" &&
+              selectedPart !== "antenna" &&
+              selectedPart !== "pcb" &&
+              selectedPart !== "custom" &&
+              selectedPart !== "battery")
           }
           onClick={() => setTransformMode("move")}
           title="移动选中对象"
           aria-label="移动选中对象"
-          aria-pressed={transformMode === "move" || selectedPart === "antenna"}
+          aria-pressed={
+            transformMode === "move" ||
+            selectedPart === "antenna" ||
+            selectedPart === "pcb" ||
+            selectedPart === "battery"
+          }
         >
           <Move3D size={17} />
         </button>
         <button
-          className={`icon-button ${transformMode === "scale" && selectedPart !== "antenna" ? "is-active" : ""}`}
+          className={`icon-button ${transformMode === "scale" && selectedPart !== "antenna" && selectedPart !== "pcb" ? "is-active" : ""}`}
           type="button"
           disabled={
-            selectedPart !== "panel" &&
-            selectedPart !== "connector"
+            selectedFeatureReadOnly ||
+            (selectedPart !== "panel" &&
+              selectedPart !== "connector" &&
+              selectedPart !== "custom")
           }
           onClick={() => setTransformMode("scale")}
           title="缩放选中对象"
           aria-label="缩放选中对象"
-          aria-pressed={transformMode === "scale" && selectedPart !== "antenna"}
+          aria-pressed={
+            transformMode === "scale" &&
+            selectedPart !== "antenna" &&
+            selectedPart !== "pcb"
+          }
         >
           <Scaling size={17} />
         </button>

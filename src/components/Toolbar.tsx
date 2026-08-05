@@ -8,10 +8,14 @@ import {
   FolderOpen,
   Grid3X3,
   Layers3,
+  Menu,
+  PanelLeftOpen,
+  Redo2,
   Scan,
   ShieldCheck,
+  Undo2,
 } from "lucide-react";
-import type { RefObject } from "react";
+import { useEffect, useRef, useState, type RefObject } from "react";
 import type { ValidationIssue } from "../domain/model";
 import { useDesignerStore } from "../store/designerStore";
 
@@ -22,9 +26,13 @@ interface ToolbarProps {
   stepInputRef: RefObject<HTMLInputElement | null>;
   issues: ValidationIssue[];
   onExport: () => void;
+  assemblyOpen: boolean;
+  onToggleAssembly: () => void;
 }
 
-export function Toolbar({ fileInputRef, pcbInputRef, manufacturingInputRef, stepInputRef, issues, onExport }: ToolbarProps) {
+export function Toolbar({ fileInputRef, pcbInputRef, manufacturingInputRef, stepInputRef, issues, onExport, assemblyOpen, onToggleAssembly }: ToolbarProps) {
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const mobileMenuRef = useRef<HTMLDivElement>(null);
   const projectName = useDesignerStore((state) => state.projectName);
   const showGrid = useDesignerStore((state) => state.showGrid);
   const exploded = useDesignerStore((state) => state.exploded);
@@ -32,7 +40,29 @@ export function Toolbar({ fileInputRef, pcbInputRef, manufacturingInputRef, step
   const toggleExploded = useDesignerStore((state) => state.toggleExploded);
   const resetCamera = useDesignerStore((state) => state.resetCamera);
   const resetProject = useDesignerStore((state) => state.resetProject);
+  const canUndo = useDesignerStore((state) => state.canUndo);
+  const canRedo = useDesignerStore((state) => state.canRedo);
+  const undo = useDesignerStore((state) => state.undo);
+  const redo = useDesignerStore((state) => state.redo);
   const errors = issues.filter((issue) => issue.level === "error").length;
+
+  useEffect(() => {
+    if (!mobileMenuOpen) return;
+    const closeOnPointer = (event: PointerEvent) => {
+      if (!mobileMenuRef.current?.contains(event.target as Node)) {
+        setMobileMenuOpen(false);
+      }
+    };
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setMobileMenuOpen(false);
+    };
+    window.addEventListener("pointerdown", closeOnPointer);
+    window.addEventListener("keydown", closeOnEscape);
+    return () => {
+      window.removeEventListener("pointerdown", closeOnPointer);
+      window.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [mobileMenuOpen]);
 
   const createNewProject = () => {
     if (window.confirm("重置当前设计并创建新项目？")) resetProject();
@@ -49,6 +79,17 @@ export function Toolbar({ fileInputRef, pcbInputRef, manufacturingInputRef, step
           <span>{projectName}</span>
         </div>
       </div>
+
+      <button
+        className={`icon-button mobile-assembly-button ${assemblyOpen ? "is-active" : ""}`}
+        type="button"
+        onClick={onToggleAssembly}
+        title={assemblyOpen ? "关闭对象树" : "打开对象树"}
+        aria-label={assemblyOpen ? "关闭对象树" : "打开对象树"}
+        aria-pressed={assemblyOpen}
+      >
+        <PanelLeftOpen size={18} />
+      </button>
 
       <div className="toolbar-group" aria-label="项目工具">
         <button className="icon-button" type="button" onClick={createNewProject} title="新建项目" aria-label="新建项目">
@@ -98,6 +139,29 @@ export function Toolbar({ fileInputRef, pcbInputRef, manufacturingInputRef, step
 
       <div className="toolbar-spacer" />
 
+      <div className="toolbar-group toolbar-history" aria-label="编辑历史">
+        <button
+          className="icon-button"
+          type="button"
+          disabled={!canUndo}
+          onClick={undo}
+          title="撤销"
+          aria-label="撤销"
+        >
+          <Undo2 size={18} />
+        </button>
+        <button
+          className="icon-button"
+          type="button"
+          disabled={!canRedo}
+          onClick={redo}
+          title="重做"
+          aria-label="重做"
+        >
+          <Redo2 size={18} />
+        </button>
+      </div>
+
       <div className="toolbar-group" aria-label="视图工具">
         <button
           className={`icon-button ${showGrid ? "is-active" : ""}`}
@@ -127,6 +191,58 @@ export function Toolbar({ fileInputRef, pcbInputRef, manufacturingInputRef, step
       <div className={`check-indicator ${errors > 0 ? "has-error" : ""}`} title="设计检查状态">
         <ShieldCheck size={17} />
         <span>{errors > 0 ? `${errors} 项错误` : "检查通过"}</span>
+      </div>
+
+      <div className="mobile-toolbar-menu" ref={mobileMenuRef}>
+        <button
+          className={`icon-button ${mobileMenuOpen ? "is-active" : ""}`}
+          type="button"
+          onClick={() => setMobileMenuOpen((current) => !current)}
+          title="更多工具"
+          aria-label="更多工具"
+          aria-expanded={mobileMenuOpen}
+        >
+          <Menu size={18} />
+        </button>
+        {mobileMenuOpen ? (
+          <div className="toolbar-overflow-menu" role="menu" aria-label="项目和视图工具">
+            <button type="button" role="menuitem" onClick={() => { createNewProject(); setMobileMenuOpen(false); }}>
+              <FilePlus2 size={16} /><span>新建项目</span>
+            </button>
+            <button type="button" role="menuitem" onClick={() => { fileInputRef.current?.click(); setMobileMenuOpen(false); }}>
+              <FolderOpen size={16} /><span>打开项目</span>
+            </button>
+            <button type="button" role="menuitem" onClick={() => { pcbInputRef.current?.click(); setMobileMenuOpen(false); }}>
+              <CircuitBoard size={16} /><span>导入 PCB</span>
+            </button>
+            <button type="button" role="menuitem" onClick={() => { manufacturingInputRef.current?.click(); setMobileMenuOpen(false); }}>
+              <Files size={16} /><span>板框/钻孔</span>
+            </button>
+            <button type="button" role="menuitem" onClick={() => { stepInputRef.current?.click(); setMobileMenuOpen(false); }}>
+              <Cuboid size={16} /><span>导入 STEP</span>
+            </button>
+            <button type="button" role="menuitem" onClick={() => { onExport(); setMobileMenuOpen(false); }}>
+              <Download size={16} /><span>导出项目</span>
+            </button>
+            <div className="toolbar-overflow-separator" />
+            <button type="button" role="menuitem" disabled={!canUndo} onClick={undo}>
+              <Undo2 size={16} /><span>撤销</span>
+            </button>
+            <button type="button" role="menuitem" disabled={!canRedo} onClick={redo}>
+              <Redo2 size={16} /><span>重做</span>
+            </button>
+            <div className="toolbar-overflow-separator" />
+            <button className={showGrid ? "is-active" : ""} type="button" role="menuitemcheckbox" aria-checked={showGrid} onClick={toggleGrid}>
+              <Grid3X3 size={16} /><span>显示网格</span>
+            </button>
+            <button className={exploded ? "is-active" : ""} type="button" role="menuitemcheckbox" aria-checked={exploded} onClick={toggleExploded}>
+              <Layers3 size={16} /><span>爆炸视图</span>
+            </button>
+            <button type="button" role="menuitem" onClick={() => { resetCamera(); setMobileMenuOpen(false); }}>
+              <Scan size={16} /><span>适合视图</span>
+            </button>
+          </div>
+        ) : null}
       </div>
     </header>
   );

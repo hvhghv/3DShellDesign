@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { CircleAlert, CircleCheck, Ruler, Save } from "lucide-react";
 import { AssemblyTree } from "./components/AssemblyTree";
 import { Inspector } from "./components/Inspector";
@@ -6,6 +6,7 @@ import { Toolbar } from "./components/Toolbar";
 import { Viewport } from "./components/Viewport";
 import { deriveEnclosureDimensions, validateDesign } from "./domain/enclosure";
 import { getMaterial } from "./domain/materials";
+import { SELECTABLE_PART_LABELS } from "./domain/parts";
 import { importKicadPcb } from "./importers/kicadWorkerClient";
 import { importGerberExcellon } from "./importers/gerberWorkerClient";
 import { importStepReference } from "./importers/stepWorkerClient";
@@ -27,7 +28,17 @@ function downloadJson(filename: string, value: unknown): void {
   window.setTimeout(() => URL.revokeObjectURL(url), 0);
 }
 
+function isEditingText(target: EventTarget | null): boolean {
+  if (!(target instanceof Element)) return false;
+  return Boolean(
+    target.closest(
+      "input, textarea, select, [contenteditable=''], [contenteditable='true']",
+    ),
+  );
+}
+
 export default function App() {
+  const [mobileAssemblyOpen, setMobileAssemblyOpen] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const pcbInputRef = useRef<HTMLInputElement>(null);
   const manufacturingInputRef = useRef<HTMLInputElement>(null);
@@ -36,12 +47,31 @@ export default function App() {
   const parameters = useDesignerStore((state) => state.parameters);
   const pcbReference = useDesignerStore((state) => state.pcbReference);
   const selectedPart = useDesignerStore((state) => state.selectedPart);
+  const selectedFeatureId = useDesignerStore((state) => state.selectedFeatureId);
+  const lockedFeatureIds = useDesignerStore((state) => state.lockedFeatureIds);
   const cachedAt = useDesignerStore((state) => state.cachedAt);
   const cacheStatus = useDesignerStore((state) => state.cacheStatus);
   const loadProject = useDesignerStore((state) => state.loadProject);
   const setPcbReference = useDesignerStore((state) => state.setPcbReference);
   const setStepReference = useDesignerStore((state) => state.setStepReference);
   const restoreCachedProject = useDesignerStore((state) => state.restoreCachedProject);
+  const removePanelPlacement = useDesignerStore((state) => state.removePanelPlacement);
+  const removeConnectorPlacement = useDesignerStore(
+    (state) => state.removeConnectorPlacement,
+  );
+  const removeAntennaPlacement = useDesignerStore(
+    (state) => state.removeAntennaPlacement,
+  );
+  const removeCustomComponent = useDesignerStore(
+    (state) => state.removeCustomComponent,
+  );
+  const removeBatteryCompartment = useDesignerStore(
+    (state) => state.removeBatteryCompartment,
+  );
+  const clearPcbReference = useDesignerStore((state) => state.clearPcbReference);
+  const duplicateFeature = useDesignerStore((state) => state.duplicateFeature);
+  const undo = useDesignerStore((state) => state.undo);
+  const redo = useDesignerStore((state) => state.redo);
   const dimensions = useMemo(() => deriveEnclosureDimensions(parameters), [parameters]);
   const issues = useMemo(
     () => validateDesign(parameters, pcbReference),
@@ -52,6 +82,98 @@ export default function App() {
   useEffect(() => {
     void restoreCachedProject();
   }, [restoreCachedProject]);
+
+  useEffect(() => {
+    const handleEditingShortcuts = (event: KeyboardEvent) => {
+      if (
+        event.defaultPrevented ||
+        event.repeat ||
+        event.isComposing ||
+        event.altKey ||
+        isEditingText(event.target) ||
+        (!event.ctrlKey && !event.metaKey)
+      ) {
+        return;
+      }
+
+      const key = event.key.toLocaleLowerCase();
+      if (key === "z") {
+        if (event.shiftKey) redo();
+        else undo();
+        event.preventDefault();
+        return;
+      }
+      if (key === "y") {
+        redo();
+        event.preventDefault();
+        return;
+      }
+      if (
+        key === "d" &&
+        selectedFeatureId &&
+        (selectedPart === "pcb" ||
+          selectedPart === "panel" ||
+          selectedPart === "connector" ||
+          selectedPart === "antenna" ||
+          selectedPart === "custom" ||
+          selectedPart === "battery")
+      ) {
+        duplicateFeature(selectedPart, selectedFeatureId);
+        event.preventDefault();
+      }
+    };
+
+    window.addEventListener("keydown", handleEditingShortcuts);
+    return () => window.removeEventListener("keydown", handleEditingShortcuts);
+  }, [duplicateFeature, redo, selectedFeatureId, selectedPart, undo]);
+
+  useEffect(() => {
+    const deleteSelectedFeature = (event: KeyboardEvent) => {
+      if (
+        event.key !== "Delete" ||
+        event.defaultPrevented ||
+        event.repeat ||
+        event.isComposing ||
+        event.altKey ||
+        event.ctrlKey ||
+        event.metaKey ||
+        isEditingText(event.target) ||
+        !selectedFeatureId ||
+        lockedFeatureIds.includes(selectedFeatureId)
+      ) {
+        return;
+      }
+
+      if (selectedPart === "panel") removePanelPlacement(selectedFeatureId);
+      else if (selectedPart === "connector") {
+        removeConnectorPlacement(selectedFeatureId);
+      } else if (selectedPart === "antenna") {
+        removeAntennaPlacement(selectedFeatureId);
+      } else if (selectedPart === "custom") {
+        removeCustomComponent(selectedFeatureId);
+      } else if (selectedPart === "battery") {
+        removeBatteryCompartment(selectedFeatureId);
+      } else if (selectedPart === "pcb") {
+        clearPcbReference(selectedFeatureId);
+      } else {
+        return;
+      }
+      event.preventDefault();
+    };
+
+    window.addEventListener("keydown", deleteSelectedFeature);
+    return () => window.removeEventListener("keydown", deleteSelectedFeature);
+  }, [
+    removeAntennaPlacement,
+    removeCustomComponent,
+    removeBatteryCompartment,
+    clearPcbReference,
+    lockedFeatureIds,
+    removeConnectorPlacement,
+    removePanelPlacement,
+    selectedFeatureId,
+    selectedPart,
+  ]);
 
   const exportProject = () => {
     const snapshot = createProjectSnapshot(projectName, parameters, pcbReference);
@@ -72,13 +194,15 @@ export default function App() {
     }
   };
 
-  const importPcb = async (file: File | undefined) => {
-    if (!file) return;
+  const importPcb = async (files: FileList | null) => {
+    if (!files || files.length === 0) return;
     try {
-      if (file.size > 15 * 1024 * 1024) {
-        throw new Error("KiCad PCB 文件不能超过 15 MiB");
+      for (const file of Array.from(files)) {
+        if (file.size > 15 * 1024 * 1024) {
+          throw new Error("KiCad PCB 文件不能超过 15 MiB");
+        }
+        setPcbReference(await importKicadPcb(await file.arrayBuffer(), file.name));
       }
-      setPcbReference(await importKicadPcb(await file.arrayBuffer(), file.name));
     } catch (error) {
       const message = error instanceof Error ? error.message : "无法读取 KiCad PCB";
       window.alert(message);
@@ -118,16 +242,20 @@ export default function App() {
     }
   };
 
-  const importStep = async (file: File | undefined) => {
-    if (!file) return;
+  const importStep = async (files: FileList | null) => {
+    if (!files || files.length === 0) return;
     try {
-      if (file.size > 50 * 1024 * 1024) throw new Error("STEP 文件不能超过 50 MiB");
-      const result = await importStepReference(
-        await file.arrayBuffer(),
-        file.name,
-        parameters.pcbThickness,
-      );
-      setStepReference(result.reference, result.preview);
+      for (const file of Array.from(files)) {
+        if (file.size > 50 * 1024 * 1024) {
+          throw new Error("STEP 文件不能超过 50 MiB");
+        }
+        const result = await importStepReference(
+          await file.arrayBuffer(),
+          file.name,
+          parameters.pcbThickness,
+        );
+        setStepReference(result.reference, result.preview);
+      }
     } catch (error) {
       window.alert(error instanceof Error ? error.message : "无法读取 STEP 文件");
     } finally {
@@ -144,6 +272,8 @@ export default function App() {
         stepInputRef={stepInputRef}
         issues={issues}
         onExport={exportProject}
+        assemblyOpen={mobileAssemblyOpen}
+        onToggleAssembly={() => setMobileAssemblyOpen((current) => !current)}
       />
       <input
         ref={fileInputRef}
@@ -156,8 +286,9 @@ export default function App() {
         ref={pcbInputRef}
         className="visually-hidden"
         type="file"
+        multiple
         accept=".kicad_pcb"
-        onChange={(event) => void importPcb(event.currentTarget.files?.[0])}
+        onChange={(event) => void importPcb(event.currentTarget.files)}
       />
       <input
         ref={manufacturingInputRef}
@@ -171,12 +302,13 @@ export default function App() {
         ref={stepInputRef}
         className="visually-hidden"
         type="file"
+        multiple
         accept=".step,.stp,model/step"
-        onChange={(event) => void importStep(event.currentTarget.files?.[0])}
+        onChange={(event) => void importStep(event.currentTarget.files)}
       />
 
-      <div className="workbench">
-        <AssemblyTree />
+      <div className={`workbench ${mobileAssemblyOpen ? "is-assembly-open" : ""}`}>
+        <AssemblyTree onRequestClose={() => setMobileAssemblyOpen(false)} />
         <main className="viewport-panel">
           <Viewport />
           <div className="viewport-metrics" aria-label="外壳尺寸">
@@ -190,6 +322,14 @@ export default function App() {
           </div>
         </main>
         <Inspector />
+        {mobileAssemblyOpen ? (
+          <button
+            className="mobile-pane-backdrop"
+            type="button"
+            aria-label="关闭对象树"
+            onClick={() => setMobileAssemblyOpen(false)}
+          />
+        ) : null}
       </div>
 
       <footer className="status-bar">
@@ -206,7 +346,7 @@ export default function App() {
                   : "缓存已就绪"}
         </span>
         <span className="status-divider" />
-        <span className="status-item">选择：{selectedPart}</span>
+        <span className="status-item">选择：{SELECTABLE_PART_LABELS[selectedPart]}</span>
         <span className="status-divider" />
         <span className="status-item">材料：{getMaterial(parameters.shellMaterialId).shortName}</span>
         <span className="status-spacer" />

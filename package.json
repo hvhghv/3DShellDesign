@@ -11,6 +11,9 @@
     "lint": "eslint .",
     "test": "vitest run",
     "test:e2e": "playwright test",
+    "test:e2e:smoke": "playwright test --grep @smoke",
+    "test:e2e:full": "playwright test",
+    "test:e2e:manufacturing": "playwright test --grep @manufacturing",
     "typecheck": "tsc -b --pretty false",
     "preview": "vite preview"
   },

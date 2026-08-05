@@ -451,13 +451,16 @@ interface ComponentDefinition {
 
 预计站点地址：`https://hvhghv.github.io/3DShellDesign/`
 
-计划新增 `.github/workflows/pages.yml`，在 `main` 分支推送或手动触发时执行：
+`.github/workflows/pages.yml` 在 `main` 分支推送或手动触发时执行：
 
 1. 检出源码并安装固定版本 Node.js。
 2. 使用 lockfile 安装依赖。
 3. 执行类型检查、Lint、单元测试和正式构建。
-4. 上传 `dist/` 为 GitHub Pages artifact。
-5. 使用 GitHub 官方 Pages Action 完成部署。
+4. 在独立 Ubuntu runner 上执行 3 项 Chromium 关键烟测。
+5. 上传 `dist/` 为 GitHub Pages artifact。
+6. 构建与烟测通过后，使用 GitHub 官方 Pages Action 完成部署。
+
+完整浏览器与制造回归位于 `.github/workflows/regression.yml`，每天北京时间 02:00 或由 `workflow_dispatch` 手动触发。21 项测试按测试粒度拆到两个单 worker 分片，失败时立即取消另一分片；该工作流不阻塞 Pages 发布。
 
 部署约束：
 
@@ -613,8 +616,8 @@ MVP 必须完成以下端到端任务：
 - USB、电源、网络、两种间距乘 `5P–40P` 的 72 种 FPC、四种间距乘三种位数的端子和四类天线均采用数据驱动制造定义；FPC 默认由间距与针数两个紧凑控件选择，搜索时仍列出匹配的具体型号，对象树加号只有在选定型号后才创建实例。
 - 壁厚、装配间隙、元件高度、卡扣材料和面板厚度检查。
 - 项目 JSON 导入导出、localStorage 参数快照和 IndexedDB 多 PCB/自定义模型网格缓存，关闭页面后可恢复当前项目。
-- GitHub Pages 自动检查、构建和部署工作流。
-- GitHub Pages 将快速交互与慢速 Manifold 制造测试隔离到独立 Chromium 进程，失败时上传 Playwright 截图、上下文和 trace。
+- GitHub Pages 自动检查、构建和部署工作流，主发布链只等待 3 项关键 Playwright 烟测。
+- 完整 21 项 Playwright 浏览器与制造回归使用独立的手动/每日工作流和两个单 worker 分片；原综合制造用例拆分为默认壳体、天线/BOM、接口/面板及闭合结构/导入四组，成功场景跳过非断言截图，失败时按分片上传 Playwright 截图、上下文和 trace。
 - Manifold WASM 单线程实体内核和后台导出 Worker。
 - 下壳、顶盖和各面板实例的封闭实体生成及二进制 STL 导出。
 - 包含全部面板实例的多零件 3MF、带接口及穿板天线开孔的逐面板 SVG/DXF、BOM CSV 和制造清单 JSON 导出。

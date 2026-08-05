@@ -68,7 +68,9 @@ npm run dev
 ```powershell
 npm run lint
 npm test
-npm run test:e2e
+npm run test:e2e:smoke
+npm run test:e2e:manufacturing
+npm run test:e2e:full
 npm run build
 ```
 
@@ -84,7 +86,7 @@ npm run check
 
 ## GitHub Pages
 
-推送 `main` 后，[pages.yml](.github/workflows/pages.yml) 会执行依赖安装、Lint、单元测试、快速浏览器交互、独立制造导出测试和生产构建，再发布 `dist/`；浏览器测试失败时会保留 Playwright 截图和 trace artifact。
+推送 `main` 后，[pages.yml](.github/workflows/pages.yml) 会并行执行静态检查/单元测试/生产构建和 3 项关键 Playwright 烟测；两者通过后发布 `dist/`，不再让完整 STL/3MF 制造回归阻塞 Pages。完整 21 项浏览器回归由 [regression.yml](.github/workflows/regression.yml) 每天北京时间 02:00 或手动触发，并拆成两个单 worker 分片。CI 成功用例不生成非必要全页截图，失败时保留 Playwright 截图、上下文和 trace artifact。
 
 仓库名称为 `3DShellDesign`，Actions 构建时 Vite 基础路径自动切换为 `/3DShellDesign/`。GitHub 仓库的 Pages Source 需要设置为 `GitHub Actions`。
 

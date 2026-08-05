@@ -1,7 +1,27 @@
-import { expect, test, type Locator, type Page } from "@playwright/test";
+import {
+  expect,
+  test,
+  type Locator,
+  type Page,
+  type TestInfo,
+} from "@playwright/test";
 import { strFromU8, unzipSync } from "fflate";
 import { readFile } from "node:fs/promises";
 import { Buffer } from "node:buffer";
+
+const captureCheckpoints = process.env.CI !== "true";
+
+async function captureVisualCheckpoint(
+  page: Page,
+  testInfo: TestInfo,
+  filename: string,
+): Promise<void> {
+  if (!captureCheckpoints) return;
+  await page.screenshot({
+    path: testInfo.outputPath(filename),
+    fullPage: true,
+  });
+}
 
 async function readScreenshotPixels(page: Page, canvas: Locator) {
   const screenshot = await canvas.screenshot({ type: "png" });
@@ -158,7 +178,7 @@ async function exportManufacturingStl(page: Page, option: string) {
   return mesh;
 }
 
-test("camera orbit reaches the enclosure underside", async ({ page }, testInfo) => {
+test("camera orbit reaches the enclosure underside @smoke", async ({ page }, testInfo) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto("/");
 
@@ -181,10 +201,7 @@ test("camera orbit reaches the enclosure underside", async ({ page }, testInfo) 
     Number(await viewport.getAttribute("data-camera-polar-angle")),
   ).toBeGreaterThan(Math.PI / 2 + 0.1);
   await expect(viewport).toHaveAttribute("data-camera-below-work-plane", "true");
-  await page.screenshot({
-    path: testInfo.outputPath("underside-orbit.png"),
-    fullPage: true,
-  });
+  await captureVisualCheckpoint(page, testInfo, "underside-orbit.png");
 });
 
 test("independently hides and restores enclosure faces", async ({ page }, testInfo) => {
@@ -209,10 +226,11 @@ test("independently hides and restores enclosure faces", async ({ page }, testIn
   await bottomToggle.uncheck();
   await expect(topToggle).not.toBeChecked();
   await expect(bottomToggle).not.toBeChecked();
-  await page.screenshot({
-    path: testInfo.outputPath("independent-face-visibility.png"),
-    fullPage: true,
-  });
+  await captureVisualCheckpoint(
+    page,
+    testInfo,
+    "independent-face-visibility.png",
+  );
 
   await page.getByRole("button", { name: "显示全部壳体面" }).click();
   await expect(frontToggle).toBeChecked();
@@ -220,8 +238,8 @@ test("independently hides and restores enclosure faces", async ({ page }, testIn
   await expect(bottomToggle).toBeChecked();
 });
 
-test("desktop workbench renders a nonblank interactive enclosure", async ({ page }, testInfo) => {
-  test.setTimeout(900_000);
+test("renders and exports the default enclosure @manufacturing", async ({ page }, testInfo) => {
+  test.setTimeout(420_000);
   const pageErrors: string[] = [];
   page.on("pageerror", (error) => pageErrors.push(error.message));
   await page.setViewportSize({ width: 1440, height: 900 });
@@ -276,10 +294,7 @@ test("desktop workbench renders a nonblank interactive enclosure", async ({ page
   await magnetSupportSelect.selectOption("corner-shelf");
   await page.getByRole("button", { name: "装配或爆炸视图" }).click();
   await page.waitForTimeout(300);
-  await page.screenshot({
-    path: testInfo.outputPath("magnet-corner-shelf.png"),
-    fullPage: true,
-  });
+  await captureVisualCheckpoint(page, testInfo, "magnet-corner-shelf.png");
 
   const exportSelect = page.getByRole("combobox", { name: "制造导出格式" });
   await exportSelect.selectOption("layout-3mf");
@@ -302,7 +317,6 @@ test("desktop workbench renders a nonblank interactive enclosure", async ({ page
   expect(layoutModel).toContain("PETG 韧性打印");
   expect(layoutModel).toContain("透明亚克力板");
 
-  let baseTriangleCount = 0;
   const exportCases = [
     { option: "base-stl", filename: "3dshell-base.stl", size: [108, 78, 24] },
     { option: "lid-stl", filename: "3dshell-lid.stl", size: [108, 78, 4.25] },
@@ -325,7 +339,6 @@ test("desktop workbench renders a nonblank interactive enclosure", async ({ page
     });
     if (exportCase.option === "base-stl") {
       expect(parsed.connectedComponents).toBe(1);
-      baseTriangleCount = parsed.triangleCount;
     }
   }
 
@@ -367,6 +380,21 @@ test("desktop workbench renders a nonblank interactive enclosure", async ({ page
   await page.getByRole("tab", { name: "结构" }).click();
 
   await expect(page.getByText(/三角面/)).toBeVisible();
+  expect(pageErrors).toEqual([]);
+});
+
+test("exports antenna cutouts and BOM data @manufacturing", async ({ page }) => {
+  test.setTimeout(420_000);
+  const pageErrors: string[] = [];
+  page.on("pageerror", (error) => pageErrors.push(error.message));
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+  await page.getByRole("tab", { name: "结构" }).click();
+  await page.getByRole("button", { name: "磁吸", exact: true }).click();
+  const baseTriangleCount = (
+    await exportManufacturingStl(page, "base-stl")
+  ).triangleCount;
+  const exportSelect = page.getByRole("combobox", { name: "制造导出格式" });
 
   await addAntenna(page);
   await page.getByRole("combobox", { name: "天线 1 安装位置" }).selectOption(
@@ -442,6 +470,17 @@ test("desktop workbench renders a nonblank interactive enclosure", async ({ page
     .filter({ hasText: "SMA 穿板棒状天线" })
     .click();
   await page.getByRole("button", { name: "删除当前天线" }).click();
+  expect(pageErrors).toEqual([]);
+});
+
+test("exports connector and surface placement geometry @manufacturing", async ({ page }, testInfo) => {
+  test.setTimeout(480_000);
+  const pageErrors: string[] = [];
+  page.on("pageerror", (error) => pageErrors.push(error.message));
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+  await page.getByRole("tab", { name: "结构" }).click();
+  const exportSelect = page.getByRole("combobox", { name: "制造导出格式" });
 
   await page.getByRole("button", { name: "螺丝", exact: true }).click();
   await page.getByRole("combobox", { name: "紧固件规格" }).selectOption(
@@ -616,11 +655,22 @@ test("desktop workbench renders a nonblank interactive enclosure", async ({ page
   }
   await page.locator(".tree-item").filter({ hasText: "面板 1" }).click();
   await page.getByRole("combobox", { name: "面板所在面" }).selectOption("front");
-  await page.screenshot({
-    path: testInfo.outputPath("surface-placement.png"),
-    fullPage: true,
-  });
+  await captureVisualCheckpoint(page, testInfo, "surface-placement.png");
   await page.getByRole("combobox", { name: "面板所在面" }).selectOption("back");
+  expect(pageErrors).toEqual([]);
+});
+
+test("exports closures, patterns, imports and templates @manufacturing", async ({ page }, testInfo) => {
+  test.setTimeout(480_000);
+  const pageErrors: string[] = [];
+  page.on("pageerror", (error) => pageErrors.push(error.message));
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+  const canvas = page.locator(".viewport-canvas canvas");
+  await expect(canvas).toBeVisible();
+  const defaultBase = await exportManufacturingStl(page, "base-stl");
+  await page.getByRole("tab", { name: "结构" }).click();
+  const exportSelect = page.getByRole("combobox", { name: "制造导出格式" });
   await page.locator(".tree-nav").getByRole("button", { name: /下壳/ }).click();
 
   await page.getByRole("combobox", { name: "镂空阵列类型" }).selectOption(
@@ -633,7 +683,7 @@ test("desktop workbench renders a nonblank interactive enclosure", async ({ page
   const hingePath = await (await hingeDownloadPromise).path();
   expect(hingePath).not.toBeNull();
   const hingeStl = readStlDimensions(await readFile(hingePath!));
-  expect(hingeStl.triangleCount).toBeGreaterThan(libraryStl.triangleCount);
+  expect(hingeStl.triangleCount).toBeGreaterThan(defaultBase.triangleCount);
   expect(hingeStl.dimensions[1]).toBeGreaterThan(78);
 
   await page.getByRole("button", { name: "滑盖", exact: true }).click();
@@ -742,14 +792,11 @@ test("desktop workbench renders a nonblank interactive enclosure", async ({ page
     expect(wallMountStl.dimensions[axis]).toBeCloseTo(dimension, 1);
   });
 
-  await page.screenshot({
-    path: testInfo.outputPath("desktop-workbench.png"),
-    fullPage: true,
-  });
+  await captureVisualCheckpoint(page, testInfo, "desktop-workbench.png");
   expect(pageErrors).toEqual([]);
 });
 
-test("device pickers create only the selected connector and antenna", async ({ page }, testInfo) => {
+test("device pickers create only the selected connector and antenna @smoke", async ({ page }, testInfo) => {
   test.setTimeout(120_000);
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto("/");
@@ -769,10 +816,7 @@ test("device pickers create only the selected connector and antenna", async ({ p
     "5",
   );
   await expect(compactFpcPicker.locator(".device-picker-item")).toHaveCount(0);
-  await page.screenshot({
-    path: testInfo.outputPath("compact-fpc-picker.png"),
-    fullPage: true,
-  });
+  await captureVisualCheckpoint(page, testInfo, "compact-fpc-picker.png");
   await page.keyboard.press("Escape");
   await expect(connectorPicker).toHaveCount(0);
   await page.getByRole("button", { name: "添加接口" }).click();
@@ -804,10 +848,7 @@ test("device pickers create only the selected connector and antenna", async ({ p
       (element) => element.scrollWidth - element.clientWidth,
     ),
   ).toBeLessThanOrEqual(1);
-  await page.screenshot({
-    path: testInfo.outputPath("connector-picker-surface.png"),
-    fullPage: true,
-  });
+  await captureVisualCheckpoint(page, testInfo, "connector-picker-surface.png");
   await connectorPicker
     .locator(".device-picker-item")
     .filter({ hasText: "1.25 mm 4P 线对板端子" })
@@ -870,10 +911,7 @@ test("searches, duplicates, undoes and redoes assembly features", async ({ page 
   await page.getByRole("button", { name: "清除对象筛选" }).click();
   await expect(connectorItems).toHaveCount(2);
 
-  await page.screenshot({
-    path: testInfo.outputPath("assembly-search-history.png"),
-    fullPage: true,
-  });
+  await captureVisualCheckpoint(page, testInfo, "assembly-search-history.png");
 });
 
 test("hides, locks and restores individual assembly features", async ({ page }, testInfo) => {
@@ -908,10 +946,7 @@ test("hides, locks and restores individual assembly features", async ({ page }, 
   ).not.toBeEditable();
   await page.keyboard.press("Delete");
   await expect(connectorItem).toHaveCount(1);
-  await page.screenshot({
-    path: testInfo.outputPath("feature-visibility-locking.png"),
-    fullPage: true,
-  });
+  await captureVisualCheckpoint(page, testInfo, "feature-visibility-locking.png");
   await stateBanner.getByRole("button", { name: "解锁对象" }).click();
   await expect(connectorItem).not.toHaveClass(/is-feature-locked/);
   await expect(page.locator(".viewport-canvas")).toHaveAttribute(
@@ -962,10 +997,7 @@ test("panel editor clamps placement and supports context deletion", async ({ pag
   expect(menuBox).not.toBeNull();
   expect(menuBox!.x + menuBox!.width).toBeLessThanOrEqual(1440);
   expect(menuBox!.y + menuBox!.height).toBeLessThanOrEqual(900);
-  await page.screenshot({
-    path: testInfo.outputPath("panel-context-menu.png"),
-    fullPage: true,
-  });
+  await captureVisualCheckpoint(page, testInfo, "panel-context-menu.png");
   await contextMenu.getByRole("menuitem", { name: "删除" }).click();
   await expect(panelItem).toHaveCount(0);
 });
@@ -1013,7 +1045,7 @@ test("device pickers choose the target surface and Delete removes selections", a
   await expect(panelItem).toHaveCount(0);
 });
 
-test("supports inset panels, custom geometry and multiple PCB references", async ({ page }, testInfo) => {
+test("supports inset panels, custom geometry and multiple PCB references @manufacturing", async ({ page }, testInfo) => {
   test.setTimeout(180_000);
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto("/");
@@ -1026,10 +1058,7 @@ test("supports inset panels, custom geometry and multiple PCB references", async
     .locator("input");
   await insetInput.fill("1.2");
   await expect(insetInput).toHaveValue("1.2");
-  await page.screenshot({
-    path: testInfo.outputPath("inset-panel.png"),
-    fullPage: true,
-  });
+  await captureVisualCheckpoint(page, testInfo, "inset-panel.png");
   await page.locator(".tree-item").filter({ hasText: "PCB 控制器外壳" }).click();
   const insetLidDownloadPromise = page.waitForEvent("download", { timeout: 60_000 });
   await page
@@ -1096,10 +1125,7 @@ test("supports inset panels, custom geometry and multiple PCB references", async
   ).toBeVisible({ timeout: 120_000 });
   await page.getByRole("button", { name: "聚焦选中零件" }).click();
   await expect(page.getByRole("status")).toContainText("仅显示：自定义组件");
-  await page.screenshot({
-    path: testInfo.outputPath("custom-components.png"),
-    fullPage: true,
-  });
+  await captureVisualCheckpoint(page, testInfo, "custom-components.png");
   await page.getByRole("button", { name: "显示全部零件", exact: true }).click();
 
   const pcbBuffer = await readFile("tests/fixtures/controller.kicad_pcb");
@@ -1125,13 +1151,14 @@ test("supports inset panels, custom geometry and multiple PCB references", async
     "multiple",
   );
   await page.getByRole("button", { name: "聚焦选中零件" }).click();
-  await page.screenshot({
-    path: testInfo.outputPath("custom-components-multiple-pcb.png"),
-    fullPage: true,
-  });
+  await captureVisualCheckpoint(
+    page,
+    testInfo,
+    "custom-components-multiple-pcb.png",
+  );
 });
 
-test("supports battery trays and configurable panel screw mechanics", async ({ page }, testInfo) => {
+test("supports battery trays and configurable panel screw mechanics @manufacturing", async ({ page }, testInfo) => {
   test.setTimeout(180_000);
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto("/");
@@ -1175,10 +1202,7 @@ test("supports battery trays and configurable panel screw mechanics", async ({ p
     "data-lid-transparent",
     "true",
   );
-  await page.screenshot({
-    path: testInfo.outputPath("flat-panel-screw-tabs.png"),
-    fullPage: true,
-  });
+  await captureVisualCheckpoint(page, testInfo, "flat-panel-screw-tabs.png");
 
   const exportSelect = page.getByRole("combobox", { name: "制造导出格式" });
   await exportSelect.selectOption("lid-stl");
@@ -1222,10 +1246,7 @@ test("supports battery trays and configurable panel screw mechanics", async ({ p
     .getByRole("combobox", { name: "电池仓 1 平面旋转" })
     .selectOption("180");
   await page.getByRole("button", { name: "聚焦选中零件" }).click();
-  await page.screenshot({
-    path: testInfo.outputPath("battery-tray.png"),
-    fullPage: true,
-  });
+  await captureVisualCheckpoint(page, testInfo, "battery-tray.png");
   await page.getByRole("button", { name: "显示全部零件", exact: true }).click();
 
   await page.locator(".tree-nav").getByRole("button", { name: /下壳/ }).click();
@@ -1237,7 +1258,7 @@ test("supports battery trays and configurable panel screw mechanics", async ({ p
   expect(readStlDimensions(await readFile(basePath!)).connectedComponents).toBe(1);
 });
 
-test("supports paired magnetic panel pockets", async ({ page }, testInfo) => {
+test("supports paired magnetic panel pockets @manufacturing", async ({ page }, testInfo) => {
   test.setTimeout(180_000);
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto("/");
@@ -1248,10 +1269,7 @@ test("supports paired magnetic panel pockets", async ({ page }, testInfo) => {
   await expect(
     page.locator(".tree-item").filter({ hasText: "面板 1" }),
   ).toContainText("磁吸");
-  await page.screenshot({
-    path: testInfo.outputPath("magnetic-panel.png"),
-    fullPage: true,
-  });
+  await captureVisualCheckpoint(page, testInfo, "magnetic-panel.png");
   await test.step("export magnetic panel", async () => {
     await exportManufacturingStl(page, "panel-stl:panel-1");
   });
@@ -1260,7 +1278,7 @@ test("supports paired magnetic panel pockets", async ({ page }, testInfo) => {
   });
 });
 
-test("supports integrated snap panel posts", async ({ page }, testInfo) => {
+test("supports integrated snap panel posts @manufacturing", async ({ page }, testInfo) => {
   test.setTimeout(180_000);
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto("/");
@@ -1271,10 +1289,7 @@ test("supports integrated snap panel posts", async ({ page }, testInfo) => {
     .getByRole("combobox", { name: "面板 1 材料" })
     .selectOption("petg");
   await expect(page.getByText("面板 1 材料不适合弹性卡扣")).toHaveCount(0);
-  await page.screenshot({
-    path: testInfo.outputPath("snap-panel.png"),
-    fullPage: true,
-  });
+  await captureVisualCheckpoint(page, testInfo, "snap-panel.png");
   const snapPanelMesh = await test.step("export integrated snap panel", () =>
     exportManufacturingStl(page, "panel-stl:panel-1"),
   );
@@ -1284,7 +1299,7 @@ test("supports integrated snap panel posts", async ({ page }, testInfo) => {
   });
 });
 
-test("supports press-latch quick-release lids", async ({ page }, testInfo) => {
+test("supports press-latch quick-release lids @manufacturing", async ({ page }, testInfo) => {
   test.setTimeout(180_000);
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto("/");
@@ -1293,10 +1308,7 @@ test("supports press-latch quick-release lids", async ({ page }, testInfo) => {
   await page.locator(".tree-item").filter({ hasText: "PCB 控制器外壳" }).click();
 
   await page.getByRole("button", { name: "快拆扣", exact: true }).click();
-  await page.screenshot({
-    path: testInfo.outputPath("quick-latch-lid.png"),
-    fullPage: true,
-  });
+  await captureVisualCheckpoint(page, testInfo, "quick-latch-lid.png");
   await test.step("export press-latch base", async () => {
     await exportManufacturingStl(page, "base-stl");
   });
@@ -1305,7 +1317,7 @@ test("supports press-latch quick-release lids", async ({ page }, testInfo) => {
   });
 });
 
-test("supports dual-pin quick-release lids", async ({ page }, testInfo) => {
+test("supports dual-pin quick-release lids @manufacturing", async ({ page }, testInfo) => {
   test.setTimeout(180_000);
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto("/");
@@ -1313,10 +1325,7 @@ test("supports dual-pin quick-release lids", async ({ page }, testInfo) => {
   await page.getByRole("combobox", { name: "面板固定方式" }).selectOption("slide");
   await page.locator(".tree-item").filter({ hasText: "PCB 控制器外壳" }).click();
   await page.getByRole("button", { name: "快拆销", exact: true }).click();
-  await page.screenshot({
-    path: testInfo.outputPath("quick-pin-lid.png"),
-    fullPage: true,
-  });
+  await captureVisualCheckpoint(page, testInfo, "quick-pin-lid.png");
   const pinBaseMesh = await test.step("export quick-pin base", () =>
     exportManufacturingStl(page, "base-stl"),
   );
@@ -1327,7 +1336,7 @@ test("supports dual-pin quick-release lids", async ({ page }, testInfo) => {
   expect(pinLidMesh.dimensions[1]).toBeGreaterThan(78);
 });
 
-test("project parameters survive an immediate page reload", async ({ page }) => {
+test("project parameters survive an immediate page reload @smoke", async ({ page }) => {
   test.setTimeout(120_000);
   await page.goto("/");
   const lengthInput = page.locator(".field-row").filter({ hasText: "长度" }).locator("input");
@@ -1441,10 +1450,7 @@ test("connector and antenna editors stay contextual and support instances", asyn
     .filter({ hasText: "USB Type-C 母座" })
     .click();
   await expect(connectorOffset).toHaveValue(movedConnectorOffset);
-  await page.screenshot({
-    path: testInfo.outputPath("connector-editor.png"),
-    fullPage: true,
-  });
+  await captureVisualCheckpoint(page, testInfo, "connector-editor.png");
 
   await page.getByRole("button", { name: "缩放选中对象" }).click();
   await expect(page.locator(".viewport-canvas")).toHaveAttribute(
@@ -1495,10 +1501,7 @@ test("connector and antenna editors stay contextual and support instances", asyn
   await secondAntennaOffset.fill("40");
   await expect(page.locator(".tree-item").filter({ hasText: "内贴 FPC 天线" })).toBeVisible();
   await expect(page.locator(".tree-item").filter({ hasText: "RP-SMA 穿板棒状天线" })).toBeVisible();
-  await page.screenshot({
-    path: testInfo.outputPath("antenna-editor.png"),
-    fullPage: true,
-  });
+  await captureVisualCheckpoint(page, testInfo, "antenna-editor.png");
 
   await expect(page.locator(".status-bar")).toContainText("已缓存");
   await page.reload();
@@ -1578,10 +1581,7 @@ test("3D transform handles edit the selected panel", async ({ page }, testInfo) 
   await page.locator(".tree-item").filter({ hasText: "面板 1" }).click();
   await expect(horizontalOffset).toHaveValue(movedOffset);
   await expect(panelWidth).toHaveValue(scaledWidth);
-  await page.screenshot({
-    path: testInfo.outputPath("transform-gizmo.png"),
-    fullPage: true,
-  });
+  await captureVisualCheckpoint(page, testInfo, "transform-gizmo.png");
 });
 
 test("narrow workbench stays framed and keeps the 3D canvas visible", async ({ page }, testInfo) => {
@@ -1634,10 +1634,7 @@ test("narrow workbench stays framed and keeps the 3D canvas visible", async ({ p
   const assemblyBox = await assemblyPanel.boundingBox();
   expect(assemblyBox).not.toBeNull();
   expect(assemblyBox!.x).toBeGreaterThanOrEqual(0);
-  await page.screenshot({
-    path: testInfo.outputPath("narrow-assembly-drawer.png"),
-    fullPage: true,
-  });
+  await captureVisualCheckpoint(page, testInfo, "narrow-assembly-drawer.png");
   await page.locator(".mobile-panel-close").click();
 
   await page.getByRole("button", { name: "更多工具" }).click();
@@ -1645,8 +1642,5 @@ test("narrow workbench stays framed and keeps the 3D canvas visible", async ({ p
   await expect(mobileTools.getByRole("menuitem", { name: "新建项目" })).toBeVisible();
   await expect(mobileTools.getByRole("menuitem", { name: "打开项目" })).toBeVisible();
 
-  await page.screenshot({
-    path: testInfo.outputPath("narrow-workbench.png"),
-    fullPage: true,
-  });
+  await captureVisualCheckpoint(page, testInfo, "narrow-workbench.png");
 });

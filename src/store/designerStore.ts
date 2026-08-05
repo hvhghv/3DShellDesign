@@ -2,6 +2,7 @@ import { create } from "zustand";
 import {
   clampParameter,
   DEFAULT_PARAMETERS,
+  deriveEnclosureDimensions,
   normalizeDesignerParameters,
 } from "../domain/enclosure";
 import type {
@@ -19,6 +20,7 @@ import {
   createAntennaPlacement,
   createConnectorPlacement,
   createPanelPlacement,
+  constrainSurfacePlacements,
   ENCLOSURE_FACE_OPTIONS,
   getDefaultPanelSize,
 } from "../domain/placements";
@@ -161,6 +163,13 @@ function persistSnapshot(
 
 const persistedProject = loadPersistedProject();
 
+function constrainParameters(parameters: DesignerParameters): DesignerParameters {
+  return constrainSurfacePlacements(
+    parameters,
+    deriveEnclosureDimensions(parameters),
+  );
+}
+
 export const useDesignerStore = create<DesignerState>((set) => ({
   projectName: persistedProject.projectName,
   parameters: persistedProject.parameters,
@@ -178,10 +187,10 @@ export const useDesignerStore = create<DesignerState>((set) => ({
   transformMode: "move",
   setParameter: (key, value) =>
     set((state) => {
-      const nextParameters = {
+      const nextParameters = constrainParameters({
         ...state.parameters,
         [key]: clampParameter(key, value) as DesignerParameters[typeof key],
-      };
+      });
       const snapshot = persistSnapshot(
         state.projectName,
         nextParameters,
@@ -211,10 +220,10 @@ export const useDesignerStore = create<DesignerState>((set) => ({
         "top";
       const id = `panel-${Date.now().toString(36)}-${state.parameters.panelPlacements.length + 1}`;
       const panel = createPanelPlacement(state.parameters, id, face);
-      const parameters = {
+      const parameters = constrainParameters({
         ...state.parameters,
         panelPlacements: [...state.parameters.panelPlacements, panel],
-      };
+      });
       const snapshot = persistSnapshot(
         state.projectName,
         parameters,
@@ -233,7 +242,7 @@ export const useDesignerStore = create<DesignerState>((set) => ({
     }),
   updatePanelPlacement: (id, changes) =>
     set((state) => {
-      const parameters = {
+      const parameters = constrainParameters({
         ...state.parameters,
         panelPlacements: state.parameters.panelPlacements.map((panel) =>
           panel.id === id
@@ -270,7 +279,7 @@ export const useDesignerStore = create<DesignerState>((set) => ({
               })()
             : panel,
         ),
-      };
+      });
       const snapshot = persistSnapshot(
         state.projectName,
         parameters,
@@ -292,7 +301,7 @@ export const useDesignerStore = create<DesignerState>((set) => ({
       const panelPlacements = state.parameters.panelPlacements.filter(
         (panel) => panel.id !== id,
       );
-      const parameters = {
+      const parameters = constrainParameters({
         ...state.parameters,
         panelPlacements,
         connectorPlacements: state.parameters.connectorPlacements.map((connector) =>
@@ -317,7 +326,7 @@ export const useDesignerStore = create<DesignerState>((set) => ({
               }
             : antenna,
         ),
-      };
+      });
       const snapshot = persistSnapshot(
         state.projectName,
         parameters,
@@ -342,13 +351,13 @@ export const useDesignerStore = create<DesignerState>((set) => ({
   addConnectorPlacement: (definitionId = "usb-c-receptacle") =>
     set((state) => {
       const id = `connector-${Date.now().toString(36)}-${state.parameters.connectorPlacements.length + 1}`;
-      const parameters = {
+      const parameters = constrainParameters({
         ...state.parameters,
         connectorPlacements: [
           ...state.parameters.connectorPlacements,
           createConnectorPlacement(definitionId, id),
         ],
-      };
+      });
       const snapshot = persistSnapshot(
         state.projectName,
         parameters,
@@ -367,7 +376,7 @@ export const useDesignerStore = create<DesignerState>((set) => ({
     }),
   updateConnectorPlacement: (id, changes) =>
     set((state) => {
-      const parameters = {
+      const parameters = constrainParameters({
         ...state.parameters,
         connectorPlacements: state.parameters.connectorPlacements.map((placement) =>
           placement.id === id
@@ -393,7 +402,7 @@ export const useDesignerStore = create<DesignerState>((set) => ({
               }
             : placement,
         ),
-      };
+      });
       const snapshot = persistSnapshot(
         state.projectName,
         parameters,
@@ -412,7 +421,7 @@ export const useDesignerStore = create<DesignerState>((set) => ({
   setConnectorDefinition: (placementId, connectorDefinitionId) =>
     set((state) => {
       const definition = getConnectorDefinition(connectorDefinitionId);
-      const parameters = {
+      const parameters = constrainParameters({
         ...state.parameters,
         connectorPlacements: state.parameters.connectorPlacements.map((placement) =>
           placement.id === placementId
@@ -424,7 +433,7 @@ export const useDesignerStore = create<DesignerState>((set) => ({
               }
             : placement,
         ),
-      };
+      });
       const snapshot = persistSnapshot(
         state.projectName,
         parameters,
@@ -442,12 +451,12 @@ export const useDesignerStore = create<DesignerState>((set) => ({
     }),
   removeConnectorPlacement: (id) =>
     set((state) => {
-      const parameters = {
+      const parameters = constrainParameters({
         ...state.parameters,
         connectorPlacements: state.parameters.connectorPlacements.filter(
           (placement) => placement.id !== id,
         ),
-      };
+      });
       const snapshot = persistSnapshot(
         state.projectName,
         parameters,
@@ -481,10 +490,10 @@ export const useDesignerStore = create<DesignerState>((set) => ({
         definitionId,
         id,
       );
-      const parameters = {
+      const parameters = constrainParameters({
         ...state.parameters,
         antennaPlacements: [...state.parameters.antennaPlacements, placement],
-      };
+      });
       const snapshot = persistSnapshot(
         state.projectName,
         parameters,
@@ -503,7 +512,7 @@ export const useDesignerStore = create<DesignerState>((set) => ({
     }),
   updateAntennaPlacement: (id, changes) =>
     set((state) => {
-      const parameters = {
+      const parameters = constrainParameters({
         ...state.parameters,
         antennaPlacements: state.parameters.antennaPlacements.map((placement) =>
           placement.id === id
@@ -528,7 +537,7 @@ export const useDesignerStore = create<DesignerState>((set) => ({
               }
             : placement,
         ),
-      };
+      });
       const snapshot = persistSnapshot(
         state.projectName,
         parameters,
@@ -547,7 +556,7 @@ export const useDesignerStore = create<DesignerState>((set) => ({
   setAntennaDefinition: (placementId, antennaDefinitionId) =>
     set((state) => {
       const antenna = getAntennaDefinition(antennaDefinitionId);
-      const parameters = {
+      const parameters = constrainParameters({
         ...state.parameters,
         antennaPlacements: state.parameters.antennaPlacements.map((placement) =>
           placement.id === placementId
@@ -558,7 +567,7 @@ export const useDesignerStore = create<DesignerState>((set) => ({
               }
             : placement,
         ),
-      };
+      });
       const snapshot = persistSnapshot(
         state.projectName,
         parameters,
@@ -579,7 +588,10 @@ export const useDesignerStore = create<DesignerState>((set) => ({
       const antennaPlacements = state.parameters.antennaPlacements.filter(
         (placement) => placement.id !== id,
       );
-      const parameters = { ...state.parameters, antennaPlacements };
+      const parameters = constrainParameters({
+        ...state.parameters,
+        antennaPlacements,
+      });
       const snapshot = persistSnapshot(
         state.projectName,
         parameters,
@@ -608,7 +620,7 @@ export const useDesignerStore = create<DesignerState>((set) => ({
   setEnclosureTemplate: (enclosureTemplateId) =>
     set((state) => {
       const template = getEnclosureTemplate(enclosureTemplateId);
-      const parameters = {
+      const parameters = constrainParameters({
         ...state.parameters,
         ...template.parameterOverrides,
         enclosureTemplateId: template.id,
@@ -619,7 +631,7 @@ export const useDesignerStore = create<DesignerState>((set) => ({
               pcbThickness: state.parameters.pcbThickness,
             }
           : {}),
-      };
+      });
       const snapshot = persistSnapshot(
         state.projectName,
         parameters,
@@ -684,7 +696,7 @@ export const useDesignerStore = create<DesignerState>((set) => ({
   },
   setPcbReference: (pcbReference) =>
     set((state) => {
-      const parameters = {
+      const parameters = constrainParameters({
         ...state.parameters,
         pcbLength: Number(
           (pcbReference.bounds.maxX - pcbReference.bounds.minX).toFixed(3),
@@ -693,7 +705,7 @@ export const useDesignerStore = create<DesignerState>((set) => ({
           (pcbReference.bounds.maxY - pcbReference.bounds.minY).toFixed(3),
         ),
         pcbThickness: pcbReference.thickness,
-      };
+      });
       const snapshot = persistSnapshot(state.projectName, parameters, pcbReference, null);
       return {
         parameters,
@@ -708,7 +720,7 @@ export const useDesignerStore = create<DesignerState>((set) => ({
     }),
   setStepReference: (pcbReference, stepPreview) =>
     set((state) => {
-      const parameters = {
+      const parameters = constrainParameters({
         ...state.parameters,
         pcbLength: Number(
           (pcbReference.bounds.maxX - pcbReference.bounds.minX).toFixed(3),
@@ -720,7 +732,7 @@ export const useDesignerStore = create<DesignerState>((set) => ({
           state.parameters.componentHeight,
           Number((pcbReference.overallHeight ?? 0).toFixed(3)),
         ),
-      };
+      });
       const snapshot = persistSnapshot(
         state.projectName,
         parameters,

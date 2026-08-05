@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { getPlacementSurfaceOffsets } from "./placements";
+import {
+  clampPlacementOffsets,
+  constrainSurfacePlacements,
+  getPlacementSurfaceOffsets,
+} from "./placements";
+import { DEFAULT_PARAMETERS, deriveEnclosureDimensions } from "./enclosure";
 
 describe("surface placements", () => {
   it("converts absolute face coordinates to panel-relative offsets", () => {
@@ -35,5 +40,45 @@ describe("surface placements", () => {
         3,
       ),
     ).toEqual([20, 3]);
+  });
+
+  it("clamps a feature to the usable area of its installation surface", () => {
+    expect(clampPlacementOffsets(41.5, -30, 108, 78, 62.64, 40.56, 2)).toEqual([
+      20.68,
+      -16.72,
+    ]);
+  });
+
+  it("constrains panels and attached features when loading cached parameters", () => {
+    const panel = {
+      ...DEFAULT_PARAMETERS.panelPlacements[0],
+      face: "bottom" as const,
+      offsetU: 41.5,
+      offsetV: 50,
+    };
+    const parameters = {
+      ...DEFAULT_PARAMETERS,
+      panelPlacements: [panel],
+      connectorPlacements: [
+        {
+          ...DEFAULT_PARAMETERS.connectorPlacements[0],
+          surface: "panel" as const,
+          panelId: panel.id,
+          offsetU: 40,
+          offsetV: -40,
+        },
+      ],
+    };
+    const constrained = constrainSurfacePlacements(
+      parameters,
+      deriveEnclosureDimensions(parameters),
+    );
+
+    expect(constrained.panelPlacements[0]).toEqual(
+      expect.objectContaining({ offsetU: 20.68, offsetV: 16.72 }),
+    );
+    expect(constrained.connectorPlacements[0]).toEqual(
+      expect.objectContaining({ offsetU: 23.32, offsetV: -14.78 }),
+    );
   });
 });

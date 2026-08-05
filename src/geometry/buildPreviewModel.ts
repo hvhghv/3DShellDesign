@@ -555,6 +555,7 @@ export function buildPreviewModel(
 ): THREE.Group {
   const root = new THREE.Group();
   root.name = "enclosure-preview";
+  root.position.y = exploded ? 10 : 0;
   const dimensions = deriveEnclosureDimensions(parameters);
   const shellProfile = getMaterial(parameters.shellMaterialId);
   const shellMaterial = standardMaterial(shellProfile.color, selectedPart === "base");
@@ -772,8 +773,17 @@ export function buildPreviewModel(
     panelMesh.userData.featureId = panel.id;
 
     if (face !== "top") {
+      const openingPosition = getPreviewFacePosition(
+        face,
+        panel.offsetU,
+        panel.offsetV,
+        0.04,
+        parameters,
+        dimensions,
+        lidY,
+      );
       const opening = addMesh(
-        root,
+        panelGroup,
         createFacePlaneGeometry(
           panel.width - 4,
           panel.height - 4,
@@ -781,15 +791,7 @@ export function buildPreviewModel(
         ),
         standardMaterial(0x202725, selectedPart === "panel", { roughness: 0.82 }),
         "base",
-        getPreviewFacePosition(
-          face,
-          panel.offsetU,
-          panel.offsetV,
-          0.04,
-          parameters,
-          dimensions,
-          lidY,
-        ),
+        relativePosition(openingPosition, panelPosition),
         false,
       );
       opening.name = `panel-opening-${panel.id}`;
@@ -804,8 +806,17 @@ export function buildPreviewModel(
         -panel.height / 2 - 0.6,
         panel.height / 2 + 0.6,
       ]) {
-        addMesh(
-          root,
+        const railPosition = getPreviewFacePosition(
+          face,
+          panel.offsetU,
+          panel.offsetV + pointV,
+          0.6,
+          parameters,
+          dimensions,
+          lidY,
+        );
+        const rail = addMesh(
+          panelGroup,
           createFaceBoxGeometry(
             panel.width + 2,
             1.5,
@@ -814,16 +825,9 @@ export function buildPreviewModel(
           ),
           face === "top" ? lidMaterial : shellMaterial,
           targetPart,
-          getPreviewFacePosition(
-            face,
-            panel.offsetU,
-            panel.offsetV + pointV,
-            0.6,
-            parameters,
-            dimensions,
-            lidY,
-          ),
+          relativePosition(railPosition, panelPosition),
         );
+        rail.name = `${panel.id}-rail-${pointV < 0 ? "start" : "end"}`;
       }
     } else {
       const fixingMaterial = standardMaterial(
@@ -831,9 +835,18 @@ export function buildPreviewModel(
         panelSelected,
         { metalness: 0.7, roughness: 0.26 },
       );
-      for (const [pointU, pointV] of getPanelMountingPoints(panel)) {
-        addMesh(
-          root,
+      for (const [index, [pointU, pointV]] of getPanelMountingPoints(panel).entries()) {
+        const fixingPosition = getPreviewFacePosition(
+          face,
+          panel.offsetU + pointU,
+          panel.offsetV + pointV,
+          panel.thickness + explodedOffset + 0.2,
+          parameters,
+          dimensions,
+          lidY,
+        );
+        const fixing = addMesh(
+          panelGroup,
           createFaceCylinderGeometry(
             panel.mountingType === "screw" ? 1.3 : 2.15,
             Math.min(1.4, panel.thickness),
@@ -841,16 +854,9 @@ export function buildPreviewModel(
           ),
           fixingMaterial,
           "panel",
-          getPreviewFacePosition(
-            face,
-            panel.offsetU + pointU,
-            panel.offsetV + pointV,
-            panel.thickness + explodedOffset + 0.2,
-            parameters,
-            dimensions,
-            lidY,
-          ),
+          relativePosition(fixingPosition, panelPosition),
         );
+        fixing.name = `${panel.id}-fixing-${index + 1}`;
       }
     }
   }

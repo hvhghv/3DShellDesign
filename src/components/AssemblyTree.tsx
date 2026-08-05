@@ -8,9 +8,10 @@ import {
   Plus,
   Search,
   SquareStack,
+  Trash2,
   X,
 } from "lucide-react";
-import { useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import type { ClosureType, SelectablePart } from "../domain/model";
 import { getMagnetSupportOption } from "../domain/magnetSupport";
 import {
@@ -136,9 +137,18 @@ interface TreeItemProps {
   detail?: string;
   depth?: number;
   featureId?: string;
+  onOpenContextMenu?: (x: number, y: number) => void;
 }
 
-function TreeItem({ id, icon, label, detail, depth = 0, featureId }: TreeItemProps) {
+function TreeItem({
+  id,
+  icon,
+  label,
+  detail,
+  depth = 0,
+  featureId,
+  onOpenContextMenu,
+}: TreeItemProps) {
   const selectedPart = useDesignerStore((state) => state.selectedPart);
   const selectedFeatureId = useDesignerStore((state) => state.selectedFeatureId);
   const focusedPart = useDesignerStore((state) => state.focusedPart);
@@ -157,6 +167,12 @@ function TreeItem({ id, icon, label, detail, depth = 0, featureId }: TreeItemPro
           ? setSelectedFeature(id, featureId)
           : setSelectedPart(id)
       }
+      onContextMenu={(event) => {
+        if (!featureId || !onOpenContextMenu) return;
+        event.preventDefault();
+        setSelectedFeature(id as "panel" | "connector" | "antenna", featureId);
+        onOpenContextMenu(event.clientX, event.clientY);
+      }}
       aria-pressed={selected}
     >
       <span className="tree-icon" aria-hidden="true">{icon}</span>
@@ -172,11 +188,68 @@ export function AssemblyTree() {
   const [openPicker, setOpenPicker] = useState<"connector" | "antenna" | null>(
     null,
   );
+  const [contextMenu, setContextMenu] = useState<{
+    part: "panel" | "connector" | "antenna";
+    featureId: string;
+    label: string;
+    x: number;
+    y: number;
+  } | null>(null);
   const parameters = useDesignerStore((state) => state.parameters);
   const pcbReference = useDesignerStore((state) => state.pcbReference);
   const addPanelPlacement = useDesignerStore((state) => state.addPanelPlacement);
   const addConnectorPlacement = useDesignerStore((state) => state.addConnectorPlacement);
   const addAntennaPlacement = useDesignerStore((state) => state.addAntennaPlacement);
+  const removePanelPlacement = useDesignerStore((state) => state.removePanelPlacement);
+  const removeConnectorPlacement = useDesignerStore(
+    (state) => state.removeConnectorPlacement,
+  );
+  const removeAntennaPlacement = useDesignerStore(
+    (state) => state.removeAntennaPlacement,
+  );
+
+  useEffect(() => {
+    if (!contextMenu) return;
+    const close = () => setContextMenu(null);
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") close();
+    };
+    window.addEventListener("click", close);
+    window.addEventListener("resize", close);
+    window.addEventListener("scroll", close, true);
+    window.addEventListener("keydown", closeOnEscape);
+    return () => {
+      window.removeEventListener("click", close);
+      window.removeEventListener("resize", close);
+      window.removeEventListener("scroll", close, true);
+      window.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [contextMenu]);
+
+  const openFeatureContextMenu = (
+    part: "panel" | "connector" | "antenna",
+    featureId: string,
+    label: string,
+    x: number,
+    y: number,
+  ) => {
+    setContextMenu({
+      part,
+      featureId,
+      label,
+      x: Math.min(x, window.innerWidth - 154),
+      y: Math.min(y, window.innerHeight - 58),
+    });
+  };
+
+  const deleteContextFeature = () => {
+    if (!contextMenu) return;
+    if (contextMenu.part === "panel") removePanelPlacement(contextMenu.featureId);
+    else if (contextMenu.part === "connector") {
+      removeConnectorPlacement(contextMenu.featureId);
+    } else removeAntennaPlacement(contextMenu.featureId);
+    setContextMenu(null);
+  };
   const objectCount =
     4 +
     parameters.panelPlacements.length +
@@ -253,6 +326,15 @@ export function AssemblyTree() {
             label={getPanelLabel(panel, parameters)}
             detail={`${getFaceLabel(panel.face)} · ${panel.width.toFixed(1)} × ${panel.height.toFixed(1)} mm · ${PANEL_MOUNTING_LABELS[panel.mountingType]}`}
             depth={1}
+            onOpenContextMenu={(x, y) =>
+              openFeatureContextMenu(
+                "panel",
+                panel.id,
+                getPanelLabel(panel, parameters),
+                x,
+                y,
+              )
+            }
           />
         ))}
         <div className="tree-section-heading">
@@ -291,6 +373,15 @@ export function AssemblyTree() {
             label={getConnectorDefinition(placement.definitionId).name}
             detail={getConnectorSurfaceLabel(placement, parameters)}
             depth={2}
+            onOpenContextMenu={(x, y) =>
+              openFeatureContextMenu(
+                "connector",
+                placement.id,
+                getConnectorDefinition(placement.definitionId).name,
+                x,
+                y,
+              )
+            }
           />
         ))}
         <div className="tree-section-heading">
@@ -329,9 +420,31 @@ export function AssemblyTree() {
             label={getAntennaDefinition(placement.definitionId).name}
             detail={`${getAntennaSurfaceLabel(placement, parameters)} · ${getAntennaDefinition(placement.definitionId).metadata.frequencyBand}`}
             depth={2}
+            onOpenContextMenu={(x, y) =>
+              openFeatureContextMenu(
+                "antenna",
+                placement.id,
+                getAntennaDefinition(placement.definitionId).name,
+                x,
+                y,
+              )
+            }
           />
         ))}
       </nav>
+      {contextMenu ? (
+        <div
+          className="tree-context-menu"
+          role="menu"
+          aria-label={`${contextMenu.label} 操作菜单`}
+          style={{ left: contextMenu.x, top: contextMenu.y }}
+        >
+          <button type="button" role="menuitem" onClick={deleteContextFeature}>
+            <Trash2 size={15} />
+            <span>删除</span>
+          </button>
+        </div>
+      ) : null}
     </aside>
   );
 }

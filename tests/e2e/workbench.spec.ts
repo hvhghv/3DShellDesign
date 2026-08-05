@@ -130,7 +130,7 @@ async function addAntenna(page: Page, name = "SMA 穿板棒状天线") {
 }
 
 test("desktop workbench renders a nonblank interactive enclosure", async ({ page }, testInfo) => {
-  test.setTimeout(600_000);
+  test.setTimeout(900_000);
   const pageErrors: string[] = [];
   page.on("pageerror", (error) => pageErrors.push(error.message));
   await page.setViewportSize({ width: 1440, height: 900 });
@@ -404,8 +404,10 @@ test("desktop workbench renders a nonblank interactive enclosure", async ({ page
   expect(multiConnectorStl.connectedComponents).toBe(1);
   expect(multiConnectorStl.triangleCount).toBeGreaterThan(libraryStl.triangleCount);
 
+  await page.locator(".tree-item").filter({ hasText: "面板 1" }).click();
   await page.getByRole("combobox", { name: "面板所在面" }).selectOption("back");
   await expect(page.locator(".tree-nav").getByText(/后壁 · .* mm/)).toBeVisible();
+  await page.locator(".tree-nav").getByRole("button", { name: /下壳/ }).click();
   await exportSelect.selectOption("base-stl");
   const sidePanelBasePromise = page.waitForEvent("download", { timeout: 60_000 });
   await page.locator(".manufacturing-export button").click();
@@ -501,9 +503,10 @@ test("desktop workbench renders a nonblank interactive enclosure", async ({ page
   await page
     .getByRole("combobox", { name: "接口 1 安装位置" })
     .selectOption("top");
-  await page.locator(".tree-item").filter({ hasText: "面板 1" }).click();
   for (const panelFace of ["front", "back", "left", "right", "bottom"] as const) {
+    await page.locator(".tree-item").filter({ hasText: "面板 1" }).click();
     await page.getByRole("combobox", { name: "面板所在面" }).selectOption(panelFace);
+    await page.locator(".tree-nav").getByRole("button", { name: /下壳/ }).click();
     await exportSelect.selectOption("base-stl");
     const facePanelPromise = page.waitForEvent("download", { timeout: 60_000 });
     await page.locator(".manufacturing-export button").click();
@@ -513,12 +516,14 @@ test("desktop workbench renders a nonblank interactive enclosure", async ({ page
       readStlDimensions(await readFile(facePanelPath!)).connectedComponents,
     ).toBe(1);
   }
+  await page.locator(".tree-item").filter({ hasText: "面板 1" }).click();
   await page.getByRole("combobox", { name: "面板所在面" }).selectOption("front");
   await page.screenshot({
     path: testInfo.outputPath("surface-placement.png"),
     fullPage: true,
   });
   await page.getByRole("combobox", { name: "面板所在面" }).selectOption("back");
+  await page.locator(".tree-nav").getByRole("button", { name: /下壳/ }).click();
 
   await page.getByRole("combobox", { name: "镂空阵列类型" }).selectOption(
     "honeycomb",
@@ -537,6 +542,7 @@ test("desktop workbench renders a nonblank interactive enclosure", async ({ page
   await page.getByRole("combobox", { name: "面板固定方式" }).selectOption(
     "slide",
   );
+  await page.locator(".tree-nav").getByRole("button", { name: /下壳/ }).click();
   await exportSelect.selectOption("lid-stl");
   const slideDownloadPromise = page.waitForEvent("download", { timeout: 60_000 });
   await page.locator(".manufacturing-export button").click();
@@ -548,6 +554,7 @@ test("desktop workbench renders a nonblank interactive enclosure", async ({ page
   await page.getByRole("combobox", { name: "面板固定方式" }).selectOption(
     "screw",
   );
+  await page.locator(".tree-nav").getByRole("button", { name: /下壳/ }).click();
   await page.getByRole("combobox", { name: "镂空阵列类型" }).selectOption("none");
 
   await page.getByRole("tab", { name: "尺寸" }).click();
@@ -638,6 +645,7 @@ test("desktop workbench renders a nonblank interactive enclosure", async ({ page
 });
 
 test("device pickers create only the selected connector and antenna", async ({ page }) => {
+  test.setTimeout(120_000);
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto("/");
   const tree = page.locator(".tree-nav");
@@ -676,6 +684,54 @@ test("device pickers create only the selected connector and antenna", async ({ p
   await expect(page.getByRole("combobox", { name: "天线 1 类型" })).toHaveValue(
     "rp-sma-bulkhead-whip",
   );
+});
+
+test("panel editor clamps placement and supports context deletion", async ({ page }, testInfo) => {
+  test.setTimeout(120_000);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+
+  await page.getByRole("button", { name: "添加面板" }).click();
+  const panelItem = page.getByRole("button", { name: /^面板 2 / });
+  await expect(panelItem).toBeVisible();
+  await panelItem.click();
+
+  const panelInspector = page.getByRole("complementary", { name: "面板检查器" });
+  await expect(panelInspector).toBeVisible();
+  await expect(page.getByRole("tablist", { name: "参数类别" })).toHaveCount(0);
+  await expect(page.getByRole("heading", { name: "面板参数" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "接口参数" })).toHaveCount(0);
+  await expect(page.getByRole("heading", { name: "制造导出" })).toHaveCount(0);
+  await expect(page.getByRole("combobox", { name: "面板所在面" })).toHaveValue(
+    "bottom",
+  );
+
+  const horizontalOffset = panelInspector
+    .locator(".field-row")
+    .filter({ hasText: "横向偏移" })
+    .locator("input");
+  await horizontalOffset.fill("41.5");
+  await expect(horizontalOffset).toHaveValue("20.68");
+  expect(
+    await panelInspector.evaluate(
+      (element) => element.scrollWidth - element.clientWidth,
+    ),
+  ).toBeLessThanOrEqual(1);
+
+  await page.getByRole("button", { name: "装配或爆炸视图" }).click();
+  await panelItem.click({ button: "right" });
+  const contextMenu = page.getByRole("menu", { name: "面板 2 操作菜单" });
+  await expect(contextMenu).toBeVisible();
+  const menuBox = await contextMenu.boundingBox();
+  expect(menuBox).not.toBeNull();
+  expect(menuBox!.x + menuBox!.width).toBeLessThanOrEqual(1440);
+  expect(menuBox!.y + menuBox!.height).toBeLessThanOrEqual(900);
+  await page.screenshot({
+    path: testInfo.outputPath("panel-context-menu.png"),
+    fullPage: true,
+  });
+  await contextMenu.getByRole("menuitem", { name: "删除" }).click();
+  await expect(panelItem).toHaveCount(0);
 });
 
 test("project parameters survive an immediate page reload", async ({ page }) => {

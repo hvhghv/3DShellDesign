@@ -135,6 +135,9 @@ export function Inspector() {
     parameters.panelPlacements.find((panel) => panel.id === selectedFeatureId) ??
     parameters.panelPlacements[0] ??
     null;
+  const selectedPanelIndex = selectedPanel
+    ? parameters.panelPlacements.findIndex((panel) => panel.id === selectedPanel.id)
+    : -1;
   const selectedConnector =
     parameters.connectorPlacements.find(
       (connector) => connector.id === selectedFeatureId,
@@ -164,6 +167,94 @@ export function Inspector() {
     { id: "structure", label: "结构" },
     { id: "materials", label: "材料" },
   ];
+
+  if (selectedPart === "panel" && selectedPanel) {
+    const panel = selectedPanel;
+    return (
+      <aside className="inspector-panel" aria-label="面板检查器">
+        <div className="inspector-title">
+          <span>面板 {selectedPanelIndex + 1}</span>
+          <small>
+            {getFaceLabel(panel.face)} · {panel.width.toFixed(1)} × {panel.height.toFixed(1)} mm
+          </small>
+        </div>
+        <div className="inspector-scroll contextual-inspector">
+          <section className="inspector-section">
+            <div className="section-heading-row">
+              <h2>面板参数</h2>
+              <button
+                className="icon-section-button"
+                type="button"
+                title="删除当前面板"
+                aria-label="删除当前面板"
+                onClick={() => removePanelPlacement(panel.id)}
+              >
+                <Trash2 size={14} />
+              </button>
+            </div>
+            <label className="select-field">
+              <span>所在面</span>
+              <select
+                aria-label="面板所在面"
+                value={panel.face}
+                onChange={(event) =>
+                  updatePanelPlacement(panel.id, {
+                    face: event.currentTarget.value as EnclosureFace,
+                  })
+                }
+              >
+                {ENCLOSURE_FACE_OPTIONS.map((option) => (
+                  <option key={option.id} value={option.id}>{option.name}</option>
+                ))}
+              </select>
+            </label>
+            <NumberField label="宽度" value={panel.width} min={6} max={300} step={1} onChange={(value) => updatePanelPlacement(panel.id, { width: value })} />
+            <NumberField label="高度" value={panel.height} min={6} max={300} step={1} onChange={(value) => updatePanelPlacement(panel.id, { height: value })} />
+            <NumberField label="横向偏移" value={panel.offsetU} min={-300} max={300} step={1} onChange={(value) => updatePanelPlacement(panel.id, { offsetU: value })} />
+            <NumberField label="纵向偏移" value={panel.offsetV} min={-300} max={300} step={1} onChange={(value) => updatePanelPlacement(panel.id, { offsetV: value })} />
+            <label className="select-field">
+              <span>固定方式</span>
+              <select
+                aria-label="面板固定方式"
+                value={panel.mountingType}
+                onChange={(event) =>
+                  updatePanelPlacement(panel.id, {
+                    mountingType: event.currentTarget.value as typeof panel.mountingType,
+                  })
+                }
+              >
+                <option value="screw">四角螺丝</option>
+                <option value="magnet">四角磁吸</option>
+                <option value="slide">侧边滑轨</option>
+              </select>
+            </label>
+            <NumberField label="面板厚度" value={panel.thickness} min={0.5} max={10} onChange={(value) => updatePanelPlacement(panel.id, { thickness: value })} />
+          </section>
+          <section className="inspector-section">
+            <h2>面板材料</h2>
+            <label className="select-field">
+              <span>材料</span>
+              <select
+                aria-label={`面板 ${selectedPanelIndex + 1} 材料`}
+                value={panel.materialId}
+                onChange={(event) =>
+                  updatePanelPlacement(panel.id, {
+                    materialId: event.currentTarget.value,
+                  })
+                }
+              >
+                {PANEL_MATERIALS.map((material) => (
+                  <option key={material.id} value={material.id}>{material.name}</option>
+                ))}
+              </select>
+            </label>
+            <MaterialBadge materialId={panel.materialId} />
+            <p className="material-note">{getMaterial(panel.materialId).notes}</p>
+          </section>
+        </div>
+      </aside>
+    );
+  }
 
   if (selectedPart === "connector" && selectedConnector) {
     const placement = selectedConnector;

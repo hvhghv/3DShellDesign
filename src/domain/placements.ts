@@ -144,6 +144,143 @@ export function getAntennaSurfaceSize(
   return getConnectorSurfaceSize(placement, parameters, dimensions);
 }
 
+export function getAntennaMountingSize(
+  placement: AntennaPlacement,
+): readonly [number, number] {
+  const antenna = getAntennaDefinition(placement.definitionId);
+  if (antenna.enclosureCutout) {
+    const diameter = Math.max(
+      placement.cutoutDiameter,
+      antenna.visualGeometry.width,
+      antenna.visualGeometry.height,
+    );
+    return [diameter, diameter];
+  }
+  const quarterTurn = placement.rotation === 90 || placement.rotation === 270;
+  return quarterTurn
+    ? [antenna.visualGeometry.height, antenna.visualGeometry.width]
+    : [antenna.visualGeometry.width, antenna.visualGeometry.height];
+}
+
+function roundPlacementMeasurement(value: number): number {
+  return Number(value.toFixed(2));
+}
+
+export function clampPlacementOffsets(
+  offsetU: number,
+  offsetV: number,
+  surfaceWidth: number,
+  surfaceHeight: number,
+  placementWidth: number,
+  placementHeight: number,
+  edgeMargin: number,
+): readonly [number, number] {
+  const limitU = Math.max(0, surfaceWidth / 2 - placementWidth / 2 - edgeMargin);
+  const limitV = Math.max(0, surfaceHeight / 2 - placementHeight / 2 - edgeMargin);
+  return [
+    roundPlacementMeasurement(Math.min(limitU, Math.max(-limitU, offsetU))),
+    roundPlacementMeasurement(Math.min(limitV, Math.max(-limitV, offsetV))),
+  ];
+}
+
+export function constrainPanelPlacement(
+  placement: PanelPlacement,
+  parameters: DesignerParameters,
+  dimensions: EnclosureDimensions,
+): PanelPlacement {
+  const [surfaceWidth, surfaceHeight] = getFaceSize(
+    placement.face,
+    parameters,
+    dimensions,
+  );
+  const [offsetU, offsetV] = clampPlacementOffsets(
+    placement.offsetU,
+    placement.offsetV,
+    surfaceWidth,
+    surfaceHeight,
+    placement.width,
+    placement.height,
+    2,
+  );
+  return {
+    ...placement,
+    offsetU,
+    offsetV,
+    width: roundPlacementMeasurement(placement.width),
+    height: roundPlacementMeasurement(placement.height),
+    thickness: roundPlacementMeasurement(placement.thickness),
+  };
+}
+
+export function constrainConnectorPlacement(
+  placement: ConnectorPlacement,
+  parameters: DesignerParameters,
+  dimensions: EnclosureDimensions,
+): ConnectorPlacement {
+  const [surfaceWidth, surfaceHeight] = getConnectorSurfaceSize(
+    placement,
+    parameters,
+    dimensions,
+  );
+  const [placementWidth, placementHeight] = getRotatedCutoutSize(placement);
+  const edgeMargin =
+    placement.surface === "panel" ? 2 : Math.max(2, parameters.wallThickness * 2);
+  const [offsetU, offsetV] = clampPlacementOffsets(
+    placement.offsetU,
+    placement.offsetV,
+    surfaceWidth,
+    surfaceHeight,
+    placementWidth,
+    placementHeight,
+    edgeMargin,
+  );
+  return { ...placement, offsetU, offsetV };
+}
+
+export function constrainAntennaPlacement(
+  placement: AntennaPlacement,
+  parameters: DesignerParameters,
+  dimensions: EnclosureDimensions,
+): AntennaPlacement {
+  const [surfaceWidth, surfaceHeight] = getAntennaSurfaceSize(
+    placement,
+    parameters,
+    dimensions,
+  );
+  const [placementWidth, placementHeight] = getAntennaMountingSize(placement);
+  const edgeMargin =
+    placement.surface === "panel" ? 2 : Math.max(2, parameters.wallThickness * 2);
+  const [offsetU, offsetV] = clampPlacementOffsets(
+    placement.offsetU,
+    placement.offsetV,
+    surfaceWidth,
+    surfaceHeight,
+    placementWidth,
+    placementHeight,
+    edgeMargin,
+  );
+  return { ...placement, offsetU, offsetV };
+}
+
+export function constrainSurfacePlacements(
+  parameters: DesignerParameters,
+  dimensions: EnclosureDimensions,
+): DesignerParameters {
+  const panelPlacements = parameters.panelPlacements.map((placement) =>
+    constrainPanelPlacement(placement, parameters, dimensions),
+  );
+  const withPanels = { ...parameters, panelPlacements };
+  return {
+    ...withPanels,
+    connectorPlacements: withPanels.connectorPlacements.map((placement) =>
+      constrainConnectorPlacement(placement, withPanels, dimensions),
+    ),
+    antennaPlacements: withPanels.antennaPlacements.map((placement) =>
+      constrainAntennaPlacement(placement, withPanels, dimensions),
+    ),
+  };
+}
+
 export function getRotatedCutoutSize(
   placement: ConnectorPlacement,
 ): readonly [number, number] {

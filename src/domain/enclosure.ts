@@ -6,6 +6,8 @@ import {
   createConnectorPlacement,
   createAntennaPlacement,
   createPanelPlacement,
+  constrainSurfacePlacements,
+  getAntennaMountingSize,
   getConnectorSurfaceSize,
   getAntennaSurfaceSize,
   getFaceSize,
@@ -125,24 +127,6 @@ interface LegacyDesignerParameters extends Partial<DesignerParameters> {
 
 function finiteOr(value: unknown, fallback: number): number {
   return typeof value === "number" && Number.isFinite(value) ? value : fallback;
-}
-
-function getAntennaMountingSize(
-  placement: AntennaPlacement,
-): readonly [number, number] {
-  const antenna = getAntennaDefinition(placement.definitionId);
-  if (antenna.enclosureCutout) {
-    const diameter = Math.max(
-      placement.cutoutDiameter,
-      antenna.visualGeometry.width,
-      antenna.visualGeometry.height,
-    );
-    return [diameter, diameter];
-  }
-  const quarterTurn = placement.rotation === 90 || placement.rotation === 270;
-  return quarterTurn
-    ? [antenna.visualGeometry.height, antenna.visualGeometry.width]
-    : [antenna.visualGeometry.width, antenna.visualGeometry.height];
 }
 
 export function normalizeDesignerParameters(value: unknown): DesignerParameters {
@@ -363,7 +347,10 @@ export function normalizeDesignerParameters(value: unknown): DesignerParameters 
   ]) {
     delete normalized[key];
   }
-  return normalized;
+  return constrainSurfacePlacements(
+    normalized,
+    deriveEnclosureDimensions(normalized),
+  );
 }
 
 export function validateDesign(

@@ -174,6 +174,24 @@ describe("enclosure domain", () => {
     expect(panel.height).toBeCloseTo(12.48, 3);
   });
 
+  it("repairs out-of-bounds panel offsets from cached projects", () => {
+    const parameters = normalizeDesignerParameters({
+      ...DEFAULT_PARAMETERS,
+      panelPlacements: [
+        {
+          ...DEFAULT_PARAMETERS.panelPlacements[0],
+          face: "bottom",
+          offsetU: 41.5,
+          offsetV: 50,
+        },
+      ],
+    });
+
+    expect(parameters.panelPlacements[0]).toEqual(
+      expect.objectContaining({ offsetU: 20.68, offsetV: 16.72 }),
+    );
+  });
+
   it("migrates the legacy single front connector", () => {
     const parameters = normalizeDesignerParameters({
       ...DEFAULT_PARAMETERS,

@@ -66,6 +66,27 @@ describe("magnet support preview", () => {
 });
 
 describe("surface placement preview", () => {
+  it("keeps an exploded bottom panel above the work plane", () => {
+    const panel = {
+      ...DEFAULT_PARAMETERS.panelPlacements[0],
+      face: "bottom" as const,
+    };
+    const model = buildPreviewModel(
+      { ...DEFAULT_PARAMETERS, panelPlacements: [panel] },
+      "panel",
+      true,
+      null,
+      null,
+      null,
+      panel.id,
+    );
+    const panelMesh = model.getObjectByName(panel.id);
+    expect(panelMesh).toBeDefined();
+    model.updateMatrixWorld(true);
+    expect(new THREE.Box3().setFromObject(panelMesh!).min.y).toBeGreaterThanOrEqual(0);
+    disposePreviewModel(model);
+  });
+
   it.each(["top", "bottom", "front", "back", "left", "right"] as const)(
     "places the panel on the %s face",
     (face) => {
@@ -87,10 +108,15 @@ describe("surface placement preview", () => {
           (child) => child.userData.featureId === "panel-1" && child.userData.face === face,
         ),
       ).toHaveLength(1);
+      const panelGroup = model.getObjectByName("panel-transform-panel-1");
+      expect(panelGroup).toBeDefined();
+      expect(panelGroup?.getObjectByName("panel-1-fixing-1")?.parent).toBe(
+        panelGroup,
+      );
       if (face !== "top") {
-        expect(
-          model.children.filter((child) => child.name === "panel-opening-panel-1"),
-        ).toHaveLength(1);
+        expect(panelGroup?.getObjectByName("panel-opening-panel-1")?.parent).toBe(
+          panelGroup,
+        );
       }
       disposePreviewModel(model);
     },

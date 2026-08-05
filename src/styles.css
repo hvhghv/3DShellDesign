@@ -510,6 +510,35 @@ select:focus-visible {
   opacity: 0.82;
 }
 
+.tree-context-menu {
+  position: fixed;
+  z-index: 40;
+  width: 146px;
+  padding: 4px;
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  box-shadow: 0 8px 24px rgba(34, 44, 38, 0.18);
+}
+
+.tree-context-menu button {
+  display: flex;
+  width: 100%;
+  height: 34px;
+  align-items: center;
+  gap: 8px;
+  padding: 0 9px;
+  color: var(--error);
+  background: transparent;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.tree-context-menu button:hover,
+.tree-context-menu button:focus-visible {
+  background: var(--error-soft);
+}
+
 .tree-icon {
   display: grid;
   flex: 0 0 25px;

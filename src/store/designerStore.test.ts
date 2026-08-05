@@ -25,6 +25,23 @@ describe("designer store", () => {
     ]);
   });
 
+  it("clamps panel edits to the selected enclosure face", () => {
+    useDesignerStore.setState({
+      ...originalState,
+      parameters: { ...DEFAULT_PARAMETERS },
+    });
+
+    useDesignerStore.getState().updatePanelPlacement("panel-1", {
+      face: "bottom",
+      offsetU: 41.5,
+      offsetV: 50,
+    });
+
+    expect(useDesignerStore.getState().parameters.panelPlacements[0]).toEqual(
+      expect.objectContaining({ offsetU: 20.68, offsetV: 16.72 }),
+    );
+  });
+
   it("moves panel-mounted antennas to the enclosure face when deleting a panel", () => {
     const panel = {
       ...DEFAULT_PARAMETERS.panelPlacements[0],

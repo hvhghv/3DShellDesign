@@ -360,6 +360,10 @@ describe("surface placement preview", () => {
     );
 
     expect(model.getObjectByName("battery-transform-battery-1")?.position.x).toBe(4);
+    expect(model.getObjectByName("battery-1-side-rail-left")).toBeDefined();
+    expect(model.getObjectByName("battery-1-divider-1")).toBeDefined();
+    expect(model.getObjectByName("battery-1-end-stop-1-negative")).toBeDefined();
+    expect(model.getObjectByName("battery-1-cell-1")).toBeDefined();
     const lidMesh = model.children.find(
       (child) => child instanceof THREE.Mesh && child.userData.partId === "lid",
     ) as THREE.Mesh | undefined;

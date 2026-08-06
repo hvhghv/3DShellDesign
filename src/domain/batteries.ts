@@ -21,8 +21,38 @@ export const BATTERY_PRESETS: readonly BatteryPresetDefinition[] = [
   { id: "custom", name: "自定义电池仓", shape: "box", cellLength: 50, cellWidth: 30, cellHeight: 10, defaultCount: 1 },
 ];
 
+export const BATTERY_TERMINAL_ALLOWANCE = 2.8;
+export const BATTERY_LIPO_TERMINAL_ALLOWANCE = 1.2;
+
+export interface BatteryCompartmentLayout {
+  preset: BatteryPresetDefinition;
+  cellCount: number;
+  innerWidth: number;
+  innerDepth: number;
+  terminalAllowance: number;
+  railHeight: number;
+  laneCenters: number[];
+  lanePitch: number;
+}
+
 export function getBatteryPreset(id: BatteryPreset): BatteryPresetDefinition {
   return BATTERY_PRESETS.find((preset) => preset.id === id) ?? BATTERY_PRESETS[0];
+}
+
+export function getBatteryTerminalAllowance(
+  preset: BatteryPresetDefinition,
+): number {
+  if (preset.shape === "cylinder") return BATTERY_TERMINAL_ALLOWANCE;
+  return preset.id === "lipo" ? BATTERY_LIPO_TERMINAL_ALLOWANCE : 0;
+}
+
+export function getBatteryMaxRailHeight(
+  preset: BatteryPresetDefinition,
+): number {
+  if (preset.shape !== "cylinder") return 300;
+  return Number(
+    Math.max(3.2, Math.min(preset.cellHeight * 0.45, preset.cellHeight / 2 - 0.7)).toFixed(2),
+  );
 }
 
 function calculatedDimensions(
@@ -32,12 +62,61 @@ function calculatedDimensions(
   clearance: number,
 ): readonly [number, number, number] {
   const count = preset.id === "lipo" ? 1 : cellCount;
-  const gap = count > 1 ? (count - 1) * Math.max(1, wallThickness) : 0;
+  const terminalAllowance = getBatteryTerminalAllowance(preset);
+  const dividerWidth = preset.id === "lipo" ? 0 : Math.max(1, wallThickness);
+  const laneClearance = preset.id === "lipo" ? clearance * 2 : clearance * 2 * count;
+  const gap = count > 1 ? (count - 1) * dividerWidth : 0;
+  const railHeight =
+    preset.shape === "cylinder"
+      ? getBatteryMaxRailHeight(preset)
+      : Math.max(4, Math.min(preset.cellHeight, preset.cellHeight * 0.55 + wallThickness));
   return [
-    preset.cellLength + (wallThickness + clearance) * 2,
-    preset.cellWidth * count + gap + (wallThickness + clearance) * 2,
-    Math.max(4, preset.cellHeight * 0.62 + wallThickness),
+    preset.cellLength + terminalAllowance * 2 + clearance * 2 + wallThickness * 2,
+    preset.cellWidth * count + gap + laneClearance + wallThickness * 2,
+    railHeight,
   ];
+}
+
+export function getBatteryCompartmentLayout(
+  placement: BatteryCompartmentPlacement,
+): BatteryCompartmentLayout {
+  const preset = getBatteryPreset(placement.preset);
+  const cellCount = preset.id === "lipo" ? 1 : Math.min(6, Math.max(1, placement.cellCount));
+  const innerWidth = Math.max(
+    preset.cellLength + getBatteryTerminalAllowance(preset) * 2,
+    placement.width - placement.wallThickness * 2,
+  );
+  const innerDepth = Math.max(
+    preset.cellWidth * cellCount,
+    placement.depth - placement.wallThickness * 2,
+  );
+  const lanePitch = cellCount > 1
+    ? (innerDepth - preset.cellWidth) / (cellCount - 1)
+    : 0;
+  const startZ = cellCount > 1 ? -innerDepth / 2 + preset.cellWidth / 2 : 0;
+  return {
+    preset,
+    cellCount,
+    innerWidth,
+    innerDepth,
+    terminalAllowance: getBatteryTerminalAllowance(preset),
+    railHeight: Math.min(placement.height, getBatteryMaxRailHeight(preset)),
+    lanePitch,
+    laneCenters: Array.from({ length: cellCount }, (_, index) =>
+      Number((startZ + lanePitch * index).toFixed(3)),
+    ),
+  };
+}
+
+export function getBatteryMinimumDimensions(
+  placement: BatteryCompartmentPlacement,
+): readonly [number, number, number] {
+  return calculatedDimensions(
+    getBatteryPreset(placement.preset),
+    placement.cellCount,
+    placement.wallThickness,
+    placement.clearance,
+  );
 }
 
 export function createBatteryCompartment(
@@ -96,12 +175,18 @@ export function constrainBatteryCompartment(
 ): BatteryCompartmentPlacement {
   const clampDimension = (value: number) =>
     Number(Math.min(300, Math.max(4, value)).toFixed(2));
+  const preset = getBatteryPreset(placement.preset);
+  const cellCount =
+    preset.id === "lipo"
+      ? 1
+      : Math.min(6, Math.max(1, Math.round(placement.cellCount)));
+  const maxHeight = getBatteryMaxRailHeight(preset);
   return {
     ...placement,
-    cellCount: Math.min(6, Math.max(1, Math.round(placement.cellCount))),
+    cellCount,
     width: clampDimension(placement.width),
     depth: clampDimension(placement.depth),
-    height: clampDimension(placement.height),
+    height: Number(Math.min(maxHeight, clampDimension(placement.height)).toFixed(2)),
     wallThickness: Number(
       Math.min(5, Math.max(0.8, placement.wallThickness)).toFixed(2),
     ),

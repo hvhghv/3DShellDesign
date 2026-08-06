@@ -5,6 +5,7 @@ import {
   normalizeDesignerParameters,
   validateDesign,
 } from "./enclosure";
+import { createBatteryCompartment } from "./batteries";
 
 describe("enclosure domain", () => {
   it("derives enclosure dimensions from PCB and clearance", () => {
@@ -51,6 +52,28 @@ describe("enclosure domain", () => {
     );
 
     expect(blockingIssues).toHaveLength(0);
+  });
+
+  it("reports battery trays that are too small for the selected cells", () => {
+    const battery = {
+      ...createBatteryCompartment("battery-1", "aa"),
+      width: 45,
+      depth: 24,
+    };
+    const issues = validateDesign({
+      ...DEFAULT_PARAMETERS,
+      batteryCompartments: [battery],
+    });
+
+    expect(issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "battery-fit-battery-1",
+          level: "error",
+          part: "battery",
+        }),
+      ]),
+    );
   });
 
   it("checks antenna edge distance", () => {

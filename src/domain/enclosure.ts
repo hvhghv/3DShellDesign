@@ -5,6 +5,7 @@ import { MAGNET_GEOMETRY } from "./magnetSupport";
 import {
   constrainBatteryCompartment,
   createBatteryCompartment,
+  getBatteryMinimumDimensions,
   getBatteryPreset,
 } from "./batteries";
 import {
@@ -1050,6 +1051,20 @@ export function validateDesign(
     const width = quarterTurn ? compartment.depth : compartment.width;
     const depth = quarterTurn ? compartment.width : compartment.depth;
     const preset = getBatteryPreset(compartment.preset);
+    const [requiredWidth, requiredDepth] =
+      getBatteryMinimumDimensions(compartment);
+    if (
+      compartment.width + 0.01 < requiredWidth ||
+      compartment.depth + 0.01 < requiredDepth
+    ) {
+      issues.push({
+        id: `battery-fit-${compartment.id}`,
+        level: "error",
+        title: "电池仓内部尺寸不足",
+        detail: "增大仓体长度、宽度或减少槽位，需保留电池间隙和端部接触片空间",
+        part: "battery",
+      });
+    }
     if (
       Math.abs(compartment.offsetX) + width / 2 > dimensions.insideLength / 2 ||
       Math.abs(compartment.offsetZ) + depth / 2 > dimensions.insideWidth / 2 ||

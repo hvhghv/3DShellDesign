@@ -616,6 +616,19 @@ export function AssemblyTree({ onRequestClose }: AssemblyTreeProps) {
     ],
     [parameters.panelPlacements],
   );
+  const filteredPanels = parameters.panelPlacements.filter((panel) =>
+    matchesTreeQuery(
+      getPanelLabel(panel, parameters),
+      getFaceLabel(panel.face),
+      PANEL_MOUNTING_LABELS[panel.mountingType],
+    ),
+  );
+  const hiddenPanelIds = parameters.panelPlacements
+    .filter((panel) => hiddenFeatureIds.includes(panel.id))
+    .map((panel) => panel.id);
+  const showAllPanels = () => {
+    hiddenPanelIds.forEach((id) => toggleFeatureVisibility(id));
+  };
 
   return (
     <aside className="assembly-panel" aria-label="装配体和特征树">
@@ -755,17 +768,42 @@ export function AssemblyTree({ onRequestClose }: AssemblyTreeProps) {
         </fieldset>
         <div className="tree-section-heading">
           <span>面板</span>
-          <button type="button" onClick={addPanelPlacement} title="添加面板" aria-label="添加面板">
-            <Plus size={15} />
-          </button>
+          <span className="tree-section-actions">
+            {hiddenPanelIds.length > 0 ? (
+              <button
+                type="button"
+                onClick={showAllPanels}
+                title="显示全部面板"
+                aria-label="显示全部面板"
+              >
+                <Eye size={15} />
+              </button>
+            ) : null}
+            <button type="button" onClick={addPanelPlacement} title="添加面板" aria-label="添加面板">
+              <Plus size={15} />
+            </button>
+          </span>
         </div>
-        {parameters.panelPlacements.filter((panel) =>
-          matchesTreeQuery(
-            getPanelLabel(panel, parameters),
-            getFaceLabel(panel.face),
-            PANEL_MOUNTING_LABELS[panel.mountingType],
-          ),
-        ).map((panel) => (
+        {filteredPanels.length > 0 ? (
+          <div className="tree-feature-visibility" role="group" aria-label="面板显示">
+            {filteredPanels.map((panel) => {
+              const visible = !hiddenFeatureIds.includes(panel.id);
+              return (
+                <label key={panel.id} className={visible ? "" : "is-hidden"}>
+                  {visible ? <Eye size={13} /> : <EyeOff size={13} />}
+                  <span>{getPanelLabel(panel, parameters)}</span>
+                  <input
+                    type="checkbox"
+                    checked={visible}
+                    onChange={() => toggleFeatureVisibility(panel.id)}
+                    aria-label={`${getPanelLabel(panel, parameters)}显示`}
+                  />
+                </label>
+              );
+            })}
+          </div>
+        ) : null}
+        {filteredPanels.map((panel) => (
           <TreeItem
             key={panel.id}
             id="panel"

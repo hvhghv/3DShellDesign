@@ -19,7 +19,11 @@ import {
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { deriveEnclosureDimensions, validateDesign } from "../domain/enclosure";
-import { BATTERY_PRESETS, getBatteryPreset } from "../domain/batteries";
+import {
+  BATTERY_PRESETS,
+  getBatteryMaxRailHeight,
+  getBatteryPreset,
+} from "../domain/batteries";
 import {
   getMagnetSupportOption,
   MAGNET_SUPPORT_OPTIONS,
@@ -566,7 +570,7 @@ export function Inspector() {
             <NumberField label="槽位数量" value={compartment.cellCount} min={1} max={6} step={1} unit="槽" onChange={(value) => updateBatteryCompartment(compartment.id, { cellCount: value })} />
             <NumberField label="仓体长度" value={compartment.width} min={4} max={300} step={1} onChange={(value) => updateBatteryCompartment(compartment.id, { width: value })} />
             <NumberField label="仓体宽度" value={compartment.depth} min={4} max={300} step={1} onChange={(value) => updateBatteryCompartment(compartment.id, { depth: value })} />
-            <NumberField label="挡边高度" value={compartment.height} min={4} max={300} step={1} onChange={(value) => updateBatteryCompartment(compartment.id, { height: value })} />
+            <NumberField label="挡边高度" value={compartment.height} min={4} max={getBatteryMaxRailHeight(preset)} step={0.5} onChange={(value) => updateBatteryCompartment(compartment.id, { height: value })} />
             <NumberField label="仓壁厚度" value={compartment.wallThickness} min={0.8} max={5} step={0.1} onChange={(value) => updateBatteryCompartment(compartment.id, { wallThickness: value })} />
             <NumberField label="电池间隙" value={compartment.clearance} min={0.2} max={5} step={0.1} onChange={(value) => updateBatteryCompartment(compartment.id, { clearance: value })} />
             <NumberField label="X 偏移" value={compartment.offsetX} min={-500} max={500} step={1} onChange={(value) => updateBatteryCompartment(compartment.id, { offsetX: value })} />
@@ -608,15 +612,26 @@ export function Inspector() {
           <section className="inspector-section">
             <div className="section-heading-row">
               <h2>面板参数</h2>
-              <button
-                className="icon-section-button"
-                type="button"
-                title="删除当前面板"
-                aria-label="删除当前面板"
-                onClick={() => removePanelPlacement(panel.id)}
-              >
-                <Trash2 size={14} />
-              </button>
+              <span className="section-heading-actions">
+                <button
+                  className="icon-section-button is-visibility"
+                  type="button"
+                  title={selectedFeatureHidden ? "显示当前面板" : "隐藏当前面板"}
+                  aria-label={selectedFeatureHidden ? "显示当前面板" : "隐藏当前面板"}
+                  onClick={() => toggleFeatureVisibility(panel.id)}
+                >
+                  {selectedFeatureHidden ? <Eye size={14} /> : <EyeOff size={14} />}
+                </button>
+                <button
+                  className="icon-section-button"
+                  type="button"
+                  title="删除当前面板"
+                  aria-label="删除当前面板"
+                  onClick={() => removePanelPlacement(panel.id)}
+                >
+                  <Trash2 size={14} />
+                </button>
+              </span>
             </div>
             <label className="select-field">
               <span>所在面</span>

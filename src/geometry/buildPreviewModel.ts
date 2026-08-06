@@ -18,7 +18,7 @@ import type {
   StepPreview,
 } from "../domain/model";
 import { getPreviewSize } from "../domain/customComponents";
-import { getBatteryPreset } from "../domain/batteries";
+import { getBatteryCompartmentLayout } from "../domain/batteries";
 import {
   getPanelPlacement,
   getPanelInnerCornerRadius,
@@ -498,40 +498,120 @@ function addBatteryCompartmentPreview(
   const trayMaterial = standardMaterial(0x3d6652, selected, {
     roughness: 0.58,
   });
-  addMesh(
-    group,
-    createRingGeometry(
-      placement.width,
-      placement.depth,
-      Math.max(2, placement.width - placement.wallThickness * 2),
-      Math.max(2, placement.depth - placement.wallThickness * 2),
-      placement.height,
-      Math.min(3, placement.width / 4, placement.depth / 4),
-      Math.min(2, placement.width / 4, placement.depth / 4),
-    ),
-    trayMaterial,
-    "battery",
-    [0, 0, 0],
-  );
+  const contactMaterial = standardMaterial(0x55605b, selected, {
+    metalness: 0.38,
+    roughness: 0.34,
+  });
+  const layout = getBatteryCompartmentLayout(placement);
+  const preset = layout.preset;
 
-  const preset = getBatteryPreset(placement.preset);
+  if (preset.shape === "cylinder") {
+    const railHeight = layout.railHeight;
+    const railY = railHeight / 2 - placement.height / 2;
+    const sideRailLength = placement.width;
+    const innerLength = Math.max(2, placement.width - placement.wallThickness * 2);
+    const contactBlockWidth = Math.max(placement.wallThickness, layout.terminalAllowance);
+    const contactBlockDepth = Math.max(
+      3,
+      Math.min(
+        preset.cellWidth + placement.clearance * 2,
+        layout.lanePitch > 0
+          ? layout.lanePitch - placement.wallThickness
+          : layout.innerDepth,
+      ),
+    );
+
+    for (const [name, z] of [
+      ["left", -placement.depth / 2 + placement.wallThickness / 2],
+      ["right", placement.depth / 2 - placement.wallThickness / 2],
+    ] as const) {
+      const rail = addMesh(
+        group,
+        new THREE.BoxGeometry(sideRailLength, railHeight, placement.wallThickness),
+        trayMaterial,
+        "battery",
+        [0, railY, z],
+      );
+      rail.name = `${placement.id}-side-rail-${name}`;
+    }
+
+    for (let index = 1; index < layout.laneCenters.length; index += 1) {
+      const z = (layout.laneCenters[index - 1] + layout.laneCenters[index]) / 2;
+      const divider = addMesh(
+        group,
+        new THREE.BoxGeometry(innerLength, railHeight, placement.wallThickness),
+        trayMaterial,
+        "battery",
+        [0, railY, z],
+      );
+      divider.name = `${placement.id}-divider-${index}`;
+    }
+
+    layout.laneCenters.forEach((z, index) => {
+      for (const [side, x] of [
+        ["negative", -placement.width / 2 + contactBlockWidth / 2],
+        ["positive", placement.width / 2 - contactBlockWidth / 2],
+      ] as const) {
+        const endStop = addMesh(
+          group,
+          new THREE.BoxGeometry(contactBlockWidth, railHeight, contactBlockDepth),
+          trayMaterial,
+          "battery",
+          [x, railY, z],
+        );
+        endStop.name = `${placement.id}-end-stop-${index + 1}-${side}`;
+
+        const contact = addMesh(
+          group,
+          new THREE.BoxGeometry(
+            0.45,
+            Math.min(preset.cellHeight * 0.62, railHeight + 1.2),
+            Math.min(preset.cellWidth * 0.68, contactBlockDepth),
+          ),
+          contactMaterial.clone(),
+          "battery",
+          [
+            side === "negative"
+              ? -preset.cellLength / 2 - placement.clearance
+              : preset.cellLength / 2 + placement.clearance,
+            preset.cellHeight / 2 - placement.height / 2 + 0.2,
+            z,
+          ],
+          false,
+        );
+        contact.name = `${placement.id}-contact-${index + 1}-${side}`;
+      }
+    });
+  } else {
+    const tray = addMesh(
+      group,
+      createRingGeometry(
+        placement.width,
+        placement.depth,
+        Math.max(2, placement.width - placement.wallThickness * 2),
+        Math.max(2, placement.depth - placement.wallThickness * 2),
+        placement.height,
+        Math.min(3, placement.width / 4, placement.depth / 4),
+        Math.min(2, placement.width / 4, placement.depth / 4),
+      ),
+      trayMaterial,
+      "battery",
+      [0, 0, 0],
+    );
+    tray.name = `${placement.id}-tray-frame`;
+  }
+
   const cellMaterial = standardMaterial(
     preset.id === "lipo" ? 0x9aa3a0 : 0xc5a94f,
     selected,
-    { metalness: preset.shape === "cylinder" ? 0.32 : 0.06, roughness: 0.4 },
+    {
+      metalness: preset.shape === "cylinder" ? 0.32 : 0.06,
+      roughness: 0.4,
+      transparent: true,
+      opacity: 0.62,
+    },
   );
-  const count = preset.id === "lipo" ? 1 : placement.cellCount;
-  const spacing =
-    count > 1
-      ? (placement.depth -
-          placement.wallThickness * 2 -
-          preset.cellWidth) /
-        (count - 1)
-      : 0;
-  for (let index = 0; index < count; index += 1) {
-    const z = count > 1
-      ? -placement.depth / 2 + placement.wallThickness + preset.cellWidth / 2 + spacing * index
-      : 0;
+  layout.laneCenters.forEach((z, index) => {
     const geometry =
       preset.shape === "cylinder"
         ? new THREE.CylinderGeometry(
@@ -545,15 +625,17 @@ function addBatteryCompartmentPreview(
             preset.cellHeight,
             preset.cellWidth,
           );
-    addMesh(
+    const cell = addMesh(
       group,
       geometry,
       cellMaterial.clone(),
       "battery",
       [0, preset.cellHeight / 2 - placement.height / 2 + 0.2, z],
     );
-  }
+    cell.name = `${placement.id}-cell-${index + 1}`;
+  });
   cellMaterial.dispose();
+  contactMaterial.dispose();
 }
 
 function addClosureFeatures(

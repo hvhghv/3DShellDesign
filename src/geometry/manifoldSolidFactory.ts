@@ -43,6 +43,7 @@ import {
   getPanelScrewHeadRecessDepth,
   PANEL_SCREW_HEAD_RECESS_RADIUS,
 } from "../domain/screwRecess";
+import { getBatteryCompartmentLayout } from "../domain/batteries";
 import {
   getAntennaDefinition,
   getConnectorDefinition,
@@ -861,32 +862,114 @@ function applyBatteryCompartments(
 ): ManifoldSolid {
   let result = source;
   for (const placement of parameters.batteryCompartments) {
-    const innerWidth = Math.max(2, placement.width - placement.wallThickness * 2);
-    const innerDepth = Math.max(2, placement.depth - placement.wallThickness * 2);
-    let tray = extrudeRing(
-      module,
-      placement.width,
-      placement.depth,
-      innerWidth,
-      innerDepth,
-      Math.min(3, placement.width / 4, placement.depth / 4),
-      Math.min(2, innerWidth / 4, innerDepth / 4),
-      placement.height + 0.1,
-      parameters.bottomThickness - 0.1,
-    );
-    if (placement.cellCount > 1 && placement.preset !== "lipo") {
-      const spacing = innerDepth / placement.cellCount;
-      for (let index = 1; index < placement.cellCount; index += 1) {
-        const divider = cubeAt(
+    const layout = getBatteryCompartmentLayout(placement);
+    let tray: ManifoldSolid | null = null;
+    const addTrayPart = (part: ManifoldSolid) => {
+      tray = tray ? unionAndDispose(tray, part) : part;
+    };
+
+    if (layout.preset.shape === "cylinder") {
+      const railHeight = layout.railHeight + 0.1;
+      const z = parameters.bottomThickness - 0.1;
+      const innerWidth = Math.max(2, placement.width - placement.wallThickness * 2);
+      const contactBlockWidth = Math.max(
+        placement.wallThickness,
+        layout.terminalAllowance,
+      );
+      const contactBlockDepth = Math.max(
+        3,
+        Math.min(
+          layout.preset.cellWidth + placement.clearance * 2,
+          layout.lanePitch > 0
+            ? layout.lanePitch - placement.wallThickness
+            : layout.innerDepth,
+        ),
+      );
+
+      addTrayPart(
+        cubeAt(
           module,
-          [innerWidth, placement.wallThickness, placement.height + 0.1],
-          -innerWidth / 2,
-          -innerDepth / 2 + spacing * index - placement.wallThickness / 2,
-          parameters.bottomThickness - 0.1,
+          [placement.width, placement.wallThickness, railHeight],
+          -placement.width / 2,
+          -placement.depth / 2,
+          z,
+        ),
+      );
+      addTrayPart(
+        cubeAt(
+          module,
+          [placement.width, placement.wallThickness, railHeight],
+          -placement.width / 2,
+          placement.depth / 2 - placement.wallThickness,
+          z,
+        ),
+      );
+
+      for (let index = 1; index < layout.laneCenters.length; index += 1) {
+        const dividerY =
+          (layout.laneCenters[index - 1] + layout.laneCenters[index]) / 2 -
+          placement.wallThickness / 2;
+        addTrayPart(
+          cubeAt(
+            module,
+            [innerWidth, placement.wallThickness, railHeight],
+            -innerWidth / 2,
+            dividerY,
+            z,
+          ),
         );
-        tray = unionAndDispose(tray, divider);
+      }
+
+      for (const laneCenter of layout.laneCenters) {
+        addTrayPart(
+          cubeAt(
+            module,
+            [contactBlockWidth, contactBlockDepth, railHeight],
+            -placement.width / 2,
+            laneCenter - contactBlockDepth / 2,
+            z,
+          ),
+        );
+        addTrayPart(
+          cubeAt(
+            module,
+            [contactBlockWidth, contactBlockDepth, railHeight],
+            placement.width / 2 - contactBlockWidth,
+            laneCenter - contactBlockDepth / 2,
+            z,
+          ),
+        );
+      }
+    } else {
+      const innerWidth = Math.max(2, placement.width - placement.wallThickness * 2);
+      const innerDepth = Math.max(2, placement.depth - placement.wallThickness * 2);
+      tray = extrudeRing(
+        module,
+        placement.width,
+        placement.depth,
+        innerWidth,
+        innerDepth,
+        Math.min(3, placement.width / 4, placement.depth / 4),
+        Math.min(2, innerWidth / 4, innerDepth / 4),
+        placement.height + 0.1,
+        parameters.bottomThickness - 0.1,
+      );
+      if (placement.cellCount > 1 && placement.preset !== "lipo") {
+        const spacing = innerDepth / placement.cellCount;
+        for (let index = 1; index < placement.cellCount; index += 1) {
+          const divider = cubeAt(
+            module,
+            [innerWidth, placement.wallThickness, placement.height + 0.1],
+            -innerWidth / 2,
+            -innerDepth / 2 + spacing * index - placement.wallThickness / 2,
+            parameters.bottomThickness - 0.1,
+          );
+          tray = unionAndDispose(tray, divider);
+        }
       }
     }
+
+    if (!tray) continue;
     if (placement.rotation !== 0) {
       tray = rotateAndDispose(tray, 0, 0, placement.rotation);
     }

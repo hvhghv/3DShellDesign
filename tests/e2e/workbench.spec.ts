@@ -166,6 +166,25 @@ async function addAntenna(
   await chooseDevice(page, "天线", name, surface);
 }
 
+async function selectBasePart(page: Page) {
+  await page
+    .locator(".tree-nav")
+    .getByRole("button", { name: /^壳体主体/ })
+    .click();
+}
+
+async function enterViewportEditMode(page: Page) {
+  const viewport = page.locator(".viewport-canvas");
+  await expect(viewport).toHaveAttribute("data-transform-edit-mode", "false");
+  await page.evaluate(() => {
+    if (document.activeElement instanceof HTMLElement) {
+      document.activeElement.blur();
+    }
+  });
+  await page.keyboard.press("Tab");
+  await expect(viewport).toHaveAttribute("data-transform-edit-mode", "true");
+}
+
 async function exportManufacturingStl(page: Page, option: string) {
   await page
     .locator(".tree-item")
@@ -216,7 +235,7 @@ test("independently hides and restores enclosure faces", async ({ page }, testIn
   await expect(canvas).toBeVisible();
   const before = await canvas.screenshot({ type: "png" });
   const frontToggle = page.getByRole("checkbox", { name: "前壁显示" });
-  const topToggle = page.getByRole("checkbox", { name: "顶盖显示" });
+  const topToggle = page.getByRole("checkbox", { name: "顶部显示" });
   const bottomToggle = page.getByRole("checkbox", { name: "底板显示" });
   await expect(frontToggle).toBeChecked();
   await frontToggle.uncheck();
@@ -266,7 +285,7 @@ test("renders and exports the default enclosure @manufacturing", async ({ page }
 
   await page
     .locator(".tree-nav")
-    .getByRole("button", { name: /^顶盖 / })
+    .getByRole("button", { name: /^可拆面/ })
     .click();
   await page.getByRole("button", { name: "聚焦选中零件" }).click();
   await expect(page.locator(".viewport-canvas")).toHaveAttribute(
@@ -274,7 +293,7 @@ test("renders and exports the default enclosure @manufacturing", async ({ page }
     "lid",
   );
   expect(await page.locator(".tree-item.is-context-hidden").count()).toBeGreaterThan(3);
-  await page.locator(".tree-nav").getByRole("button", { name: /下壳/ }).click();
+  await selectBasePart(page);
   await expect(page.locator(".viewport-canvas")).toHaveAttribute(
     "data-focused-part",
     "base",
@@ -429,7 +448,7 @@ test("exports antenna cutouts and BOM data @manufacturing", async ({ page }) => 
     .filter({ hasText: "纵向偏移" })
     .locator("input")
     .fill("0");
-  await page.locator(".tree-nav").getByRole("button", { name: /下壳/ }).click();
+  await selectBasePart(page);
 
   await exportSelect.selectOption("base-stl");
   const antennaBasePromise = page.waitForEvent("download", { timeout: 60_000 });
@@ -455,7 +474,7 @@ test("exports antenna cutouts and BOM data @manufacturing", async ({ page }) => 
     .getByRole("button", { name: /SMA 穿板棒状天线.*面板/ })
     .click();
   await page.getByRole("button", { name: "删除当前天线" }).click();
-  await page.locator(".tree-nav").getByRole("button", { name: /下壳/ }).click();
+  await selectBasePart(page);
 
   await exportSelect.selectOption("bom-csv");
   const bomDownloadPromise = page.waitForEvent("download");
@@ -496,7 +515,7 @@ test("exports connector and surface placement geometry @manufacturing", async ({
   await expect(
     page.getByRole("button", { name: "DC 5.5/2.1 母座 前壁" }),
   ).toBeVisible();
-  await page.locator(".tree-nav").getByRole("button", { name: /下壳/ }).click();
+  await selectBasePart(page);
   await exportSelect.selectOption("base-stl");
   const libraryDownloadPromise = page.waitForEvent("download", { timeout: 60_000 });
   await page.locator(".manufacturing-export button").click();
@@ -524,7 +543,7 @@ test("exports connector and surface placement geometry @manufacturing", async ({
   await expect(
     page.getByRole("button", { name: "USB Type-C 母座 右壁" }),
   ).toBeVisible();
-  await page.locator(".tree-nav").getByRole("button", { name: /下壳/ }).click();
+  await selectBasePart(page);
   await exportSelect.selectOption("base-stl");
   const multiConnectorDownloadPromise = page.waitForEvent("download", {
     timeout: 60_000,
@@ -541,7 +560,7 @@ test("exports connector and surface placement geometry @manufacturing", async ({
   await page.locator(".tree-item").filter({ hasText: "面板 1" }).click();
   await page.getByRole("combobox", { name: "面板所在面" }).selectOption("back");
   await expect(page.locator(".tree-nav").getByText(/后壁 · .* mm/)).toBeVisible();
-  await page.locator(".tree-nav").getByRole("button", { name: /下壳/ }).click();
+  await selectBasePart(page);
   await exportSelect.selectOption("base-stl");
   const sidePanelBasePromise = page.waitForEvent("download", { timeout: 60_000 });
   await page.locator(".manufacturing-export button").click();
@@ -566,7 +585,7 @@ test("exports connector and surface placement geometry @manufacturing", async ({
     .filter({ hasText: "纵向偏移" })
     .locator("input")
     .fill("0");
-  await page.locator(".tree-nav").getByRole("button", { name: /下壳/ }).click();
+  await selectBasePart(page);
   await exportSelect.selectOption("panel-stl:panel-1");
   const panelConnectorPromise = page.waitForEvent("download", { timeout: 60_000 });
   await page.locator(".manufacturing-export button").click();
@@ -592,7 +611,7 @@ test("exports connector and surface placement geometry @manufacturing", async ({
   await page
     .getByRole("combobox", { name: "接口 2 安装位置" })
     .selectOption("top");
-  await page.locator(".tree-nav").getByRole("button", { name: /下壳/ }).click();
+  await selectBasePart(page);
   await exportSelect.selectOption("lid-stl");
   const topConnectorPromise = page.waitForEvent("download", { timeout: 60_000 });
   await page.locator(".manufacturing-export button").click();
@@ -616,7 +635,7 @@ test("exports connector and surface placement geometry @manufacturing", async ({
     await page
       .getByRole("combobox", { name: "接口 2 安装位置" })
       .selectOption(connectorFace);
-    await page.locator(".tree-nav").getByRole("button", { name: /下壳/ }).click();
+    await selectBasePart(page);
     await exportSelect.selectOption("base-stl");
     const faceConnectorPromise = page.waitForEvent("download", {
       timeout: 60_000,
@@ -647,7 +666,7 @@ test("exports connector and surface placement geometry @manufacturing", async ({
   for (const panelFace of ["front", "back", "left", "right", "bottom"] as const) {
     await page.locator(".tree-item").filter({ hasText: "面板 1" }).click();
     await page.getByRole("combobox", { name: "面板所在面" }).selectOption(panelFace);
-    await page.locator(".tree-nav").getByRole("button", { name: /下壳/ }).click();
+    await selectBasePart(page);
     await exportSelect.selectOption("base-stl");
     const facePanelPromise = page.waitForEvent("download", { timeout: 60_000 });
     await page.locator(".manufacturing-export button").click();
@@ -675,7 +694,7 @@ test("exports closures, patterns, imports and templates @manufacturing", async (
   const defaultBase = await exportManufacturingStl(page, "base-stl");
   await page.getByRole("tab", { name: "结构" }).click();
   const exportSelect = page.getByRole("combobox", { name: "制造导出格式" });
-  await page.locator(".tree-nav").getByRole("button", { name: /下壳/ }).click();
+  await selectBasePart(page);
 
   await page.getByRole("combobox", { name: "镂空阵列类型" }).selectOption(
     "honeycomb",
@@ -694,7 +713,7 @@ test("exports closures, patterns, imports and templates @manufacturing", async (
   await page.getByRole("combobox", { name: "面板固定方式" }).selectOption(
     "slide",
   );
-  await page.locator(".tree-nav").getByRole("button", { name: /下壳/ }).click();
+  await selectBasePart(page);
   await exportSelect.selectOption("lid-stl");
   const slideDownloadPromise = page.waitForEvent("download", { timeout: 60_000 });
   await page.locator(".manufacturing-export button").click();
@@ -706,7 +725,7 @@ test("exports closures, patterns, imports and templates @manufacturing", async (
   await page.getByRole("combobox", { name: "面板固定方式" }).selectOption(
     "screw",
   );
-  await page.locator(".tree-nav").getByRole("button", { name: /下壳/ }).click();
+  await selectBasePart(page);
   await page.getByRole("combobox", { name: "镂空阵列类型" }).selectOption("none");
 
   await page.getByRole("tab", { name: "尺寸" }).click();
@@ -1161,7 +1180,9 @@ test("supports inset panels, custom geometry and multiple PCB references @manufa
     page.locator(".tree-item").filter({ hasText: "occt-cube-mm.step" }),
   ).toBeVisible({ timeout: 120_000 });
   await page.getByRole("button", { name: "聚焦选中零件" }).click();
-  await expect(page.getByRole("status")).toContainText("仅显示：自定义组件");
+  await expect(page.locator(".viewport-focus-state")).toContainText(
+    "仅显示：自定义组件",
+  );
   await captureVisualCheckpoint(page, testInfo, "custom-components.png");
   await page.getByRole("button", { name: "显示全部零件", exact: true }).click();
 
@@ -1176,7 +1197,7 @@ test("supports inset panels, custom geometry and multiple PCB references @manufa
   const pcbInspector = page.getByRole("complementary", { name: "PCB 检查器" });
   const elevationInput = pcbInspector
     .locator(".field-row")
-    .filter({ hasText: "抬高" })
+    .filter({ hasText: "Y 偏移" })
     .locator("input");
   await expect(elevationInput).toHaveValue("5");
   await elevationInput.fill("8");
@@ -1222,10 +1243,10 @@ test("supports battery trays and configurable panel screw mechanics @manufacturi
 
   await page.locator(".tree-item").filter({ hasText: "PCB 控制器外壳" }).click();
   await page
-    .getByRole("checkbox", { name: "顶盖螺丝头嵌入" })
+    .getByRole("checkbox", { name: "可拆面螺丝头嵌入" })
     .check();
   const closureSection = page.locator(".inspector-section").filter({
-    has: page.getByRole("heading", { name: "顶盖固定" }),
+    has: page.getByRole("heading", { name: "可拆面固定" }),
   });
   const closureRecessDepth = closureSection.getByRole("spinbutton", {
     name: "螺丝沉孔深度 mm",
@@ -1233,7 +1254,7 @@ test("supports battery trays and configurable panel screw mechanics @manufacturi
   await closureRecessDepth.fill("1.1");
   await expect(closureRecessDepth).toHaveValue("1.1");
 
-  const lidTransparency = page.getByRole("checkbox", { name: "上盖半透明" });
+  const lidTransparency = page.getByRole("checkbox", { name: "可拆面半透明" });
   await lidTransparency.check();
   await expect(page.locator(".viewport-canvas")).toHaveAttribute(
     "data-lid-transparent",
@@ -1276,7 +1297,7 @@ test("supports battery trays and configurable panel screw mechanics @manufacturi
   await expect(slots).toHaveValue("3");
   await batteryInspector
     .locator(".field-row")
-    .filter({ hasText: "X 偏移" })
+    .filter({ hasText: "面内横向" })
     .locator("input")
     .fill("8");
   await batteryInspector
@@ -1286,7 +1307,7 @@ test("supports battery trays and configurable panel screw mechanics @manufacturi
   await captureVisualCheckpoint(page, testInfo, "battery-tray.png");
   await page.getByRole("button", { name: "显示全部零件", exact: true }).click();
 
-  await page.locator(".tree-nav").getByRole("button", { name: /下壳/ }).click();
+  await selectBasePart(page);
   await exportSelect.selectOption("base-stl");
   const baseDownloadPromise = page.waitForEvent("download", { timeout: 60_000 });
   await page.locator(".manufacturing-export button").click();
@@ -1474,6 +1495,7 @@ test("connector and antenna editors stay contextual and support instances", asyn
   const canvas = page.locator(".viewport-canvas canvas");
   const canvasBox = await canvas.boundingBox();
   expect(canvasBox).not.toBeNull();
+  await enterViewportEditMode(page);
   await page.mouse.move(canvasBox!.x + 345, canvasBox!.y + 452);
   await page.mouse.down();
   await page.mouse.move(canvasBox!.x + 370, canvasBox!.y + 462, { steps: 8 });
@@ -1489,10 +1511,10 @@ test("connector and antenna editors stay contextual and support instances", asyn
   await expect(connectorOffset).toHaveValue(movedConnectorOffset);
   await captureVisualCheckpoint(page, testInfo, "connector-editor.png");
 
-  await page.getByRole("button", { name: "缩放选中对象" }).click();
+  await expect(page.getByRole("button", { name: "缩放选中对象" })).toBeDisabled();
   await expect(page.locator(".viewport-canvas")).toHaveAttribute(
     "data-transform-mode",
-    "scale",
+    "move",
   );
   await addAntenna(page, "内贴 FPC 天线");
   await expect(page.getByRole("complementary", { name: "天线检查器" })).toBeVisible();
@@ -1530,6 +1552,7 @@ test("connector and antenna editors stay contextual and support instances", asyn
     .filter({ hasText: "横向偏移" })
     .locator("input");
   await expect(secondAntennaOffset).toHaveValue("0");
+  await enterViewportEditMode(page);
   await page.mouse.move(canvasBox!.x + 500, canvasBox!.y + 268);
   await page.mouse.down();
   await page.mouse.move(canvasBox!.x + 525, canvasBox!.y + 273, { steps: 8 });
@@ -1600,6 +1623,7 @@ test("3D transform handles edit the selected panel", async ({ page }, testInfo) 
     "data-transform-mode",
     "scale",
   );
+  await enterViewportEditMode(page);
   await page.mouse.move(canvasBox!.x + 505, canvasBox!.y + 290);
   await page.mouse.down();
   await page.mouse.move(canvasBox!.x + 525, canvasBox!.y + 294, { steps: 10 });
@@ -1607,6 +1631,10 @@ test("3D transform handles edit the selected panel", async ({ page }, testInfo) 
   await expect(panelWidth).not.toHaveValue("62.64");
   const scaledWidth = await panelWidth.inputValue();
   await page.getByRole("button", { name: "移动选中对象" }).click();
+  await expect(page.locator(".viewport-canvas")).toHaveAttribute(
+    "data-transform-edit-mode",
+    "true",
+  );
   await page.mouse.move(canvasBox!.x + 505, canvasBox!.y + 290);
   await page.mouse.down();
   await page.mouse.move(canvasBox!.x + 530, canvasBox!.y + 295, { steps: 12 });

@@ -888,9 +888,13 @@ test("device pickers create only the selected connector and antenna @smoke", asy
   await expect(page.getByRole("combobox", { name: "接口 4 器件" })).toHaveValue(
     "lcdwiki-msp4021",
   );
-  await expect(
-    page.getByRole("complementary", { name: "接口检查器" }),
-  ).toContainText("屏幕规格：320x480 · 电阻触摸");
+  const displayInspector = page.getByRole("complementary", {
+    name: "接口检查器",
+  });
+  await expect(displayInspector).toContainText("显示屏参数");
+  await expect(displayInspector).toContainText("4.0寸 SPI 屏");
+  await expect(displayInspector).toContainText("320x480 · 电阻触摸");
+  await expect(displayInspector).toContainText("固定方式");
 
   await page.getByRole("button", { name: "添加天线" }).click();
   const antennaPicker = page.getByRole("dialog", { name: "添加天线选择器" });

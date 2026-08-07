@@ -17,6 +17,7 @@ import {
 import { PARAMETRIC_PCB_FEATURE_ID } from "../domain/pcbMounting";
 import {
   getPcbRailDirection,
+  getPcbRailEntryFace,
   getPcbRailMovementAxis,
   synchronizePcbRailDirection,
 } from "../domain/pcbRailDirection";
@@ -46,6 +47,7 @@ import {
   ENCLOSURE_FACE_OPTIONS,
   getDefaultPanelSize,
 } from "../domain/placements";
+import { normalizeRemovableFaces } from "../domain/removableFaces";
 import { getAntennaDefinition, getConnectorDefinition } from "../libraries/components";
 import { getEnclosureTemplate } from "../libraries/templates";
 import { queueProjectCache, readProjectCache } from "./projectCache";
@@ -471,7 +473,7 @@ export const useDesignerStore = create<DesignerState>((set, get) => ({
       const railMovementAxis = getPcbRailMovementAxis(state.parameters);
       if (
         railMovementAxis !== null &&
-        (key === "pcbElevation" ||
+        ((key === "pcbElevation" && railMovementAxis !== "y") ||
           (key === "pcbOffsetX" && railMovementAxis !== "x") ||
           (key === "pcbOffsetZ" && railMovementAxis !== "z"))
       ) {
@@ -484,6 +486,45 @@ export const useDesignerStore = create<DesignerState>((set, get) => ({
       const parameterPatch = {
         [key]: clampedValue as DesignerParameters[typeof key],
       } as Pick<DesignerParameters, typeof key> & Partial<DesignerParameters>;
+      if (key === "lidFace") {
+        const nextPrimaryFace = clampedValue as EnclosureFace;
+        const currentRemovableFaces = normalizeRemovableFaces(
+          state.parameters.removableFaces,
+          state.parameters.lidFace,
+        );
+        const currentWithoutPrimary = currentRemovableFaces.filter(
+          (face) => face !== state.parameters.lidFace,
+        );
+        parameterPatch.removableFaces =
+          currentRemovableFaces.length === 1 &&
+          currentRemovableFaces[0] === state.parameters.lidFace
+            ? [nextPrimaryFace]
+            : normalizeRemovableFaces(
+                [nextPrimaryFace, ...currentWithoutPrimary],
+                nextPrimaryFace,
+              );
+      } else if (key === "removableFaces") {
+        parameterPatch.removableFaces = normalizeRemovableFaces(
+          clampedValue,
+          state.parameters.lidFace,
+        );
+      }
+      if (key === "pcbRailEntryFace") {
+        parameterPatch.pcbRailEntryFace = clampedValue as EnclosureFace;
+      } else if (key === "pcbRailAxis" || key === "pcbInsertionSide") {
+        const axis =
+          key === "pcbRailAxis"
+            ? (clampedValue as DesignerParameters["pcbRailAxis"])
+            : state.parameters.pcbRailAxis;
+        const insertionSide =
+          key === "pcbInsertionSide"
+            ? (clampedValue as DesignerParameters["pcbInsertionSide"])
+            : state.parameters.pcbInsertionSide;
+        parameterPatch.pcbRailEntryFace = getPcbRailEntryFace(
+          axis,
+          insertionSide,
+        );
+      }
       if (
         key === "standoffHeight" &&
         typeof clampedValue === "number" &&
@@ -1741,7 +1782,7 @@ export const useDesignerStore = create<DesignerState>((set, get) => ({
           pcbOffsetZ: railMovementAxis !== null && railMovementAxis !== "z"
             ? state.parameters.pcbOffsetZ
             : clampPcbPlanarOffset(changes.offsetZ ?? state.parameters.pcbOffsetZ),
-          pcbElevation: railMovementAxis !== null
+          pcbElevation: railMovementAxis !== null && railMovementAxis !== "y"
             ? state.parameters.pcbElevation
             : Math.min(
                 300,
@@ -1798,7 +1839,7 @@ export const useDesignerStore = create<DesignerState>((set, get) => ({
                     : railMovementAxis !== null && railMovementAxis !== "z"
                     ? placement.offsetZ
                     : clampPcbPlanarOffset(changes.offsetZ ?? placement.offsetZ),
-                  elevation: railMovementAxis !== null
+                  elevation: railMovementAxis !== null && railMovementAxis !== "y"
                     ? placement.elevation
                     : Math.min(
                         300,

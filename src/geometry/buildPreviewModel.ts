@@ -54,6 +54,7 @@ import {
   getClosureScrewHeadRecessRadius,
   getPanelScrewHeadRecessDepth,
 } from "../domain/screwRecess";
+import { getRemovableFaces } from "../domain/removableFaces";
 import {
   type ConnectorDefinition,
   getAntennaDefinition,
@@ -250,14 +251,16 @@ function getPreviewFacePosition(
   followRemovableFace = false,
 ): [number, number, number] {
   const lidFace = parameters.lidFace;
+  const faceFollowsRemovableGroup =
+    followRemovableFace && getRemovableFaces(parameters).includes(face);
   const lidExplodedOffset =
-    followRemovableFace && face === lidFace && face !== "top"
+    faceFollowsRemovableGroup && face !== "top"
       ? Math.max(0, lidY - parameters.baseHeight)
       : 0;
   const offset = normalOffset + lidExplodedOffset;
   if (face === "top") {
     const surfaceY =
-      lidFace === "top"
+      faceFollowsRemovableGroup || lidFace === "top"
         ? lidY + parameters.lidThickness
         : parameters.baseHeight + parameters.lidThickness;
     return [u, surfaceY + normalOffset, v];
@@ -610,7 +613,7 @@ function getInteriorFaceMountTransform(
 } {
   if (face === "top") {
     const topSurfaceY =
-      parameters.lidFace === "top"
+      getRemovableFaces(parameters).includes("top")
         ? lidY
         : parameters.baseHeight + parameters.lidThickness;
     return {
@@ -1901,6 +1904,8 @@ function addGenericFaceClosureFeatures(
         baseMaterial,
         "base",
         bossPosition,
+        true,
+        lidFace,
       );
       boss.name = "closure-side-boss";
 
@@ -1928,6 +1933,8 @@ function addGenericFaceClosureFeatures(
         screwMaterial,
         "lid",
         headPosition,
+        true,
+        lidFace,
       );
       screwHead.name = "closure-screw-head";
     }
@@ -1958,6 +1965,8 @@ function addGenericFaceClosureFeatures(
           dimensions,
           lidY,
         ),
+        true,
+        lidFace,
       );
       baseMagnet.name = "base-magnet";
       const lidMagnet = addMesh(
@@ -1979,6 +1988,8 @@ function addGenericFaceClosureFeatures(
           lidY,
           true,
         ),
+        true,
+        lidFace,
       );
       lidMagnet.name = "lid-magnet";
     }
@@ -2003,6 +2014,8 @@ function addGenericFaceClosureFeatures(
         lidY,
         true,
       ),
+      true,
+      lidFace,
     );
     marker.name =
       parameters.closureType === "hinge"
@@ -2044,16 +2057,21 @@ export function buildPreviewModel(
   const pcbMaterial = standardMaterial(0x2f7751, selectedPart === "pcb", {
     roughness: 0.46,
   });
-  const lidFace = parameters.lidFace;
+  const removableFaces = getRemovableFaces(parameters);
+  const removableFaceSet = new Set<EnclosureFace>(removableFaces);
+  const isFaceRemovable = (face: EnclosureFace) => removableFaceSet.has(face);
   const wallHeight = parameters.baseHeight - parameters.bottomThickness;
   const explodedGap = exploded ? 24 : 0;
   const lidY = parameters.baseHeight + explodedGap;
   const innerRadius = Math.max(0.5, parameters.cornerRadius - parameters.wallThickness);
-  const hiddenShellFaces = isSideFace(lidFace)
-    ? Array.from(new Set([...hiddenFaces, lidFace]))
-    : hiddenFaces;
+  const hiddenShellFaces = Array.from(
+    new Set([
+      ...hiddenFaces,
+      ...removableFaces.filter((face) => isSideFace(face)),
+    ]),
+  );
 
-  if (lidFace !== "bottom") {
+  if (!isFaceRemovable("bottom")) {
     const bottomPlate = addMesh(
       root,
       createPlateGeometry(
@@ -2089,7 +2107,7 @@ export function buildPreviewModel(
   );
   shellWalls.name = "base-side-faces";
 
-  if (lidFace !== "top") {
+  if (!isFaceRemovable("top")) {
     const fixedTop = addMesh(
       root,
       createPlateGeometry(
@@ -2162,11 +2180,10 @@ export function buildPreviewModel(
   const lipHeight = 2.2;
   const lipOuterLength = dimensions.insideLength - 0.45;
   const lipOuterWidth = dimensions.insideWidth - 0.45;
-  const lidPanels =
-    lidFace === "top"
-      ? parameters.panelPlacements.filter((panel) => panel.face === "top")
-      : [];
-  if (lidFace === "top") {
+  const lidPanels = isFaceRemovable("top")
+    ? parameters.panelPlacements.filter((panel) => panel.face === "top")
+    : [];
+  if (isFaceRemovable("top")) {
     if (parameters.closureType === "slide") {
       for (const pointZ of [-lipOuterWidth / 2, lipOuterWidth / 2]) {
         addMesh(
@@ -2198,10 +2215,12 @@ export function buildPreviewModel(
     if (lidPanels.length > 0) {
       addMesh(
         root,
-        createRemovableFaceGeometry(parameters, dimensions, lidFace, lidPanels),
+        createRemovableFaceGeometry(parameters, dimensions, "top", lidPanels),
         lidMaterial,
         "lid",
         [0, lidY + parameters.lidThickness / 2, 0],
+        true,
+        "top",
       );
 
       for (const panel of lidPanels) {
@@ -2236,11 +2255,15 @@ export function buildPreviewModel(
         lidMaterial,
         "lid",
         [0, lidY + parameters.lidThickness / 2, 0],
+        true,
+        "top",
       );
     }
-  } else {
+  }
+
+  for (const removableFace of removableFaces.filter((face) => face !== "top")) {
     const lidPosition = getPreviewFacePosition(
-      lidFace,
+      removableFace,
       0,
       0,
       parameters.lidThickness / 2,
@@ -2249,22 +2272,22 @@ export function buildPreviewModel(
       lidY,
       true,
     );
-    const removableFace = addMesh(
+    const removableFaceMesh = addMesh(
       root,
       createFacePlateGeometry(
-        getPreviewFaceSize(lidFace, parameters, dimensions)[0],
-        getPreviewFaceSize(lidFace, parameters, dimensions)[1],
+        getPreviewFaceSize(removableFace, parameters, dimensions)[0],
+        getPreviewFaceSize(removableFace, parameters, dimensions)[1],
         parameters.lidThickness,
-        Math.min(parameters.cornerRadius, getPreviewFaceSize(lidFace, parameters, dimensions)[1] / 2 - 0.1),
-        lidFace,
+        Math.min(parameters.cornerRadius, getPreviewFaceSize(removableFace, parameters, dimensions)[1] / 2 - 0.1),
+        removableFace,
       ),
       lidMaterial,
       "lid",
       lidPosition,
       true,
-      lidFace,
+      removableFace,
     );
-    removableFace.name = `lid-${lidFace}-face`;
+    removableFaceMesh.name = `lid-${removableFace}-face`;
   }
 
   for (const panel of parameters.panelPlacements) {
@@ -2827,7 +2850,7 @@ export function buildPreviewModel(
       parameters,
       dimensions,
       lidY,
-      placement.surface !== "panel" && face === lidFace,
+      placement.surface !== "panel" && isFaceRemovable(face),
     );
     const connectorGroup = new THREE.Group();
     connectorGroup.position.set(...connectorPosition);
@@ -2857,7 +2880,7 @@ export function buildPreviewModel(
         parameters,
         dimensions,
         lidY,
-        placement.surface !== "panel" && face === lidFace,
+        placement.surface !== "panel" && isFaceRemovable(face),
         placement.displayMountingType,
         connectorSelected,
       );
@@ -2911,7 +2934,7 @@ export function buildPreviewModel(
       parameters,
       dimensions,
       lidY,
-      placement.surface !== "panel" && face === lidFace,
+      placement.surface !== "panel" && isFaceRemovable(face),
     );
     const opening = addPreviewOutline(
       connectorGroup,
@@ -2935,7 +2958,7 @@ export function buildPreviewModel(
         parameters,
         dimensions,
         lidY,
-        placement.surface !== "panel" && face === lidFace,
+        placement.surface !== "panel" && isFaceRemovable(face),
       );
       const keepoutOutline = addPreviewOutline(
         connectorGroup,
@@ -2992,7 +3015,7 @@ export function buildPreviewModel(
       parameters,
       dimensions,
       lidY,
-      placement.surface !== "panel" && face === lidFace,
+      placement.surface !== "panel" && isFaceRemovable(face),
     );
     const [baseWidth, baseHeight] = external
       ? [placement.cutoutDiameter, placement.cutoutDiameter]
@@ -3060,7 +3083,7 @@ export function buildPreviewModel(
           parameters,
           dimensions,
           lidY,
-          placement.surface !== "panel" && face === lidFace,
+          placement.surface !== "panel" && isFaceRemovable(face),
         );
         addMesh(
           antennaGroup,
@@ -3079,7 +3102,7 @@ export function buildPreviewModel(
         parameters,
         dimensions,
         lidY,
-        placement.surface !== "panel" && face === lidFace,
+        placement.surface !== "panel" && isFaceRemovable(face),
       );
       const opening = addMesh(
         antennaGroup,
@@ -3106,7 +3129,7 @@ export function buildPreviewModel(
         parameters,
         dimensions,
         lidY,
-        placement.surface !== "panel" && face === lidFace,
+        placement.surface !== "panel" && isFaceRemovable(face),
       );
       const keepoutOutline = addPreviewOutline(
         antennaGroup,
@@ -3125,24 +3148,26 @@ export function buildPreviewModel(
     }
   }
 
-  if (lidFace === "top") {
-    addClosureFeatures(
-      root,
-      parameters,
-      selectedPart,
-      lidY,
-      dimensions.outsideLength,
-      dimensions.outsideWidth,
-    );
-  } else {
-    addGenericFaceClosureFeatures(
-      root,
-      parameters,
-      selectedPart,
-      lidFace,
-      lidY,
-      dimensions,
-    );
+  for (const removableFace of removableFaces) {
+    if (removableFace === "top") {
+      addClosureFeatures(
+        root,
+        parameters,
+        selectedPart,
+        lidY,
+        dimensions.outsideLength,
+        dimensions.outsideWidth,
+      );
+    } else {
+      addGenericFaceClosureFeatures(
+        root,
+        parameters,
+        selectedPart,
+        removableFace,
+        lidY,
+        dimensions,
+      );
+    }
   }
 
   applyObjectTransparency(root, transparentIds);
@@ -3152,7 +3177,11 @@ export function buildPreviewModel(
     root.traverse((object) => {
       const enclosureFace = object.userData.enclosureFace as EnclosureFace | undefined;
       if (enclosureFace && hidden.has(enclosureFace)) object.visible = false;
-      if (hidden.has(lidFace) && object.userData.partId === "lid") {
+      if (
+        !enclosureFace &&
+        object.userData.partId === "lid" &&
+        removableFaces.every((face) => hidden.has(face))
+      ) {
         object.visible = false;
       }
     });

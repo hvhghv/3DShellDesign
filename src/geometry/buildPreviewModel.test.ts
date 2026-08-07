@@ -182,6 +182,7 @@ describe("surface placement preview", () => {
       {
         ...DEFAULT_PARAMETERS,
         lidFace: "front",
+        removableFaces: ["front"],
         panelPlacements: [panel],
       },
       "lid",
@@ -220,6 +221,7 @@ describe("surface placement preview", () => {
         {
           ...DEFAULT_PARAMETERS,
           lidFace,
+          removableFaces: [lidFace],
           panelPlacements: [panel],
           connectorPlacements: [connector],
         },
@@ -247,6 +249,27 @@ describe("surface placement preview", () => {
 
     disposePreviewModel(fixedFaceModel);
     disposePreviewModel(removableFaceModel);
+  });
+
+  it("renders every selected removable face as a detachable lid part", () => {
+    const model = buildPreviewModel(
+      {
+        ...DEFAULT_PARAMETERS,
+        lidFace: "front",
+        removableFaces: ["front", "right", "bottom"],
+      },
+      "lid",
+      false,
+      null,
+    );
+
+    expect(model.getObjectByName("lid-front-face")?.userData.partId).toBe("lid");
+    expect(model.getObjectByName("lid-right-face")?.userData.partId).toBe("lid");
+    expect(model.getObjectByName("lid-bottom-face")?.userData.partId).toBe("lid");
+    expect(model.getObjectByName("base-bottom-face")).toBeUndefined();
+    expect(model.getObjectByName("base-top-face")?.userData.partId).toBe("base");
+
+    disposePreviewModel(model);
   });
 
   it("keeps an exploded bottom panel above the work plane", () => {
@@ -670,6 +693,7 @@ describe("surface placement preview", () => {
       pcbMountingType: "rail-elastic" as const,
       pcbRailAxis: "x" as const,
       pcbInsertionSide: "right" as const,
+      pcbRailEntryFace: "right" as const,
     };
     const model = buildPreviewModel(parameters, "pcb", false, null);
     const loop = model.getObjectByName(
@@ -690,9 +714,11 @@ describe("surface placement preview", () => {
       {
         ...DEFAULT_PARAMETERS,
         lidFace: "front",
+        removableFaces: ["front"],
         pcbMountingType: "rail-elastic" as const,
         pcbRailAxis: "x" as const,
         pcbInsertionSide: "left" as const,
+        pcbRailEntryFace: "front",
       },
       "pcb",
       false,

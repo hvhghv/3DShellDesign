@@ -9,6 +9,7 @@ import {
 import { getPanelMagnetPocketDepth } from "../domain/panelMounting";
 import { PCB_MOUNTING_LABELS, PCB_RAIL_AXIS_LABELS } from "../domain/pcbMounting";
 import { getConnectorSurfaceLabel, getFaceLabel } from "../domain/placements";
+import { formatRemovableFaces, getRemovableFaces } from "../domain/removableFaces";
 import {
   getAntennaDefinition,
   getConnectorDefinition,
@@ -25,16 +26,17 @@ export function createBomCsv(
   parameters: DesignerParameters,
 ): string {
   const shell = getMaterial(parameters.shellMaterialId);
+  const removableFaces = getRemovableFaces(parameters);
   const rows: Array<Array<string | number>> = [
     ["项目", "零件", "数量", "材料/规格", "工艺", "备注"],
     [projectName, "壳体主体", 1, shell.name, shell.process, `${parameters.wallThickness} mm 壁厚`],
     [
       projectName,
       "可拆面",
-      1,
+      removableFaces.length,
       shell.name,
       shell.process,
-      `${getFaceLabel(parameters.lidFace)} / ${parameters.closureType}`,
+      `${formatRemovableFaces(parameters)} / ${parameters.closureType}`,
     ],
     [
       projectName,
@@ -136,7 +138,7 @@ export function createBomCsv(
     rows.push([
       projectName,
       "可拆面紧固件",
-      4,
+      removableFaces.length * 4,
       fastener.metadata.bomName,
       "装配",
       parameters.closureScrewHeadRecessEnabled
@@ -147,7 +149,7 @@ export function createBomCsv(
     rows.push([
       projectName,
       "圆形磁铁",
-      8,
+      removableFaces.length * 8,
       "直径 6 x 1.8 mm",
       "胶粘装配",
       `${getMagnetSupportOption(parameters.magnetSupportType).name}；装配前确认磁极`,

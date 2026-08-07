@@ -93,8 +93,20 @@ describe("BOM CSV exporter", () => {
     const csv = createBomCsv("前盖外壳", {
       ...DEFAULT_PARAMETERS,
       lidFace: "front",
+      removableFaces: ["front"],
     });
 
     expect(csv).toContain("可拆面,1,PETG 韧性打印,FDM,前壁 / screw");
+  });
+
+  it("scales removable face and closure hardware quantities for multiple faces", () => {
+    const csv = createBomCsv("多面快拆外壳", {
+      ...DEFAULT_PARAMETERS,
+      lidFace: "front",
+      removableFaces: ["front", "right", "bottom"],
+    });
+
+    expect(csv).toContain("可拆面,3,PETG 韧性打印,FDM,前壁、右壁、底板 / screw");
+    expect(csv).toContain("可拆面紧固件,12,M3 self-tapping screw");
   });
 });

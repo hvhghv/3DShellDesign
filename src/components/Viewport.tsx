@@ -149,14 +149,14 @@ function configureAllTransformAxes(controls: TransformControls): void {
 
 function configurePcbTransformAxes(
   controls: TransformControls,
-  railMovementAxis: "x" | "z" | null,
+  railMovementAxis: "x" | "y" | "z" | null,
 ): void {
   if (railMovementAxis === null) {
     configureAllTransformAxes(controls);
     return;
   }
   controls.showX = railMovementAxis === "x";
-  controls.showY = false;
+  controls.showY = railMovementAxis === "y";
   controls.showZ = railMovementAxis === "z";
   controls.showXY = false;
   controls.showYZ = false;
@@ -215,7 +215,9 @@ function canUseAxisConstraint(
   parameters: Pick<
     DesignerParameters,
     | "lidFace"
+    | "removableFaces"
     | "pcbInsertionSide"
+    | "pcbRailEntryFace"
     | "pcbMountingType"
     | "pcbRailAxis"
     | "pcbReferences"

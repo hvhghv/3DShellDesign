@@ -21,6 +21,8 @@ const DIRECTION_CANDIDATES: ReadonlyArray<{
 }> = [
   { axis: "x", insertionSide: "left" },
   { axis: "x", insertionSide: "right" },
+  { axis: "y", insertionSide: "left" },
+  { axis: "y", insertionSide: "right" },
   { axis: "z", insertionSide: "left" },
   { axis: "z", insertionSide: "right" },
 ];
@@ -47,7 +49,9 @@ export function getPcbRailEntryFace(
 ): EnclosureFace {
   const sign = insertionSide === "right" ? 1 : -1;
   const localX = axis === "x" ? sign : 0;
+  const localY = axis === "y" ? sign : 0;
   const localZ = axis === "z" ? sign : 0;
+  if (localY !== 0) return localY > 0 ? "top" : "bottom";
   const normalized = normalizeRotation(rotation);
   let worldX = localX;
   let worldZ = localZ;
@@ -72,15 +76,26 @@ export function getPcbRailEntryFace(
 export function getPcbRailDirection(
   parameters: Pick<
     DesignerParameters,
-    "lidFace" | "pcbRailAxis" | "pcbInsertionSide"
+    | "lidFace"
+    | "removableFaces"
+    | "pcbRailAxis"
+    | "pcbInsertionSide"
+    | "pcbRailEntryFace"
   >,
   rotation: number = 0,
 ): PcbRailDirection {
-  const removableFaceDirection = getPcbRailDirectionForRemovableFace(
-    parameters.lidFace,
+  const configuredDirection = getPcbRailDirectionForEntryFace(
+    parameters.pcbRailEntryFace,
     rotation,
   );
-  if (removableFaceDirection) return removableFaceDirection;
+  if (configuredDirection) {
+    return {
+      ...configuredDirection,
+      followsRemovableFace: parameters.removableFaces.includes(
+        configuredDirection.entryFace,
+      ),
+    };
+  }
 
   return {
     axis: parameters.pcbRailAxis,
@@ -94,31 +109,41 @@ export function getPcbRailDirection(
   };
 }
 
-export function getPcbRailDirectionForRemovableFace(
-  lidFace: EnclosureFace,
+export function getPcbRailDirectionForEntryFace(
+  entryFace: EnclosureFace,
   rotation: number = 0,
 ): PcbRailDirection | null {
-  if (lidFace === "top" || lidFace === "bottom") return null;
   const match = DIRECTION_CANDIDATES.find(
     (candidate) =>
       getPcbRailEntryFace(candidate.axis, candidate.insertionSide, rotation) ===
-      lidFace,
+      entryFace,
   );
   if (!match) return null;
   return {
     ...match,
-    entryFace: lidFace,
-    followsRemovableFace: true,
+    entryFace,
+    followsRemovableFace: false,
   };
+}
+
+export function getPcbRailDirectionForRemovableFace(
+  lidFace: EnclosureFace,
+  rotation: number = 0,
+): PcbRailDirection | null {
+  const direction = getPcbRailDirectionForEntryFace(lidFace, rotation);
+  return direction ? { ...direction, followsRemovableFace: true } : null;
 }
 
 export function synchronizePcbRailDirection<
   Parameters extends Pick<
     DesignerParameters,
-    "lidFace" | "pcbRailAxis" | "pcbInsertionSide"
+    | "lidFace"
+    | "pcbRailAxis"
+    | "pcbInsertionSide"
+    | "pcbRailEntryFace"
   >,
 >(parameters: Parameters): Parameters {
-  const direction = getPcbRailDirectionForRemovableFace(parameters.lidFace, 0);
+  const direction = getPcbRailDirectionForEntryFace(parameters.pcbRailEntryFace, 0);
   if (
     !direction ||
     (parameters.pcbRailAxis === direction.axis &&
@@ -136,19 +161,30 @@ export function synchronizePcbRailDirection<
 export function getPcbRailMovementAxis(
   parameters: Pick<
     DesignerParameters,
-    "pcbMountingType" | "lidFace" | "pcbRailAxis" | "pcbInsertionSide"
+    | "pcbMountingType"
+    | "lidFace"
+    | "removableFaces"
+    | "pcbRailAxis"
+    | "pcbInsertionSide"
+    | "pcbRailEntryFace"
   >,
   rotation: number = 0,
 ): PcbRailAxis | null {
   if (parameters.pcbMountingType === "screw") return null;
   const entryFace = getPcbRailDirection(parameters, rotation).entryFace;
-  return entryFace === "left" || entryFace === "right" ? "x" : "z";
+  if (entryFace === "left" || entryFace === "right") return "x";
+  if (entryFace === "top" || entryFace === "bottom") return "y";
+  return "z";
 }
 
 export function getPcbRailEntryDescription(
   parameters: Pick<
     DesignerParameters,
-    "lidFace" | "pcbRailAxis" | "pcbInsertionSide"
+    | "lidFace"
+    | "removableFaces"
+    | "pcbRailAxis"
+    | "pcbInsertionSide"
+    | "pcbRailEntryFace"
   >,
   rotation: number = 0,
 ): string {
@@ -158,6 +194,10 @@ export function getPcbRailEntryDescription(
       ? direction.insertionSide === "left"
         ? "从 X- 端滑入"
         : "从 X+ 端滑入"
+      : direction.axis === "y"
+        ? direction.insertionSide === "left"
+          ? "从 Y- 端滑入"
+          : "从 Y+ 端滑入"
       : direction.insertionSide === "left"
         ? "从 Z- 端滑入"
         : "从 Z+ 端滑入";

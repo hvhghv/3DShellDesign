@@ -44,6 +44,7 @@ import {
   getPanelScrewHeadRecessDepth,
   PANEL_SCREW_HEAD_RECESS_RADIUS,
 } from "../domain/screwRecess";
+import { getRemovableFaces } from "../domain/removableFaces";
 import { getBatteryCompartmentLayout } from "../domain/batteries";
 import { getPcbMountingEnvelopes } from "../domain/pcbMounting";
 import {
@@ -1375,6 +1376,9 @@ function buildBase(
   pcbReference: PcbReference | null,
 ): ManifoldSolid {
   const dimensions = deriveEnclosureDimensions(parameters);
+  const removableFaces = getRemovableFaces(parameters);
+  const removableFaceSet = new Set<EnclosureFace>(removableFaces);
+  const isRemovableFace = (face: EnclosureFace) => removableFaceSet.has(face);
   const fastener = getFastenerDefinition(parameters.closureFastenerId);
   const wallHeight = parameters.baseHeight - parameters.bottomThickness;
   if (wallHeight <= 0.5) {
@@ -1400,7 +1404,7 @@ function buildBase(
     parameters.bottomThickness,
   );
   base = unionAndDispose(base, wall);
-  if (parameters.lidFace !== "top") {
+  if (!isRemovableFace("top")) {
     base = unionAndDispose(
       base,
       extrudePlate(
@@ -1414,29 +1418,27 @@ function buildBase(
     );
     base = applyFixedTopFaceFeatures(module, base, parameters);
   }
-  if (parameters.lidFace === "bottom") {
-    base = subtractAndDispose(
-      base,
-      createFaceCutter(
-        module,
-        "bottom",
-        0,
-        0,
-        dimensions.insideLength,
-        dimensions.insideWidth,
-        innerRadius,
-        parameters,
-        dimensions,
-      ),
-    );
-  } else if (
-    parameters.lidFace === "front" ||
-    parameters.lidFace === "back" ||
-    parameters.lidFace === "left" ||
-    parameters.lidFace === "right"
-  ) {
+  for (const removableFace of removableFaces) {
+    if (removableFace === "top") continue;
+    if (removableFace === "bottom") {
+      base = subtractAndDispose(
+        base,
+        createFaceCutter(
+          module,
+          "bottom",
+          0,
+          0,
+          dimensions.insideLength,
+          dimensions.insideWidth,
+          innerRadius,
+          parameters,
+          dimensions,
+        ),
+      );
+      continue;
+    }
     const openingWidth =
-      parameters.lidFace === "left" || parameters.lidFace === "right"
+      removableFace === "left" || removableFace === "right"
         ? dimensions.insideWidth
         : dimensions.insideLength;
     const openingHeight = Math.max(
@@ -1447,7 +1449,7 @@ function buildBase(
       base,
       createFaceCutter(
         module,
-        parameters.lidFace,
+        removableFace,
         0,
         parameters.bottomThickness / 2,
         openingWidth,
@@ -1649,7 +1651,7 @@ function buildBase(
   for (const placement of parameters.connectorPlacements) {
     if (placement.surface === "panel") continue;
     const face = resolveConnectorFace(placement, parameters);
-    if (face === "top" || face === parameters.lidFace) continue;
+    if (face === "top" || isRemovableFace(face)) continue;
     const connector = getConnectorDefinition(placement.definitionId);
     const [width, height] = getRotatedCutoutSize(placement);
     base = subtractAndDispose(
@@ -1674,7 +1676,7 @@ function buildBase(
     const antenna = getAntennaDefinition(placement.definitionId);
     if (!antenna.enclosureCutout || placement.surface === "panel") continue;
     const face = resolveAntennaFace(placement, parameters);
-    if (face === "top" || face === parameters.lidFace) continue;
+    if (face === "top" || isRemovableFace(face)) continue;
     base = subtractAndDispose(
       base,
       createFaceCutter(

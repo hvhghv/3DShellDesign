@@ -1696,6 +1696,53 @@ select:focus-visible {
   border-color: #91b9a0;
 }
 
+.face-multi-select {
+  margin: 10px 0 0;
+  padding: 0;
+  border: 0;
+}
+
+.face-multi-select legend {
+  margin-bottom: 6px;
+  color: #4c5550;
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.face-multi-select > div {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 5px;
+}
+
+.face-multi-select label {
+  display: flex;
+  min-height: 30px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 5px;
+  padding: 0 8px;
+  color: var(--muted);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  font-size: 10px;
+  cursor: pointer;
+}
+
+.face-multi-select label.is-active {
+  color: var(--accent-strong);
+  background: var(--accent-soft);
+  border-color: #91b9a0;
+}
+
+.face-multi-select input {
+  width: 13px;
+  height: 13px;
+  margin: 0;
+  accent-color: var(--accent);
+}
+
 .select-field select {
   width: 176px;
   height: 31px;

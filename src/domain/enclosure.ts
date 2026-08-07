@@ -13,7 +13,10 @@ import {
   isPcbMountingType,
   isPcbRailAxis,
 } from "./pcbMounting";
-import { synchronizePcbRailDirection } from "./pcbRailDirection";
+import {
+  getPcbRailEntryFace,
+  synchronizePcbRailDirection,
+} from "./pcbRailDirection";
 import {
   createConnectorPlacement,
   createAntennaPlacement,
@@ -32,6 +35,7 @@ import {
   resolveAntennaFace,
   resolveConnectorFace,
 } from "./placements";
+import { normalizeRemovableFaces } from "./removableFaces";
 import { DEFAULT_SCREW_HEAD_RECESS_DEPTH } from "./screwRecess";
 import type {
   AntennaPlacement,
@@ -95,7 +99,9 @@ export const DEFAULT_PARAMETERS: DesignerParameters = {
   pcbElasticBandWidth: 3,
   pcbRailAxis: "z",
   pcbInsertionSide: "right",
+  pcbRailEntryFace: "front",
   lidFace: "top",
+  removableFaces: ["top"],
   lidThickness: 2,
   closureType: "screw",
   magnetSupportType: "corner-shelf",
@@ -555,6 +561,20 @@ export function normalizeDesignerParameters(value: unknown): DesignerParameters 
       })
     : [];
 
+  const lidFace = isEnclosureFace(candidate.lidFace)
+    ? candidate.lidFace
+    : DEFAULT_PARAMETERS.lidFace;
+  const removableFaces = normalizeRemovableFaces(
+    candidate.removableFaces,
+    lidFace,
+  );
+  const pcbRailAxis = isPcbRailAxis(candidate.pcbRailAxis)
+    ? candidate.pcbRailAxis
+    : DEFAULT_PARAMETERS.pcbRailAxis;
+  const pcbInsertionSide = isPcbInsertionSide(candidate.pcbInsertionSide)
+    ? candidate.pcbInsertionSide
+    : DEFAULT_PARAMETERS.pcbInsertionSide;
+
   const normalized = {
     ...DEFAULT_PARAMETERS,
     ...candidate,
@@ -611,15 +631,13 @@ export function normalizeDesignerParameters(value: unknown): DesignerParameters 
       8,
       Math.max(1, finiteOr(candidate.pcbElasticBandWidth, DEFAULT_PARAMETERS.pcbElasticBandWidth)),
     ),
-    pcbRailAxis: isPcbRailAxis(candidate.pcbRailAxis)
-      ? candidate.pcbRailAxis
-      : DEFAULT_PARAMETERS.pcbRailAxis,
-    pcbInsertionSide: isPcbInsertionSide(candidate.pcbInsertionSide)
-      ? candidate.pcbInsertionSide
-      : DEFAULT_PARAMETERS.pcbInsertionSide,
-    lidFace: isEnclosureFace(candidate.lidFace)
-      ? candidate.lidFace
-      : DEFAULT_PARAMETERS.lidFace,
+    pcbRailAxis,
+    pcbInsertionSide,
+    pcbRailEntryFace: isEnclosureFace(candidate.pcbRailEntryFace)
+      ? candidate.pcbRailEntryFace
+      : getPcbRailEntryFace(pcbRailAxis, pcbInsertionSide),
+    lidFace,
+    removableFaces,
     closureScrewHeadRecessEnabled:
       candidate.closureScrewHeadRecessEnabled === true,
     closureScrewHeadRecessDepth: Math.max(

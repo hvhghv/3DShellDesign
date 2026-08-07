@@ -20,7 +20,7 @@ export type BatteryMountFace = EnclosureFace;
 export type BatteryRetentionType = "open" | "elastic" | "clip";
 export type BatteryInsertionSide = "left" | "right";
 export type PcbMountingType = "screw" | "rail-screw" | "rail-elastic";
-export type PcbRailAxis = "x" | "z";
+export type PcbRailAxis = "x" | "y" | "z";
 export type PcbInsertionSide = "left" | "right";
 export type DisplayMountingType = "none" | "screw";
 
@@ -142,7 +142,9 @@ export interface DesignerParameters {
   pcbElasticBandWidth: number;
   pcbRailAxis: PcbRailAxis;
   pcbInsertionSide: PcbInsertionSide;
+  pcbRailEntryFace: EnclosureFace;
   lidFace: EnclosureFace;
+  removableFaces: EnclosureFace[];
   lidThickness: number;
   closureType: ClosureType;
   magnetSupportType: MagnetSupportType;

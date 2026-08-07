@@ -40,6 +40,7 @@ import {
   getFaceLabel,
   getPanelLabel,
 } from "../domain/placements";
+import { formatRemovableFaces, getRemovableFaces } from "../domain/removableFaces";
 import { useDesignerStore } from "../store/designerStore";
 import { importCustomModel } from "../importers/customModel";
 import {
@@ -837,8 +838,8 @@ export function AssemblyTree({ onRequestClose, onImportPcb }: AssemblyTreeProps)
         <TreeItem
           id="lid"
           icon={<SquareStack size={16} />}
-          label={`可拆面（${getFaceLabel(parameters.lidFace)}）`}
-          detail={CLOSURE_LABELS[parameters.closureType]}
+          label={`可拆面（${formatRemovableFaces(parameters)}）`}
+          detail={`${getRemovableFaces(parameters).length} 面 / ${CLOSURE_LABELS[parameters.closureType]}`}
           depth={1}
         />
         <div className="tree-transparency-controls" role="group" aria-label="对象半透明">

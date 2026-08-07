@@ -287,7 +287,7 @@ describe("designer store", () => {
     expect(state.selectedFeatureId).toBe(PARAMETRIC_PCB_FEATURE_ID);
   });
 
-  it("allows movement only from the removable face while rail mounted", () => {
+  it("allows movement only from the configured rail entry axis", () => {
     const reference: PcbReference = {
       format: "kicad_pcb",
       sourceName: "rail-board.kicad_pcb",
@@ -303,9 +303,11 @@ describe("designer store", () => {
       parameters: {
         ...DEFAULT_PARAMETERS,
         lidFace: "left",
+        removableFaces: ["left"],
         pcbMountingType: "rail-elastic",
         pcbRailAxis: "z",
         pcbInsertionSide: "right",
+        pcbRailEntryFace: "left",
         pcbOffsetX: 3,
         pcbElevation: 1,
         pcbOffsetZ: 2,
@@ -341,6 +343,7 @@ describe("designer store", () => {
       expect.objectContaining({
         pcbRailAxis: "x",
         pcbInsertionSide: "left",
+        pcbRailEntryFace: "left",
         pcbOffsetX: 40,
         pcbElevation: 1,
         pcbOffsetZ: 2,
@@ -392,25 +395,55 @@ describe("designer store", () => {
     const frontFaceParameters = useDesignerStore.getState().parameters;
     expect(frontFaceParameters).toEqual(
       expect.objectContaining({
-        pcbRailAxis: "z",
-        pcbInsertionSide: "right",
+        pcbRailAxis: "x",
+        pcbInsertionSide: "left",
+        pcbRailEntryFace: "left",
         lidFace: "front",
-        pcbOffsetX: 0,
+        pcbOffsetX: 31,
         pcbElevation: 1,
-        pcbOffsetZ: 22,
+        pcbOffsetZ: 2,
       }),
     );
     expect(frontFaceParameters.pcbReferences[0]).toEqual(
       expect.objectContaining({
-        offsetX: 0,
+        offsetX: 88,
         elevation: 2,
-        offsetZ: 26,
+        offsetZ: 5,
         rotation: 90,
+      }),
+    );
+
+    useDesignerStore.getState().setParameter("pcbRailEntryFace", "top");
+    useDesignerStore.getState().setParameter("pcbOffsetX", 99);
+    useDesignerStore.getState().setParameter("pcbOffsetZ", 77);
+    useDesignerStore.getState().setParameter("pcbElevation", 11);
+    useDesignerStore.getState().updatePcbReferencePlacement("pcb-rail", {
+      offsetX: 15,
+      offsetZ: 16,
+      elevation: 12,
+    });
+
+    const topEntryParameters = useDesignerStore.getState().parameters;
+    expect(topEntryParameters).toEqual(
+      expect.objectContaining({
+        pcbRailAxis: "y",
+        pcbInsertionSide: "right",
+        pcbRailEntryFace: "top",
+        pcbOffsetX: 0,
+        pcbOffsetZ: 0,
+        pcbElevation: 11,
+      }),
+    );
+    expect(topEntryParameters.pcbReferences[0]).toEqual(
+      expect.objectContaining({
+        offsetX: 0,
+        offsetZ: 0,
+        elevation: 12,
       }),
     );
   });
 
-  it("re-homes rail mounted PCBs when the removable face changes", () => {
+  it("keeps rail mounted PCBs stable when only the removable face changes", () => {
     const reference: PcbReference = {
       format: "step",
       sourceName: "outside-board.step",
@@ -426,8 +459,10 @@ describe("designer store", () => {
       parameters: {
         ...DEFAULT_PARAMETERS,
         lidFace: "left",
+        removableFaces: ["left"],
         pcbMountingType: "rail-screw",
-        pcbOffsetX: 68,
+        pcbRailEntryFace: "left",
+        pcbOffsetX: 20,
         pcbOffsetZ: -12,
         pcbReferences: [
           {
@@ -448,13 +483,33 @@ describe("designer store", () => {
     expect(parameters).toEqual(
       expect.objectContaining({
         lidFace: "front",
+        removableFaces: ["front"],
+        pcbRailAxis: "x",
+        pcbInsertionSide: "left",
+        pcbRailEntryFace: "left",
+        pcbOffsetX: 20,
+        pcbOffsetZ: -12,
+      }),
+    );
+    expect(parameters.pcbReferences[0]).toEqual(
+      expect.objectContaining({
+        offsetX: -75,
+        offsetZ: 18,
+      }),
+    );
+
+    useDesignerStore.getState().setParameter("pcbRailEntryFace", "front");
+    const frontEntryParameters = useDesignerStore.getState().parameters;
+    expect(frontEntryParameters).toEqual(
+      expect.objectContaining({
         pcbRailAxis: "z",
         pcbInsertionSide: "right",
+        pcbRailEntryFace: "front",
         pcbOffsetX: 0,
         pcbOffsetZ: 0,
       }),
     );
-    expect(parameters.pcbReferences[0]).toEqual(
+    expect(frontEntryParameters.pcbReferences[0]).toEqual(
       expect.objectContaining({
         offsetX: 0,
         offsetZ: 0,
@@ -478,7 +533,9 @@ describe("designer store", () => {
       parameters: {
         ...DEFAULT_PARAMETERS,
         lidFace: "front",
+        removableFaces: ["front"],
         pcbMountingType: "rail-elastic",
+        pcbRailEntryFace: "front",
         pcbReferences: [
           {
             id: "pcb-rotating",

@@ -59,6 +59,7 @@ import {
   getPanelMaxInsetDepth,
   PLACEMENT_ROTATIONS,
 } from "../domain/placements";
+import { getRemovableFaces } from "../domain/removableFaces";
 import {
   ANTENNA_DEFINITIONS,
   CONNECTOR_DEFINITIONS,
@@ -455,6 +456,17 @@ export function Inspector() {
   );
   const pcbRailMounted = parameters.pcbMountingType !== "screw";
   const parametricPcbRailMovementAxis = getPcbRailMovementAxis(parameters);
+  const removableFaces = getRemovableFaces(parameters);
+  const updateRemovableFace = (face: EnclosureFace, enabled: boolean) => {
+    if (!enabled && face === parameters.lidFace) return;
+    const nextFaces = enabled
+      ? Array.from(new Set([...removableFaces, face]))
+      : removableFaces.filter((item) => item !== face);
+    setParameter(
+      "removableFaces",
+      nextFaces.length > 0 ? nextFaces : [parameters.lidFace],
+    );
+  };
   const isObjectTransparent = (id: string) => transparentObjectIds.includes(id);
   const isPcbBodyHidden = (id: string) => hiddenPcbBodyIds.includes(id);
   useEffect(() => {
@@ -566,8 +578,22 @@ export function Inspector() {
       </label>
       {parameters.pcbMountingType !== "screw" ? (
         <>
+          <label className="select-field">
+            <span>滑槽入口</span>
+            <select
+              aria-label="PCB 滑槽入口"
+              value={parameters.pcbRailEntryFace}
+              onChange={(event) =>
+                setParameter("pcbRailEntryFace", event.currentTarget.value as EnclosureFace)
+              }
+            >
+              {ENCLOSURE_FACE_OPTIONS.map((option) => (
+                <option key={option.id} value={option.id}>{option.name}</option>
+              ))}
+            </select>
+          </label>
           <p className="material-note">
-            滑入方向：从 {getPcbRailEntryDescription(parameters, 0)}；侧向可拆面会自动决定滑槽开口，避免入口方向和可拆面不一致。
+            滑入方向：从 {getPcbRailEntryDescription(parameters, 0)}；可在 6 个面中任意选择。左/右限制 X 轴，前/后限制 Z 轴，上/下限制 Y 轴。
           </p>
           <NumberField label="导轨宽度" value={parameters.pcbRailWidth} min={1.2} max={8} step={0.1} onChange={(value) => setParameter("pcbRailWidth", value)} />
           <NumberField label="压边高度" value={parameters.pcbRailHeight} min={1} max={6} step={0.1} onChange={(value) => setParameter("pcbRailHeight", value)} />
@@ -577,7 +603,7 @@ export function Inspector() {
             <NumberField label="橡皮筋宽度" value={parameters.pcbElasticBandWidth} min={1} max={8} step={0.5} onChange={(value) => setParameter("pcbElasticBandWidth", value)} />
           ) : null}
           <p className="material-note">
-            两侧导轨会从可拆面方向引出，只形成下托边和上压边，不再生成底部支撑墙；橡皮筋模式会在闭口端生成挂点，让橡皮筋沿 PCB 长度方向从上下两面绕过，防止 PCB 顺着滑槽弹出。
+            两侧导轨会从所选入口方向引出，只形成下托边和上压边，不再生成底部支撑墙；橡皮筋模式会在闭口端生成挂点，让橡皮筋沿 PCB 长度方向从上下两面绕过，防止 PCB 顺着滑槽弹出。
           </p>
         </>
       ) : (
@@ -667,7 +693,7 @@ export function Inspector() {
             </div>
             <NumberField label="X 偏移" value={placement.offsetX} min={-500} max={500} step={1} disabled={pcbRailMounted && pcbRailMovementAxis !== "x"} onChange={(value) => updatePcbReferencePlacement(placement.id, { offsetX: value })} />
             <NumberField label="Z 偏移" value={placement.offsetZ} min={-500} max={500} step={1} disabled={pcbRailMounted && pcbRailMovementAxis !== "z"} onChange={(value) => updatePcbReferencePlacement(placement.id, { offsetZ: value })} />
-            <NumberField label="Y 偏移" value={placement.elevation} min={-parameters.standoffHeight} max={300} step={1} disabled={pcbRailMounted} onChange={(value) => updatePcbReferencePlacement(placement.id, { elevation: value })} />
+            <NumberField label="Y 偏移" value={placement.elevation} min={-parameters.standoffHeight} max={300} step={1} disabled={pcbRailMounted && pcbRailMovementAxis !== "y"} onChange={(value) => updatePcbReferencePlacement(placement.id, { elevation: value })} />
             <label className="select-field">
               <span>平面旋转</span>
               <select
@@ -764,7 +790,7 @@ export function Inspector() {
               </span>
             </div>
             <NumberField label="X 位置" value={parameters.pcbOffsetX} min={-500} max={500} step={1} disabled={pcbRailMounted && parametricPcbRailMovementAxis !== "x"} onChange={(value) => setParameter("pcbOffsetX", value)} />
-            <NumberField label="Y 偏移" value={parameters.pcbElevation} min={-parameters.standoffHeight} max={300} step={1} disabled={pcbRailMounted} onChange={(value) => setParameter("pcbElevation", value)} />
+            <NumberField label="Y 偏移" value={parameters.pcbElevation} min={-parameters.standoffHeight} max={300} step={1} disabled={pcbRailMounted && parametricPcbRailMovementAxis !== "y"} onChange={(value) => setParameter("pcbElevation", value)} />
             <NumberField label="Z 位置" value={parameters.pcbOffsetZ} min={-500} max={500} step={1} disabled={pcbRailMounted && parametricPcbRailMovementAxis !== "z"} onChange={(value) => setParameter("pcbOffsetZ", value)} />
             <p className="material-note">
               {pcbRailMounted
@@ -1546,9 +1572,9 @@ export function Inspector() {
               <NumberField label="外圆角" value={parameters.cornerRadius} min={0.5} max={30} onChange={(value) => setParameter("cornerRadius", value)} />
               <NumberField label="PCB 基准高度" value={parameters.standoffHeight} min={0} max={30} onChange={(value) => setParameter("standoffHeight", value)} />
               <label className="select-field">
-                <span>可拆面位置</span>
+                <span>主可拆面</span>
                 <select
-                  aria-label="可拆面位置"
+                  aria-label="主可拆面位置"
                   value={parameters.lidFace}
                   onChange={(event) =>
                     setParameter("lidFace", event.currentTarget.value as EnclosureFace)
@@ -1559,6 +1585,32 @@ export function Inspector() {
                   ))}
                 </select>
               </label>
+              <fieldset className="face-multi-select">
+                <legend>可拆面选择</legend>
+                <div>
+                  {ENCLOSURE_FACE_OPTIONS.map((option) => {
+                    const checked = removableFaces.includes(option.id);
+                    const primary = option.id === parameters.lidFace;
+                    return (
+                      <label key={option.id} className={checked ? "is-active" : ""}>
+                        <span>{option.name}{primary ? "（主）" : ""}</span>
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          disabled={primary}
+                          onChange={(event) =>
+                            updateRemovableFace(option.id, event.currentTarget.checked)
+                          }
+                          aria-label={`${option.name}可拆卸`}
+                        />
+                      </label>
+                    );
+                  })}
+                </div>
+              </fieldset>
+              <p className="material-note">
+                主可拆面用于兼容旧项目与默认可拆面 STL；滑槽入口可在 PCB 固定方式里独立选择，其余可拆面会参与预览、显示隐藏、BOM 与主体避让。
+              </p>
               <NumberField label="可拆面厚度" value={parameters.lidThickness} min={0.8} max={8} onChange={(value) => setParameter("lidThickness", value)} />
             </section>
           </>

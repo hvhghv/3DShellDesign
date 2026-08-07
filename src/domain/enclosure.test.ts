@@ -55,19 +55,46 @@ describe("enclosure domain", () => {
   });
 
   it("normalizes the removable lid face and keeps old projects top-mounted", () => {
-    expect(normalizeDesignerParameters({}).lidFace).toBe("top");
+    expect(normalizeDesignerParameters({})).toEqual(
+      expect.objectContaining({
+        lidFace: "top",
+        removableFaces: ["top"],
+      }),
+    );
+    expect(
+      normalizeDesignerParameters({
+        lidFace: "front",
+      }),
+    ).toEqual(
+      expect.objectContaining({
+        lidFace: "front",
+        removableFaces: ["front"],
+      }),
+    );
     expect(
       normalizeDesignerParameters({
         ...DEFAULT_PARAMETERS,
         lidFace: "front",
-      }).lidFace,
-    ).toBe("front");
+        removableFaces: ["front", "left", "front", "invalid"],
+      }),
+    ).toEqual(
+      expect.objectContaining({
+        lidFace: "front",
+        removableFaces: ["front", "left"],
+      }),
+    );
     expect(
       normalizeDesignerParameters({
         ...DEFAULT_PARAMETERS,
         lidFace: "invalid",
-      }).lidFace,
-    ).toBe("top");
+        removableFaces: ["right"],
+      }),
+    ).toEqual(
+      expect.objectContaining({
+        lidFace: "top",
+        removableFaces: ["top", "right"],
+      }),
+    );
     expect(
       normalizeDesignerParameters({
         ...DEFAULT_PARAMETERS,
@@ -75,12 +102,14 @@ describe("enclosure domain", () => {
         pcbMountingType: "rail-elastic",
         pcbRailAxis: "z",
         pcbInsertionSide: "right",
+        pcbRailEntryFace: "left",
       }),
     ).toEqual(
       expect.objectContaining({
         lidFace: "left",
         pcbRailAxis: "x",
         pcbInsertionSide: "left",
+        pcbRailEntryFace: "left",
       }),
     );
   });
@@ -119,6 +148,7 @@ describe("enclosure domain", () => {
       pcbMountingType: "rail-elastic",
       pcbRailAxis: "x",
       pcbInsertionSide: "left",
+      pcbRailEntryFace: "left",
       pcbRailWidth: 4,
       batteryCompartments: [
         {
@@ -133,6 +163,7 @@ describe("enclosure domain", () => {
     expect(parameters.pcbMountingType).toBe("rail-elastic");
     expect(parameters.pcbRailAxis).toBe("x");
     expect(parameters.pcbInsertionSide).toBe("left");
+    expect(parameters.pcbRailEntryFace).toBe("left");
     expect(parameters.pcbRailWidth).toBe(4);
     expect(parameters.batteryCompartments[0]).toEqual(
       expect.objectContaining({
@@ -148,12 +179,14 @@ describe("enclosure domain", () => {
       pcbMountingType: "rail-elastic",
       pcbRailAxis: "x",
       pcbInsertionSide: "left",
+      pcbRailEntryFace: "top",
     });
     expect(frontRailParameters).toEqual(
       expect.objectContaining({
         lidFace: "front",
-        pcbRailAxis: "z",
+        pcbRailAxis: "y",
         pcbInsertionSide: "right",
+        pcbRailEntryFace: "top",
       }),
     );
   });

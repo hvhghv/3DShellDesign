@@ -7,6 +7,7 @@ import { createPanelDxf } from "../exporters/panelDxf";
 import { createBomCsv } from "../exporters/bomCsv";
 import { exportPrintLayout, exportSolidPart } from "../geometry/manufacturingExport";
 import type { SolidPart } from "../geometry/manifoldSolidFactory";
+import { getRemovableFaces } from "../domain/removableFaces";
 import { useDesignerStore } from "../store/designerStore";
 import {
   getAntennaDefinition,
@@ -159,6 +160,7 @@ export function ManufacturingExport() {
           closure: {
             type: parameters.closureType,
             face: parameters.lidFace,
+            faces: getRemovableFaces(parameters),
           },
           template: parameters.enclosureTemplateId,
           ventPattern: parameters.ventPattern,
@@ -202,7 +204,7 @@ export function ManufacturingExport() {
         >
           <option value="layout-3mf">3MF 打印布局</option>
           <option value="base-stl">壳体主体 STL</option>
-          <option value="lid-stl">可拆面 STL</option>
+          <option value="lid-stl">主可拆面 STL</option>
           {parameters.panelPlacements.flatMap((panel, index) => [
             <option key={`${panel.id}-stl`} value={`panel-stl:${panel.id}`}>
               面板 {index + 1} STL

@@ -22,6 +22,7 @@ export const PCB_INSERTION_SIDE_LABELS: Record<PcbInsertionSide, string> = {
 
 export const PCB_RAIL_AXIS_LABELS: Record<PcbRailAxis, string> = {
   x: "沿 X 轴滑动",
+  y: "沿 Y 轴滑动",
   z: "沿 Z 轴滑动",
 };
 
@@ -73,6 +74,7 @@ export function getPcbInsertionSideLabel(
   side: PcbInsertionSide,
 ): string {
   if (axis === "x") return side === "left" ? "从 X- 端滑入" : "从 X+ 端滑入";
+  if (axis === "y") return side === "left" ? "从 Y- 端滑入" : "从 Y+ 端滑入";
   return side === "left" ? "从 Z- 端滑入" : "从 Z+ 端滑入";
 }
 
@@ -91,7 +93,9 @@ export function getPcbRailEntryFace(
 ): EnclosureFace {
   const sign = insertionSide === "right" ? 1 : -1;
   const localX = axis === "x" ? sign : 0;
+  const localY = axis === "y" ? sign : 0;
   const localZ = axis === "z" ? sign : 0;
+  if (localY !== 0) return localY > 0 ? "top" : "bottom";
   const normalized = normalizeRotation(rotation);
   let worldX = localX;
   let worldZ = localZ;
@@ -155,7 +159,7 @@ export function isPcbInsertionSide(value: unknown): value is PcbInsertionSide {
 }
 
 export function isPcbRailAxis(value: unknown): value is PcbRailAxis {
-  return value === "x" || value === "z";
+  return value === "x" || value === "y" || value === "z";
 }
 
 export function getPcbRailMovementAxis(

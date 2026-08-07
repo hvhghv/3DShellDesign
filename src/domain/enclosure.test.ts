@@ -54,6 +54,37 @@ describe("enclosure domain", () => {
     expect(blockingIssues).toHaveLength(0);
   });
 
+  it("normalizes the removable lid face and keeps old projects top-mounted", () => {
+    expect(normalizeDesignerParameters({}).lidFace).toBe("top");
+    expect(
+      normalizeDesignerParameters({
+        ...DEFAULT_PARAMETERS,
+        lidFace: "front",
+      }).lidFace,
+    ).toBe("front");
+    expect(
+      normalizeDesignerParameters({
+        ...DEFAULT_PARAMETERS,
+        lidFace: "invalid",
+      }).lidFace,
+    ).toBe("top");
+    expect(
+      normalizeDesignerParameters({
+        ...DEFAULT_PARAMETERS,
+        lidFace: "left",
+        pcbMountingType: "rail-elastic",
+        pcbRailAxis: "z",
+        pcbInsertionSide: "right",
+      }),
+    ).toEqual(
+      expect.objectContaining({
+        lidFace: "left",
+        pcbRailAxis: "x",
+        pcbInsertionSide: "left",
+      }),
+    );
+  });
+
   it("reports battery trays that are too small for the selected cells", () => {
     const battery = {
       ...createBatteryCompartment("battery-1", "aa"),
@@ -72,6 +103,77 @@ describe("enclosure domain", () => {
           level: "error",
           part: "battery",
         }),
+      ]),
+    );
+  });
+
+  it("normalizes PCB rail mounting and legacy lid battery fields", () => {
+    const legacyBattery = { ...createBatteryCompartment("battery-1", "aa") } as
+      Record<string, unknown>;
+    delete legacyBattery.face;
+    delete legacyBattery.retentionType;
+    delete legacyBattery.insertionSide;
+
+    const parameters = normalizeDesignerParameters({
+      ...DEFAULT_PARAMETERS,
+      pcbMountingType: "rail-elastic",
+      pcbRailAxis: "x",
+      pcbInsertionSide: "left",
+      pcbRailWidth: 4,
+      batteryCompartments: [
+        {
+          ...legacyBattery,
+          face: "lid",
+          retentionType: "elastic",
+          insertionSide: "left",
+        },
+      ],
+    });
+
+    expect(parameters.pcbMountingType).toBe("rail-elastic");
+    expect(parameters.pcbRailAxis).toBe("x");
+    expect(parameters.pcbInsertionSide).toBe("left");
+    expect(parameters.pcbRailWidth).toBe(4);
+    expect(parameters.batteryCompartments[0]).toEqual(
+      expect.objectContaining({
+        face: "top",
+        retentionType: "elastic",
+        insertionSide: "left",
+      }),
+    );
+
+    const frontRailParameters = normalizeDesignerParameters({
+      ...DEFAULT_PARAMETERS,
+      lidFace: "front",
+      pcbMountingType: "rail-elastic",
+      pcbRailAxis: "x",
+      pcbInsertionSide: "left",
+    });
+    expect(frontRailParameters).toEqual(
+      expect.objectContaining({
+        lidFace: "front",
+        pcbRailAxis: "z",
+        pcbInsertionSide: "right",
+      }),
+    );
+  });
+
+  it("checks top battery clearance and PCB rail side clearance", () => {
+    const battery = {
+      ...createBatteryCompartment("battery-1", "aa"),
+      face: "top" as const,
+    };
+    const issues = validateDesign({
+      ...DEFAULT_PARAMETERS,
+      pcbMountingType: "rail-elastic",
+      boardClearance: 2,
+      batteryCompartments: [battery],
+    });
+
+    expect(issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: "pcb-rail-clearance", level: "error" }),
+        expect.objectContaining({ id: "battery-outside-battery-1", level: "error" }),
       ]),
     );
   });

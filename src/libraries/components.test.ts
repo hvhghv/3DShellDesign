@@ -4,6 +4,7 @@ import {
   CONNECTOR_DEFINITIONS,
   FASTENER_DEFINITIONS,
   FPC_CONNECTOR_DEFINITIONS,
+  LCDWIKI_DISPLAY_DEFINITIONS,
   TERMINAL_CONNECTOR_DEFINITIONS,
   getAntennaDefinition,
   getConnectorDefinition,
@@ -16,7 +17,14 @@ describe("component library", () => {
       CONNECTOR_DEFINITIONS.length,
     );
     expect(CONNECTOR_DEFINITIONS.map((item) => item.category)).toEqual(
-      expect.arrayContaining(["usb", "power", "network", "terminal", "fpc"]),
+      expect.arrayContaining([
+        "usb",
+        "power",
+        "network",
+        "terminal",
+        "fpc",
+        "display",
+      ]),
     );
     for (const definition of CONNECTOR_DEFINITIONS) {
       expect(definition.panelCutout.width).toBeGreaterThan(0);
@@ -71,6 +79,37 @@ describe("component library", () => {
       }
     }
     expect(getConnectorDefinition("fpc-20p-05").panelCutout.width).toBe(15);
+  });
+
+  it("provides LCDWIKI SPI display modules from the download archive", () => {
+    expect(LCDWIKI_DISPLAY_DEFINITIONS).toHaveLength(7);
+    expect(LCDWIKI_DISPLAY_DEFINITIONS.map((definition) => definition.id)).toEqual([
+      "lcdwiki-msp2202",
+      "lcdwiki-msp2402",
+      "lcdwiki-msp2806",
+      "lcdwiki-msp2807",
+      "lcdwiki-msp3218",
+      "lcdwiki-msp3520",
+      "lcdwiki-msp4021",
+    ]);
+    expect(
+      LCDWIKI_DISPLAY_DEFINITIONS.map(
+        (definition) => definition.displaySpec?.source,
+      ),
+    ).toEqual(Array(7).fill("LCDWIKI"));
+    expect(getConnectorDefinition("lcdwiki-msp4021")).toEqual(
+      expect.objectContaining({
+        category: "display",
+        panelCutout: expect.objectContaining({
+          width: 57.88,
+          height: 86.22,
+        }),
+        displaySpec: expect.objectContaining({
+          driveIc: "ST7796S",
+          touch: "resistive",
+        }),
+      }),
+    );
   });
 
   it("provides screw, heat-set insert and hex nut closure recipes", () => {

@@ -1,6 +1,9 @@
 import type {
+  BatteryInsertionSide,
   BatteryCompartmentPlacement,
+  BatteryMountFace,
   BatteryPreset,
+  BatteryRetentionType,
 } from "./model";
 
 export interface BatteryPresetDefinition {
@@ -23,6 +26,42 @@ export const BATTERY_PRESETS: readonly BatteryPresetDefinition[] = [
 
 export const BATTERY_TERMINAL_ALLOWANCE = 2.8;
 export const BATTERY_LIPO_TERMINAL_ALLOWANCE = 1.2;
+export const BATTERY_MOUNT_FACE_LABELS: Record<BatteryMountFace, string> = {
+  top: "顶部内侧",
+  bottom: "底部内侧",
+  front: "前面内侧",
+  back: "后面内侧",
+  left: "左面内侧",
+  right: "右面内侧",
+};
+export const BATTERY_RETENTION_LABELS: Record<BatteryRetentionType, string> = {
+  open: "开放滑入",
+  elastic: "橡皮筋快拆",
+  clip: "弹性压片",
+};
+export const BATTERY_INSERTION_SIDE_LABELS: Record<BatteryInsertionSide, string> = {
+  left: "从左端滑入",
+  right: "从右端滑入",
+};
+
+function isBatteryMountFace(value: unknown): value is BatteryMountFace {
+  return (
+    value === "top" ||
+    value === "bottom" ||
+    value === "front" ||
+    value === "back" ||
+    value === "left" ||
+    value === "right"
+  );
+}
+
+function isBatteryRetentionType(value: unknown): value is BatteryRetentionType {
+  return value === "open" || value === "elastic" || value === "clip";
+}
+
+function isBatteryInsertionSide(value: unknown): value is BatteryInsertionSide {
+  return value === "left" || value === "right";
+}
 
 export interface BatteryCompartmentLayout {
   preset: BatteryPresetDefinition;
@@ -135,6 +174,9 @@ export function createBatteryCompartment(
   return {
     id,
     preset: preset.id,
+    face: "bottom",
+    retentionType: "open",
+    insertionSide: "right",
     cellCount: preset.defaultCount,
     width: Number(width.toFixed(2)),
     depth: Number(depth.toFixed(2)),
@@ -183,6 +225,13 @@ export function constrainBatteryCompartment(
   const maxHeight = getBatteryMaxRailHeight(preset);
   return {
     ...placement,
+    face: isBatteryMountFace(placement.face) ? placement.face : "bottom",
+    retentionType: isBatteryRetentionType(placement.retentionType)
+      ? placement.retentionType
+      : "open",
+    insertionSide: isBatteryInsertionSide(placement.insertionSide)
+      ? placement.insertionSide
+      : "right",
     cellCount,
     width: clampDimension(placement.width),
     depth: clampDimension(placement.depth),

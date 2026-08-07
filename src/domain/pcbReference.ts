@@ -16,7 +16,13 @@ export function getAssemblyMountingHoles(
   legacyReference: PcbReference | null,
 ): CenteredMountingHole[] {
   if (parameters.pcbReferences.length === 0) {
-    return getCenteredMountingHoles(parameters, legacyReference);
+    if (!parameters.parametricPcbEnabled) return [];
+    return getCenteredMountingHoles(parameters, legacyReference).map((hole) => ({
+      ...hole,
+      x: parameters.pcbOffsetX + hole.x,
+      y: parameters.pcbOffsetZ + hole.y,
+      elevation: parameters.pcbElevation,
+    }));
   }
   return parameters.pcbReferences.flatMap((placement) => {
     const angle = (placement.rotation * Math.PI) / 180;

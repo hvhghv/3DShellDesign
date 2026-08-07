@@ -156,7 +156,10 @@ export function ManufacturingExport() {
             offset: [panel.offsetU, panel.offsetV],
             mounting: panel.mountingType,
           })),
-          closure: parameters.closureType,
+          closure: {
+            type: parameters.closureType,
+            face: parameters.lidFace,
+          },
           template: parameters.enclosureTemplateId,
           ventPattern: parameters.ventPattern,
           connectors: parameters.connectorPlacements.map((placement) => ({
@@ -198,8 +201,8 @@ export function ManufacturingExport() {
           onChange={(event) => setChoice(event.currentTarget.value as ExportChoice)}
         >
           <option value="layout-3mf">3MF 打印布局</option>
-          <option value="base-stl">下壳 STL</option>
-          <option value="lid-stl">顶盖 STL</option>
+          <option value="base-stl">壳体主体 STL</option>
+          <option value="lid-stl">可拆面 STL</option>
           {parameters.panelPlacements.flatMap((panel, index) => [
             <option key={`${panel.id}-stl`} value={`panel-stl:${panel.id}`}>
               面板 {index + 1} STL

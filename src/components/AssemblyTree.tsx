@@ -25,7 +25,13 @@ import {
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { ClosureType, ConnectorSurface, SelectablePart } from "../domain/model";
 import type { BatteryPreset } from "../domain/model";
-import { BATTERY_PRESETS, getBatteryPreset } from "../domain/batteries";
+import {
+  BATTERY_MOUNT_FACE_LABELS,
+  BATTERY_PRESETS,
+  BATTERY_RETENTION_LABELS,
+  getBatteryPreset,
+} from "../domain/batteries";
+import { PARAMETRIC_PCB_FEATURE_ID } from "../domain/pcbMounting";
 import { getMagnetSupportOption } from "../domain/magnetSupport";
 import {
   ENCLOSURE_FACE_OPTIONS,
@@ -66,6 +72,7 @@ const CONNECTOR_CATEGORY_LABELS = {
   network: "网络",
   terminal: "端子",
   fpc: "FPC",
+  display: "显示屏",
 } as const;
 
 interface PickerItem {
@@ -241,10 +248,10 @@ function DevicePicker({
         ) : null}
         {groups.map((group) => {
           const groupItems = visibleItems.filter((item) => item.group === group);
-          const canCollapse = !normalizedQuery && groupItems.length > 6;
+          const canCollapse = !normalizedQuery && groupItems.length > 8;
           const expanded = expandedGroups.has(group);
           const displayedItems = canCollapse && !expanded
-            ? groupItems.slice(0, 6)
+            ? groupItems.slice(0, 8)
             : groupItems;
           return (
           <section key={group} className="device-picker-group">
@@ -335,6 +342,14 @@ function TreeItem({
   const featureLocked = useDesignerStore(
     (state) => Boolean(featureId && state.lockedFeatureIds.includes(featureId)),
   );
+  const pcbBodyHidden = useDesignerStore((state) =>
+    Boolean(id === "pcb" && featureId && state.hiddenPcbBodyIds.includes(featureId)),
+  );
+  const transparencyId =
+    featureId ?? (id === "base" || id === "lid" ? id : null);
+  const objectTransparent = useDesignerStore((state) =>
+    Boolean(transparencyId && state.transparentObjectIds.includes(transparencyId)),
+  );
   const setSelectedPart = useDesignerStore((state) => state.setSelectedPart);
   const setSelectedFeature = useDesignerStore((state) => state.setSelectedFeature);
   const selected =
@@ -347,7 +362,7 @@ function TreeItem({
   return (
     <button
       ref={buttonRef}
-      className={`tree-item ${selected ? "is-selected" : ""} ${focusedPart && focusedPart !== id ? "is-context-hidden" : ""} ${featureHidden ? "is-feature-hidden" : ""} ${featureLocked ? "is-feature-locked" : ""}`}
+      className={`tree-item ${selected ? "is-selected" : ""} ${focusedPart && focusedPart !== id ? "is-context-hidden" : ""} ${featureHidden ? "is-feature-hidden" : ""} ${featureLocked ? "is-feature-locked" : ""} ${objectTransparent ? "is-object-transparent" : ""} ${pcbBodyHidden ? "is-pcb-body-hidden" : ""}`}
       style={{ paddingLeft: 12 + depth * 15 }}
       type="button"
       onClick={() =>
@@ -383,8 +398,10 @@ function TreeItem({
         <span>{label}</span>
         {detail ? <small>{detail}</small> : null}
       </span>
-      {featureId && (featureHidden || featureLocked) ? (
+      {(objectTransparent || pcbBodyHidden || (featureId && (featureHidden || featureLocked))) ? (
         <span className="tree-item-state" aria-hidden="true">
+          {objectTransparent ? <Eye size={12} /> : null}
+          {pcbBodyHidden ? <CircuitBoard size={12} /> : null}
           {featureHidden ? <EyeOff size={12} /> : null}
           {featureLocked ? <Lock size={12} /> : null}
         </span>
@@ -395,9 +412,10 @@ function TreeItem({
 
 interface AssemblyTreeProps {
   onRequestClose?: () => void;
+  onImportPcb?: () => void;
 }
 
-export function AssemblyTree({ onRequestClose }: AssemblyTreeProps) {
+export function AssemblyTree({ onRequestClose, onImportPcb }: AssemblyTreeProps) {
   const [treeQuery, setTreeQuery] = useState("");
   const [openPicker, setOpenPicker] = useState<"connector" | "antenna" | null>(
     null,
@@ -428,27 +446,35 @@ export function AssemblyTree({ onRequestClose }: AssemblyTreeProps) {
     (state) => state.removeCustomComponent,
   );
   const clearPcbReference = useDesignerStore((state) => state.clearPcbReference);
+  const addParametricPcb = useDesignerStore((state) => state.addParametricPcb);
   const addBatteryCompartment = useDesignerStore(
     (state) => state.addBatteryCompartment,
   );
   const removeBatteryCompartment = useDesignerStore(
     (state) => state.removeBatteryCompartment,
   );
-  const lidTransparent = useDesignerStore((state) => state.lidTransparent);
-  const toggleLidTransparency = useDesignerStore(
-    (state) => state.toggleLidTransparency,
+  const transparentObjectIds = useDesignerStore(
+    (state) => state.transparentObjectIds,
   );
+  const toggleObjectTransparency = useDesignerStore(
+    (state) => state.toggleObjectTransparency,
+  );
+  const showAllOpaque = useDesignerStore((state) => state.showAllOpaque);
   const hiddenFaces = useDesignerStore((state) => state.hiddenFaces);
   const toggleFaceVisibility = useDesignerStore(
     (state) => state.toggleFaceVisibility,
   );
   const showAllFaces = useDesignerStore((state) => state.showAllFaces);
   const hiddenFeatureIds = useDesignerStore((state) => state.hiddenFeatureIds);
+  const hiddenPcbBodyIds = useDesignerStore((state) => state.hiddenPcbBodyIds);
   const lockedFeatureIds = useDesignerStore((state) => state.lockedFeatureIds);
   const toggleFeatureVisibility = useDesignerStore(
     (state) => state.toggleFeatureVisibility,
   );
   const showAllFeatures = useDesignerStore((state) => state.showAllFeatures);
+  const togglePcbBodyVisibility = useDesignerStore(
+    (state) => state.togglePcbBodyVisibility,
+  );
   const toggleFeatureLock = useDesignerStore((state) => state.toggleFeatureLock);
   const duplicateFeature = useDesignerStore((state) => state.duplicateFeature);
 
@@ -482,7 +508,7 @@ export function AssemblyTree({ onRequestClose }: AssemblyTreeProps) {
       featureId,
       label,
       x: Math.min(x, window.innerWidth - 154),
-      y: Math.min(y, window.innerHeight - 166),
+      y: Math.min(y, window.innerHeight - 238),
     });
   };
 
@@ -498,9 +524,21 @@ export function AssemblyTree({ onRequestClose }: AssemblyTreeProps) {
     setContextMenu(null);
   };
 
+  const toggleContextPcbBodyVisibility = () => {
+    if (!contextMenu || contextMenu.part !== "pcb") return;
+    togglePcbBodyVisibility(contextMenu.featureId);
+    setContextMenu(null);
+  };
+
   const toggleContextFeatureLock = () => {
     if (!contextMenu) return;
     toggleFeatureLock(contextMenu.featureId);
+    setContextMenu(null);
+  };
+
+  const toggleContextFeatureTransparency = () => {
+    if (!contextMenu) return;
+    toggleObjectTransparency(contextMenu.featureId);
     setContextMenu(null);
   };
 
@@ -519,7 +557,8 @@ export function AssemblyTree({ onRequestClose }: AssemblyTreeProps) {
   };
   const objectCount =
     3 +
-    Math.max(1, parameters.pcbReferences.length) +
+    parameters.pcbReferences.length +
+    (parameters.parametricPcbEnabled && parameters.pcbReferences.length === 0 ? 1 : 0) +
     parameters.panelPlacements.length +
     parameters.connectorPlacements.length +
     parameters.antennaPlacements.length +
@@ -533,9 +572,11 @@ export function AssemblyTree({ onRequestClose }: AssemblyTreeProps) {
       .toLocaleLowerCase()
       .includes(normalizedTreeQuery);
   const visibleFeatureCount =
-    parameters.pcbReferences.filter((placement) =>
-      matchesTreeQuery("PCB", placement.reference.sourceName, placement.reference.format),
-    ).length +
+    (parameters.pcbReferences.length === 0 && parameters.parametricPcbEnabled
+      ? matchesTreeQuery("PCB", "参数 PCB") ? 1 : 0
+      : parameters.pcbReferences.filter((placement) =>
+          matchesTreeQuery("PCB", placement.reference.sourceName, placement.reference.format),
+        ).length) +
     parameters.panelPlacements.filter((panel) =>
       matchesTreeQuery(
         getPanelLabel(panel, parameters),
@@ -585,8 +626,15 @@ export function AssemblyTree({ onRequestClose }: AssemblyTreeProps) {
         group: CONNECTOR_CATEGORY_LABELS[definition.category],
         detail: definition.terminalSpec
           ? `${definition.terminalSpec.pitch.toFixed(2)} mm · ${definition.terminalSpec.positions}P · 开孔 ${definition.panelCutout.width.toFixed(1)} × ${definition.panelCutout.height.toFixed(1)} mm`
+          : definition.displaySpec
+            ? `${definition.displaySpec.resolution} · ${definition.displaySpec.touch === "resistive" ? "电阻触摸" : "无触摸"} · PCB ${definition.displaySpec.pcbWidth.toFixed(1)} × ${definition.displaySpec.pcbHeight.toFixed(1)} mm · 开窗 ${definition.panelCutout.width.toFixed(1)} × ${definition.panelCutout.height.toFixed(1)} mm`
           : `开孔 ${definition.panelCutout.width.toFixed(1)} × ${definition.panelCutout.height.toFixed(1)} mm`,
-        icon: <Cable size={15} />,
+        icon:
+          definition.category === "display" ? (
+            <PanelTop size={15} />
+          ) : (
+            <Cable size={15} />
+          ),
         terminalPitch: definition.terminalSpec?.pitch,
         terminalPositions: definition.terminalSpec?.positions,
       })),
@@ -629,6 +677,13 @@ export function AssemblyTree({ onRequestClose }: AssemblyTreeProps) {
   const showAllPanels = () => {
     hiddenPanelIds.forEach((id) => toggleFeatureVisibility(id));
   };
+  const contextFeatureHidden = Boolean(
+    contextMenu && hiddenFeatureIds.includes(contextMenu.featureId),
+  );
+  const contextPcbBodyHidden = Boolean(
+    contextMenu?.part === "pcb" &&
+      hiddenPcbBodyIds.includes(contextMenu.featureId),
+  );
 
   return (
     <aside className="assembly-panel" aria-label="装配体和特征树">
@@ -638,7 +693,7 @@ export function AssemblyTree({ onRequestClose }: AssemblyTreeProps) {
           <small>
             {normalizedTreeQuery ? `${visibleFeatureCount} 个匹配` : `${objectCount} 个对象`}
           </small>
-          {hiddenFeatureIds.length > 0 ? (
+          {hiddenFeatureIds.length > 0 || hiddenPcbBodyIds.length > 0 ? (
             <button
               className="panel-heading-icon"
               type="button"
@@ -647,6 +702,17 @@ export function AssemblyTree({ onRequestClose }: AssemblyTreeProps) {
               aria-label="显示全部对象"
             >
               <Eye size={14} />
+            </button>
+          ) : null}
+          {transparentObjectIds.length > 0 ? (
+            <button
+              className="panel-heading-icon"
+              type="button"
+              onClick={showAllOpaque}
+              title="全部恢复不透明"
+              aria-label="全部恢复不透明"
+            >
+              <EyeOff size={14} />
             </button>
           ) : null}
           <button
@@ -682,14 +748,56 @@ export function AssemblyTree({ onRequestClose }: AssemblyTreeProps) {
       </label>
       <nav className={`tree-nav ${normalizedTreeQuery ? "is-filtering" : ""}`}>
         <TreeItem id="project" icon={<FolderKanban size={16} />} label="PCB 控制器外壳" detail="项目" />
-        {parameters.pcbReferences.length === 0 ? (
+        <div className="tree-section-heading">
+          <span>PCB</span>
+          <span className="tree-section-actions">
+            {parameters.pcbReferences.length === 0 && !parameters.parametricPcbEnabled ? (
+              <button
+                type="button"
+                title="添加参数 PCB"
+                aria-label="添加参数 PCB"
+                onClick={addParametricPcb}
+              >
+                <CircuitBoard size={14} />
+              </button>
+            ) : null}
+            <button
+              type="button"
+              title="导入 KiCad PCB，支持多选追加多块"
+              aria-label="导入 PCB"
+              onClick={onImportPcb}
+            >
+              <Upload size={14} />
+            </button>
+          </span>
+        </div>
+        {parameters.pcbReferences.length === 0 && !parameters.parametricPcbEnabled ? (
+          <div className="tree-empty-state">
+            <CircuitBoard size={15} />
+            <span>当前没有 PCB</span>
+            <button type="button" onClick={onImportPcb}>导入 PCB</button>
+            <button type="button" onClick={addParametricPcb}>添加参数 PCB</button>
+          </div>
+        ) : parameters.pcbReferences.length === 0 ? (
+          matchesTreeQuery("PCB", "参数 PCB") ? (
           <TreeItem
             id="pcb"
+            featureId={PARAMETRIC_PCB_FEATURE_ID}
             icon={<CircuitBoard size={16} />}
             label="参数 PCB"
-            detail={`${parameters.pcbLength} x ${parameters.pcbWidth} mm`}
+            detail={`${parameters.pcbLength} x ${parameters.pcbWidth} mm · X ${parameters.pcbOffsetX.toFixed(1)} / Y ${parameters.pcbElevation.toFixed(1)} / Z ${parameters.pcbOffsetZ.toFixed(1)} mm`}
             depth={1}
+            onOpenContextMenu={(x, y) =>
+              openFeatureContextMenu(
+                "pcb",
+                PARAMETRIC_PCB_FEATURE_ID,
+                "参数 PCB",
+                x,
+                y,
+              )
+            }
           />
+          ) : null
         ) : parameters.pcbReferences.filter((placement) =>
           matchesTreeQuery("PCB", placement.reference.sourceName, placement.reference.format),
         ).map((placement) => {
@@ -701,7 +809,7 @@ export function AssemblyTree({ onRequestClose }: AssemblyTreeProps) {
             featureId={placement.id}
             icon={<CircuitBoard size={16} />}
             label={`PCB ${index + 1}`}
-            detail={`${placement.reference.sourceName} · X ${placement.offsetX.toFixed(1)} / Z ${placement.offsetZ.toFixed(1)} mm`}
+            detail={`${placement.reference.sourceName} · X ${placement.offsetX.toFixed(1)} / Y ${placement.elevation.toFixed(1)} / Z ${placement.offsetZ.toFixed(1)} mm`}
             depth={1}
             onOpenContextMenu={(x, y) =>
               openFeatureContextMenu(
@@ -718,7 +826,7 @@ export function AssemblyTree({ onRequestClose }: AssemblyTreeProps) {
         <TreeItem
           id="base"
           icon={<Box size={16} />}
-          label="下壳"
+          label="壳体主体"
           detail={
             parameters.closureType === "magnet"
               ? getMagnetSupportOption(parameters.magnetSupportType).name
@@ -726,15 +834,31 @@ export function AssemblyTree({ onRequestClose }: AssemblyTreeProps) {
           }
           depth={1}
         />
-        <TreeItem id="lid" icon={<SquareStack size={16} />} label="顶盖" detail={CLOSURE_LABELS[parameters.closureType]} depth={1} />
-        <label className="tree-view-toggle">
-          <span><Eye size={14} />上盖半透明</span>
-          <input
-            type="checkbox"
-            checked={lidTransparent}
-            onChange={toggleLidTransparency}
-          />
-        </label>
+        <TreeItem
+          id="lid"
+          icon={<SquareStack size={16} />}
+          label={`可拆面（${getFaceLabel(parameters.lidFace)}）`}
+          detail={CLOSURE_LABELS[parameters.closureType]}
+          depth={1}
+        />
+        <div className="tree-transparency-controls" role="group" aria-label="对象半透明">
+          <label className="tree-view-toggle">
+            <span><Eye size={14} />壳体主体半透明</span>
+            <input
+              type="checkbox"
+              checked={transparentObjectIds.includes("base")}
+              onChange={() => toggleObjectTransparency("base")}
+            />
+          </label>
+          <label className="tree-view-toggle">
+            <span><Eye size={14} />可拆面半透明</span>
+            <input
+              type="checkbox"
+              checked={transparentObjectIds.includes("lid")}
+              onChange={() => toggleObjectTransparency("lid")}
+            />
+          </label>
+        </div>
         <fieldset className="tree-face-visibility">
           <legend>
             <span><Eye size={14} />壳体面显示</span>
@@ -936,7 +1060,7 @@ export function AssemblyTree({ onRequestClose }: AssemblyTreeProps) {
             featureId={compartment.id}
             icon={<BatteryMedium size={16} />}
             label={`电池仓 ${index + 1}`}
-            detail={`${getBatteryPreset(compartment.preset).name} · ${compartment.cellCount} 槽`}
+            detail={`${BATTERY_MOUNT_FACE_LABELS[compartment.face]} · ${getBatteryPreset(compartment.preset).name} · ${compartment.cellCount} 槽 · ${BATTERY_RETENTION_LABELS[compartment.retentionType]}`}
             depth={1}
             onOpenContextMenu={(x, y) =>
               openFeatureContextMenu(
@@ -951,7 +1075,7 @@ export function AssemblyTree({ onRequestClose }: AssemblyTreeProps) {
           );
         })}
         <div className="tree-section-heading">
-          <span>接口</span>
+          <span>接口/器件</span>
           <button
             type="button"
             onClick={() =>
@@ -959,8 +1083,8 @@ export function AssemblyTree({ onRequestClose }: AssemblyTreeProps) {
                 current === "connector" ? null : "connector",
               )
             }
-            title="选择并添加接口"
-            aria-label="添加接口"
+            title="选择并添加接口或器件"
+            aria-label="添加接口或器件"
             aria-expanded={openPicker === "connector"}
           >
             <Plus size={15} />
@@ -968,7 +1092,7 @@ export function AssemblyTree({ onRequestClose }: AssemblyTreeProps) {
         </div>
         {openPicker === "connector" ? (
           <DevicePicker
-            title="添加接口器件"
+            title="添加接口/器件"
             items={connectorPickerItems}
             surfaceOptions={surfacePickerOptions}
             defaultSurface="front"
@@ -1069,13 +1193,39 @@ export function AssemblyTree({ onRequestClose }: AssemblyTreeProps) {
           style={{ left: contextMenu.x, top: contextMenu.y }}
         >
           <button type="button" role="menuitem" onClick={toggleContextFeatureVisibility}>
-            {hiddenFeatureIds.includes(contextMenu.featureId) ? (
+            {contextFeatureHidden ? (
               <Eye size={15} />
             ) : (
               <EyeOff size={15} />
             )}
             <span>
-              {hiddenFeatureIds.includes(contextMenu.featureId) ? "显示" : "隐藏"}
+              {contextMenu.part === "pcb"
+                ? contextFeatureHidden
+                  ? "显示PCB全部"
+                  : "全隐藏PCB"
+                : contextFeatureHidden
+                  ? "显示"
+                  : "隐藏"}
+            </span>
+          </button>
+          {contextMenu.part === "pcb" ? (
+            <button type="button" role="menuitem" onClick={toggleContextPcbBodyVisibility}>
+              <CircuitBoard size={15} />
+              <span>
+                {contextPcbBodyHidden ? "显示PCB主体" : "隐藏PCB主体"}
+              </span>
+            </button>
+          ) : null}
+          <button type="button" role="menuitem" onClick={toggleContextFeatureTransparency}>
+            {transparentObjectIds.includes(contextMenu.featureId) ? (
+              <EyeOff size={15} />
+            ) : (
+              <Eye size={15} />
+            )}
+            <span>
+              {transparentObjectIds.includes(contextMenu.featureId)
+                ? "恢复不透明"
+                : "半透明"}
             </span>
           </button>
           <button type="button" role="menuitem" onClick={toggleContextFeatureLock}>
@@ -1088,7 +1238,15 @@ export function AssemblyTree({ onRequestClose }: AssemblyTreeProps) {
               {lockedFeatureIds.includes(contextMenu.featureId) ? "解锁" : "锁定"}
             </span>
           </button>
-          <button type="button" role="menuitem" onClick={duplicateContextFeature}>
+          <button
+            type="button"
+            role="menuitem"
+            disabled={
+              contextMenu.part === "pcb" &&
+              contextMenu.featureId === PARAMETRIC_PCB_FEATURE_ID
+            }
+            onClick={duplicateContextFeature}
+          >
             <Copy size={15} />
             <span>复制</span>
           </button>

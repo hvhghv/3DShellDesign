@@ -3,7 +3,7 @@ export type CutoutShape = "rounded-rectangle" | "circle";
 export interface ConnectorDefinition {
   id: string;
   name: string;
-  category: "usb" | "power" | "network" | "terminal" | "fpc";
+  category: "usb" | "power" | "network" | "terminal" | "fpc" | "display";
   visualGeometry: {
     shape: CutoutShape;
     width: number;
@@ -37,6 +37,25 @@ export interface ConnectorDefinition {
   terminalSpec?: {
     pitch: number;
     positions: number;
+  };
+  displaySpec?: {
+    source: "LCDWIKI";
+    diagonalInch: number;
+    moduleSku: string;
+    drawingSku: string;
+    resolution: string;
+    driveIc: string;
+    touch: "none" | "resistive";
+    pcbWidth: number;
+    pcbHeight: number;
+    windowWidth: number;
+    windowHeight: number;
+    activeAreaWidth: number;
+    activeAreaHeight: number;
+    totalThicknessWithoutHeader: number;
+    totalThicknessWithHeader: number;
+    headerPins: number;
+    sourceDrawing: string;
   };
 }
 
@@ -260,6 +279,228 @@ export const FPC_CONNECTOR_DEFINITIONS: ConnectorDefinition[] =
     FPC_POSITIONS.map((positions) => createFpcDefinition(family, positions)),
   );
 
+interface LcdwikiDisplaySpec {
+  id: string;
+  diagonalInch: number;
+  moduleSku: string;
+  drawingSku: string;
+  resolution: "240x320" | "320x480";
+  driveIc: "ILI9341V" | "ILI9488" | "ST7796S";
+  touch: "none" | "resistive";
+  pcbWidth: number;
+  pcbHeight: number;
+  windowWidth: number;
+  windowHeight: number;
+  activeAreaWidth: number;
+  activeAreaHeight: number;
+  totalThicknessWithoutHeader: number;
+  totalThicknessWithHeader: number;
+  headerPins: number;
+  sourceDrawing: string;
+}
+
+const LCDWIKI_DISPLAY_SPECS: readonly LcdwikiDisplaySpec[] = [
+  {
+    id: "lcdwiki-msp2202",
+    diagonalInch: 2.2,
+    moduleSku: "MSP2202",
+    drawingSku: "MSP2202",
+    resolution: "240x320",
+    driveIc: "ILI9341V",
+    touch: "none",
+    pcbWidth: 40.1,
+    pcbHeight: 67.2,
+    windowWidth: 33.84,
+    windowHeight: 45.12,
+    activeAreaWidth: 33.84,
+    activeAreaHeight: 45.12,
+    totalThicknessWithoutHeader: 4.45,
+    totalThicknessWithHeader: 12.83,
+    headerPins: 9,
+    sourceDrawing: "lcdwiki_downloads/2.2inch_MSP2202/MSP2202_Size.pdf",
+  },
+  {
+    id: "lcdwiki-msp2402",
+    diagonalInch: 2.4,
+    moduleSku: "MSP2402",
+    drawingSku: "MSP2401",
+    resolution: "240x320",
+    driveIc: "ILI9341V",
+    touch: "none",
+    pcbWidth: 42.72,
+    pcbHeight: 77.18,
+    windowWidth: 36.72,
+    windowHeight: 48.96,
+    activeAreaWidth: 36.72,
+    activeAreaHeight: 48.96,
+    totalThicknessWithoutHeader: 4.3,
+    totalThicknessWithHeader: 12.68,
+    headerPins: 14,
+    sourceDrawing: "lcdwiki_downloads/2.4inch_MSP2402/MSP2401_Size.pdf",
+  },
+  {
+    id: "lcdwiki-msp2806",
+    diagonalInch: 2.8,
+    moduleSku: "MSP2806",
+    drawingSku: "MSP2806",
+    resolution: "240x320",
+    driveIc: "ILI9341V",
+    touch: "none",
+    pcbWidth: 50,
+    pcbHeight: 86,
+    windowWidth: 43.2,
+    windowHeight: 57.6,
+    activeAreaWidth: 43.2,
+    activeAreaHeight: 57.6,
+    totalThicknessWithoutHeader: 4.4,
+    totalThicknessWithHeader: 12.78,
+    headerPins: 14,
+    sourceDrawing: "lcdwiki_downloads/2.8inch_MSP2807/MSP2806_Size.pdf",
+  },
+  {
+    id: "lcdwiki-msp2807",
+    diagonalInch: 2.8,
+    moduleSku: "MSP2807",
+    drawingSku: "MSP2807",
+    resolution: "240x320",
+    driveIc: "ILI9341V",
+    touch: "resistive",
+    pcbWidth: 50,
+    pcbHeight: 86,
+    windowWidth: 45.2,
+    windowHeight: 66.2,
+    activeAreaWidth: 43.2,
+    activeAreaHeight: 57.6,
+    totalThicknessWithoutHeader: 5.6,
+    totalThicknessWithHeader: 12.78,
+    headerPins: 14,
+    sourceDrawing: "lcdwiki_downloads/2.8inch_MSP2807/MSP2807_Size.pdf",
+  },
+  {
+    id: "lcdwiki-msp3218",
+    diagonalInch: 3.2,
+    moduleSku: "MSP3218",
+    drawingSku: "MSP3217",
+    resolution: "240x320",
+    driveIc: "ILI9341V",
+    touch: "none",
+    pcbWidth: 55.04,
+    pcbHeight: 89.3,
+    windowWidth: 48.6,
+    windowHeight: 64.8,
+    activeAreaWidth: 48.6,
+    activeAreaHeight: 64.8,
+    totalThicknessWithoutHeader: 4.5,
+    totalThicknessWithHeader: 12.88,
+    headerPins: 14,
+    sourceDrawing: "lcdwiki_downloads/3.2inch_MSP3218/MSP3217_Size.pdf",
+  },
+  {
+    id: "lcdwiki-msp3520",
+    diagonalInch: 3.5,
+    moduleSku: "MSP3520",
+    drawingSku: "MSP3520",
+    resolution: "320x480",
+    driveIc: "ILI9488",
+    touch: "resistive",
+    pcbWidth: 56.34,
+    pcbHeight: 98,
+    windowWidth: 50.56,
+    windowHeight: 77.84,
+    activeAreaWidth: 48.96,
+    activeAreaHeight: 73.44,
+    totalThicknessWithoutHeader: 5.8,
+    totalThicknessWithHeader: 14.18,
+    headerPins: 14,
+    sourceDrawing: "lcdwiki_downloads/3.5inch_MSP3520/MSP3520_Size.pdf",
+  },
+  {
+    id: "lcdwiki-msp4021",
+    diagonalInch: 4,
+    moduleSku: "MSP4021",
+    drawingSku: "MSP4021",
+    resolution: "320x480",
+    driveIc: "ST7796S",
+    touch: "resistive",
+    pcbWidth: 61.74,
+    pcbHeight: 108.04,
+    windowWidth: 56.88,
+    windowHeight: 85.22,
+    activeAreaWidth: 55.68,
+    activeAreaHeight: 83.52,
+    totalThicknessWithoutHeader: 5.65,
+    totalThicknessWithHeader: 14,
+    headerPins: 14,
+    sourceDrawing: "lcdwiki_downloads/4.0inch_ST7796/MSP4021_Size.pdf",
+  },
+];
+
+function createLcdwikiDisplayDefinition(spec: LcdwikiDisplaySpec): ConnectorDefinition {
+  const windowClearance = spec.touch === "resistive" ? 1 : 0.8;
+  const cutoutWidth = Number((spec.windowWidth + windowClearance).toFixed(2));
+  const cutoutHeight = Number((spec.windowHeight + windowClearance).toFixed(2));
+  const touchLabel = spec.touch === "resistive" ? "电阻触摸" : "无触摸";
+  return {
+    id: spec.id,
+    name: `LCDWIKI ${spec.diagonalInch.toFixed(1)}寸 SPI 屏 ${spec.moduleSku}`,
+    category: "display",
+    visualGeometry: {
+      shape: "rounded-rectangle",
+      width: spec.pcbWidth,
+      height: spec.pcbHeight,
+      depth: spec.totalThicknessWithoutHeader,
+      color: "#1f3434",
+    },
+    panelCutout: {
+      shape: "rounded-rectangle",
+      width: cutoutWidth,
+      height: cutoutHeight,
+      cornerRadius: 0.9,
+    },
+    boardAlignment: {
+      heightAboveBoardCenter: spec.totalThicknessWithoutHeader / 2,
+    },
+    keepoutVolumes: [
+      {
+        role: "wiring",
+        width: spec.pcbWidth + 6,
+        height: spec.pcbHeight + 6,
+        depth: Math.max(24, spec.totalThicknessWithHeader + 8),
+      },
+    ],
+    toleranceRules: {
+      xyClearance: windowClearance / 2,
+      description: `${spec.diagonalInch.toFixed(1)}寸 LCDWIKI SPI 屏窗口；开窗按 ${spec.windowWidth.toFixed(2)} x ${spec.windowHeight.toFixed(2)} mm 视区加余量`,
+    },
+    metadata: {
+      bomName: `LCDWIKI ${spec.diagonalInch.toFixed(1)} inch SPI TFT module ${spec.moduleSku}`,
+      notes: `${touchLabel}；${spec.resolution.replace("x", "*RGB*")}；驱动 ${spec.driveIc}；PCB ${spec.pcbWidth.toFixed(2)} x ${spec.pcbHeight.toFixed(2)} mm；AA ${spec.activeAreaWidth.toFixed(2)} x ${spec.activeAreaHeight.toFixed(2)} mm；尺寸来源 ${spec.sourceDrawing}。`,
+    },
+    displaySpec: {
+      source: "LCDWIKI",
+      diagonalInch: spec.diagonalInch,
+      moduleSku: spec.moduleSku,
+      drawingSku: spec.drawingSku,
+      resolution: spec.resolution,
+      driveIc: spec.driveIc,
+      touch: spec.touch,
+      pcbWidth: spec.pcbWidth,
+      pcbHeight: spec.pcbHeight,
+      windowWidth: spec.windowWidth,
+      windowHeight: spec.windowHeight,
+      activeAreaWidth: spec.activeAreaWidth,
+      activeAreaHeight: spec.activeAreaHeight,
+      totalThicknessWithoutHeader: spec.totalThicknessWithoutHeader,
+      totalThicknessWithHeader: spec.totalThicknessWithHeader,
+      headerPins: spec.headerPins,
+      sourceDrawing: spec.sourceDrawing,
+    },
+  };
+}
+
+export const LCDWIKI_DISPLAY_DEFINITIONS: ConnectorDefinition[] =
+  LCDWIKI_DISPLAY_SPECS.map((spec) => createLcdwikiDisplayDefinition(spec));
+
 export const CONNECTOR_DEFINITIONS: ConnectorDefinition[] = [
   {
     id: "usb-c-receptacle",
@@ -318,6 +559,7 @@ export const CONNECTOR_DEFINITIONS: ConnectorDefinition[] = [
   },
   ...TERMINAL_CONNECTOR_DEFINITIONS,
   ...FPC_CONNECTOR_DEFINITIONS,
+  ...LCDWIKI_DISPLAY_DEFINITIONS,
 ];
 
 export const ANTENNA_DEFINITIONS: AntennaDefinition[] = [

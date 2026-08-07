@@ -21,7 +21,7 @@ export const ENCLOSURE_FACE_OPTIONS: ReadonlyArray<{
   id: EnclosureFace;
   name: string;
 }> = [
-  { id: "top", name: "顶盖" },
+  { id: "top", name: "顶部" },
   { id: "bottom", name: "底板" },
   { id: "front", name: "前壁" },
   { id: "back", name: "后壁" },
@@ -44,7 +44,7 @@ export function isPlacementRotation(value: unknown): value is PlacementRotation 
 }
 
 export function getFaceLabel(face: EnclosureFace): string {
-  return ENCLOSURE_FACE_OPTIONS.find((option) => option.id === face)?.name ?? "顶盖";
+  return ENCLOSURE_FACE_OPTIONS.find((option) => option.id === face)?.name ?? "顶部";
 }
 
 export function getConnectorSurfaceLabel(
@@ -385,6 +385,7 @@ export function createConnectorPlacement(
     rotation: 0,
     cutoutWidth: definition.panelCutout.width,
     cutoutHeight: definition.panelCutout.height,
+    displayMountingType: definition.displaySpec ? "none" : undefined,
   };
 }
 

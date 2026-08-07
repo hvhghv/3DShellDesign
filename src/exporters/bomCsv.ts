@@ -1,8 +1,13 @@
 import { getMaterial } from "../domain/materials";
 import type { DesignerParameters } from "../domain/model";
 import { getMagnetSupportOption } from "../domain/magnetSupport";
-import { getBatteryPreset } from "../domain/batteries";
+import {
+  BATTERY_MOUNT_FACE_LABELS,
+  BATTERY_RETENTION_LABELS,
+  getBatteryPreset,
+} from "../domain/batteries";
 import { getPanelMagnetPocketDepth } from "../domain/panelMounting";
+import { PCB_MOUNTING_LABELS, PCB_RAIL_AXIS_LABELS } from "../domain/pcbMounting";
 import { getConnectorSurfaceLabel, getFaceLabel } from "../domain/placements";
 import {
   getAntennaDefinition,
@@ -22,8 +27,25 @@ export function createBomCsv(
   const shell = getMaterial(parameters.shellMaterialId);
   const rows: Array<Array<string | number>> = [
     ["项目", "零件", "数量", "材料/规格", "工艺", "备注"],
-    [projectName, "下壳", 1, shell.name, shell.process, `${parameters.wallThickness} mm 壁厚`],
-    [projectName, "顶盖", 1, shell.name, shell.process, parameters.closureType],
+    [projectName, "壳体主体", 1, shell.name, shell.process, `${parameters.wallThickness} mm 壁厚`],
+    [
+      projectName,
+      "可拆面",
+      1,
+      shell.name,
+      shell.process,
+      `${getFaceLabel(parameters.lidFace)} / ${parameters.closureType}`,
+    ],
+    [
+      projectName,
+      "PCB 固定结构",
+      1,
+      PCB_MOUNTING_LABELS[parameters.pcbMountingType],
+      "壳体一体打印/装配",
+      parameters.pcbMountingType === "screw"
+        ? `PCB 基准高度 ${parameters.standoffHeight} mm`
+        : `${PCB_RAIL_AXIS_LABELS[parameters.pcbRailAxis]}；导轨 ${parameters.pcbRailWidth} mm；滑槽余量 ${parameters.pcbRailClearance} mm；无底部支撑墙；${parameters.pcbMountingType === "rail-elastic" ? "闭口端挂点，橡皮筋沿长度上下包裹" : "滑入后螺丝锁定"}`,
+    ],
   ];
   parameters.panelPlacements.forEach((placement, index) => {
     const panel = getMaterial(placement.materialId);
@@ -88,8 +110,18 @@ export function createBomCsv(
       1,
       `${preset.name} / ${placement.cellCount} 槽`,
       "壳体一体打印",
-      `${placement.width} x ${placement.depth} x ${placement.height} mm`,
+      `${BATTERY_MOUNT_FACE_LABELS[placement.face]}；${BATTERY_RETENTION_LABELS[placement.retentionType]}；${placement.width} x ${placement.depth} x ${placement.height} mm`,
     ]);
+    if (placement.retentionType === "elastic") {
+      rows.push([
+        projectName,
+        `电池仓 ${index + 1} 橡皮筋`,
+        1,
+        "耐温橡皮筋 / O-ring，按实物周长选型",
+        "装配",
+        "挂在仓体两侧挂耳上，封住滑入端以便快拆",
+      ]);
+    }
     rows.push([
       projectName,
       preset.id === "lipo" ? "软包锂电池" : `${preset.id.toUpperCase()} 电池`,
@@ -103,7 +135,7 @@ export function createBomCsv(
     const fastener = getFastenerDefinition(parameters.closureFastenerId);
     rows.push([
       projectName,
-      "顶盖紧固件",
+      "可拆面紧固件",
       4,
       fastener.metadata.bomName,
       "装配",

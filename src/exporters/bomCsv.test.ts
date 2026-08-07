@@ -6,10 +6,12 @@ describe("BOM CSV exporter", () => {
   it("includes current materials, connector and fastener quantities", () => {
     const csv = createBomCsv("控制器,样机", DEFAULT_PARAMETERS);
     expect(csv.startsWith("\uFEFF")).toBe(true);
-    expect(csv).toContain('"控制器,样机",下壳,1,PETG 韧性打印,FDM');
+    expect(csv).toContain('"控制器,样机",壳体主体,1,PETG 韧性打印,FDM');
+    expect(csv).toContain("可拆面,1,PETG 韧性打印,FDM,顶部 / screw");
     expect(csv).toContain("USB Type-C 母座,1,USB-C receptacle");
-    expect(csv).toContain("顶盖紧固件,4,M3 self-tapping screw");
+    expect(csv).toContain("可拆面紧固件,4,M3 self-tapping screw");
     expect(csv).toContain("面板 1 固定件,4,screw");
+    expect(csv).toContain("PCB 固定结构,1,纯螺丝固定");
   });
 
   it("includes the selected antenna and frequency band", () => {
@@ -56,5 +58,43 @@ describe("BOM CSV exporter", () => {
 
     expect(csv).toContain("面板 1 固定件,8,直径 4.3 mm 圆形磁铁");
     expect(csv).toContain("快拆销轴,2,直径 2.5 mm 带拉环销");
+  });
+
+  it("records rail elastic PCB mounts and battery retention hardware", () => {
+    const csv = createBomCsv("快拆仓", {
+      ...DEFAULT_PARAMETERS,
+      pcbMountingType: "rail-elastic",
+      batteryCompartments: [
+        {
+          id: "battery-1",
+          preset: "aa",
+          face: "top",
+          retentionType: "elastic",
+          insertionSide: "right",
+          cellCount: 2,
+          width: 54.9,
+          depth: 34.4,
+          height: 10.59,
+          wallThickness: 1.6,
+          clearance: 0.6,
+          offsetX: 0,
+          offsetZ: 0,
+          rotation: 0,
+        },
+      ],
+    });
+
+    expect(csv).toContain("PCB 固定结构,1,滑槽 + 橡皮筋");
+    expect(csv).toContain("电池仓 1,1,AA 电池仓 / 2 槽");
+    expect(csv).toContain("电池仓 1 橡皮筋,1");
+  });
+
+  it("records the selected removable lid face", () => {
+    const csv = createBomCsv("前盖外壳", {
+      ...DEFAULT_PARAMETERS,
+      lidFace: "front",
+    });
+
+    expect(csv).toContain("可拆面,1,PETG 韧性打印,FDM,前壁 / screw");
   });
 });

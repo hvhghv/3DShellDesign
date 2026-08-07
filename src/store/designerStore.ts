@@ -14,6 +14,12 @@ import {
   constrainBatteryCompartment,
   createBatteryCompartment,
 } from "../domain/batteries";
+import { PARAMETRIC_PCB_FEATURE_ID } from "../domain/pcbMounting";
+import {
+  getPcbRailDirection,
+  getPcbRailMovementAxis,
+  synchronizePcbRailDirection,
+} from "../domain/pcbRailDirection";
 import type {
   AntennaPlacement,
   BatteryCompartmentPlacement,
@@ -47,6 +53,7 @@ import { queueProjectCache, readProjectCache } from "./projectCache";
 const STORAGE_KEY = "3dshell-designer.project.v1";
 type CacheStatus = "restoring" | "saving" | "saved" | "error";
 export type TransformMode = "move" | "scale";
+export type TransformAxisConstraint = "all" | "x" | "y" | "z";
 export type EditableFeaturePart =
   | "pcb"
   | "panel"
@@ -69,13 +76,17 @@ interface DesignerState {
   showGrid: boolean;
   exploded: boolean;
   lidTransparent: boolean;
+  transparentObjectIds: string[];
   hiddenFaces: EnclosureFace[];
   hiddenFeatureIds: string[];
+  hiddenPcbBodyIds: string[];
   lockedFeatureIds: string[];
   cameraResetToken: number;
   cachedAt: string | null;
   cacheStatus: CacheStatus;
   transformMode: TransformMode;
+  transformEditMode: boolean;
+  transformAxisConstraint: TransformAxisConstraint;
   canUndo: boolean;
   canRedo: boolean;
   setParameter: <Key extends keyof DesignerParameters>(
@@ -138,19 +149,26 @@ interface DesignerState {
     id: string,
   ) => void;
   setTransformMode: (mode: TransformMode) => void;
+  setTransformEditMode: (enabled: boolean) => void;
+  toggleTransformEditMode: () => void;
+  setTransformAxisConstraint: (axis: TransformAxisConstraint) => void;
   focusSelectedPart: () => void;
   showAllParts: () => void;
   setInspectorTab: (tab: InspectorTab) => void;
   toggleGrid: () => void;
   toggleExploded: () => void;
   toggleLidTransparency: () => void;
+  toggleObjectTransparency: (id: string) => void;
+  showAllOpaque: () => void;
   toggleFaceVisibility: (face: EnclosureFace) => void;
   showAllFaces: () => void;
   toggleFeatureVisibility: (id: string) => void;
+  togglePcbBodyVisibility: (id: string) => void;
   showAllFeatures: () => void;
   toggleFeatureLock: (id: string) => void;
   resetCamera: () => void;
   resetProject: () => void;
+  addParametricPcb: () => void;
   setPcbReference: (reference: PcbReference) => void;
   setStepReference: (reference: PcbReference, preview: StepPreview) => void;
   updatePcbReferencePlacement: (
@@ -204,6 +222,7 @@ function captureHistorySnapshot(state: DesignerState): DesignerHistorySnapshot {
 
 function getHistoryShape(parameters: DesignerParameters): string {
   return [
+    parameters.parametricPcbEnabled ? 1 : 0,
     parameters.pcbReferences.length,
     parameters.panelPlacements.length,
     parameters.connectorPlacements.length,
@@ -215,6 +234,7 @@ function getHistoryShape(parameters: DesignerParameters): string {
 
 function getValidFeatureIds(parameters: DesignerParameters): Set<string> {
   return new Set([
+    ...(parameters.parametricPcbEnabled ? [PARAMETRIC_PCB_FEATURE_ID] : []),
     ...parameters.pcbReferences.map((item) => item.id),
     ...parameters.panelPlacements.map((item) => item.id),
     ...parameters.connectorPlacements.map((item) => item.id),
@@ -224,11 +244,18 @@ function getValidFeatureIds(parameters: DesignerParameters): Set<string> {
   ]);
 }
 
+function getValidObjectIds(parameters: DesignerParameters): Set<string> {
+  return new Set(["base", "lid", ...getValidFeatureIds(parameters)]);
+}
+
 function getHistoryScope(previous: DesignerState, next: DesignerState): string {
   return `${previous.selectedPart}:${previous.selectedFeatureId ?? "none"}:${getHistoryShape(previous.parameters)}>${getHistoryShape(next.parameters)}`;
 }
 
 function isPartAvailable(part: SelectablePart, parameters: DesignerParameters): boolean {
+  if (part === "pcb") {
+    return parameters.parametricPcbEnabled || parameters.pcbReferences.length > 0;
+  }
   if (part === "panel") return parameters.panelPlacements.length > 0;
   if (part === "connector") return parameters.connectorPlacements.length > 0;
   if (part === "antenna") return parameters.antennaPlacements.length > 0;
@@ -267,6 +294,7 @@ function withLegacyPcbReference(
   if (!reference || parameters.pcbReferences.length > 0) return parameters;
   return {
     ...parameters,
+    parametricPcbEnabled: false,
     pcbReferences: [createPcbReferencePlacement(reference, "pcb-1")],
   };
 }
@@ -355,6 +383,48 @@ function constrainParameters(parameters: DesignerParameters): DesignerParameters
   );
 }
 
+function clampPcbPlanarOffset(value: number): number {
+  return Math.min(500, Math.max(-500, value));
+}
+
+function shouldRehomePcbRailPlacements(
+  previous: DesignerParameters,
+  next: DesignerParameters,
+): boolean {
+  const previousRailMounted = previous.pcbMountingType !== "screw";
+  const nextRailMounted = next.pcbMountingType !== "screw";
+  if (!nextRailMounted) return false;
+  if (!previousRailMounted) return true;
+
+  const previousDirection = getPcbRailDirection(previous, 0);
+  const nextDirection = getPcbRailDirection(next, 0);
+  return (
+    previousDirection.axis !== nextDirection.axis ||
+    previousDirection.insertionSide !== nextDirection.insertionSide ||
+    previousDirection.entryFace !== nextDirection.entryFace
+  );
+}
+
+function rehomePcbRailPlacements(parameters: DesignerParameters): DesignerParameters {
+  if (parameters.pcbMountingType === "screw") return parameters;
+  let changed = parameters.pcbOffsetX !== 0 || parameters.pcbOffsetZ !== 0;
+  const pcbReferences = parameters.pcbReferences.map((placement) =>
+    placement.offsetX === 0 && placement.offsetZ === 0
+      ? placement
+      : (() => {
+          changed = true;
+          return { ...placement, offsetX: 0, offsetZ: 0 };
+        })(),
+  );
+  if (!changed) return parameters;
+  return {
+    ...parameters,
+    pcbOffsetX: 0,
+    pcbOffsetZ: 0,
+    pcbReferences,
+  };
+}
+
 function resolvePlacementTarget(
   panels: readonly PanelPlacement[],
   surface: ConnectorSurface,
@@ -383,21 +453,53 @@ export const useDesignerStore = create<DesignerState>((set, get) => ({
   showGrid: true,
   exploded: false,
   lidTransparent: false,
+  transparentObjectIds: [],
   hiddenFaces: [],
   hiddenFeatureIds: [],
+  hiddenPcbBodyIds: [],
   lockedFeatureIds: [],
   cameraResetToken: 0,
   cachedAt: persistedProject.cachedAt,
   cacheStatus: "restoring",
   transformMode: "move",
+  transformEditMode: false,
+  transformAxisConstraint: "all",
   canUndo: false,
   canRedo: false,
   setParameter: (key, value) =>
     set((state) => {
-      const nextParameters = constrainParameters({
+      const railMovementAxis = getPcbRailMovementAxis(state.parameters);
+      if (
+        railMovementAxis !== null &&
+        (key === "pcbElevation" ||
+          (key === "pcbOffsetX" && railMovementAxis !== "x") ||
+          (key === "pcbOffsetZ" && railMovementAxis !== "z"))
+      ) {
+        return {};
+      }
+      const clampedValue =
+        key === "pcbElevation" && typeof value === "number"
+          ? Math.min(300, Math.max(-state.parameters.standoffHeight, value))
+          : clampParameter(key, value);
+      const parameterPatch = {
+        [key]: clampedValue as DesignerParameters[typeof key],
+      } as Pick<DesignerParameters, typeof key> & Partial<DesignerParameters>;
+      if (
+        key === "standoffHeight" &&
+        typeof clampedValue === "number" &&
+        state.parameters.pcbElevation < -clampedValue
+      ) {
+        parameterPatch.pcbElevation = -clampedValue;
+      }
+      const synchronizedParameters = synchronizePcbRailDirection({
         ...state.parameters,
-        [key]: clampParameter(key, value) as DesignerParameters[typeof key],
+        ...parameterPatch,
       });
+      const nextParameters = constrainParameters(
+        shouldRehomePcbRailPlacements(state.parameters, synchronizedParameters)
+          ? rehomePcbRailPlacements(synchronizedParameters)
+          : synchronizedParameters,
+      );
       const snapshot = persistSnapshot(
         state.projectName,
         nextParameters,
@@ -661,6 +763,9 @@ export const useDesignerStore = create<DesignerState>((set, get) => ({
                 definitionId: definition.id,
                 cutoutWidth: definition.panelCutout.width,
                 cutoutHeight: definition.panelCutout.height,
+                displayMountingType: definition.displaySpec
+                  ? placement.displayMountingType ?? "none"
+                  : undefined,
               }
             : placement,
         ),
@@ -1228,14 +1333,22 @@ export const useDesignerStore = create<DesignerState>((set, get) => ({
         target.snapshot.stepPreview,
       );
       const validFeatureIds = getValidFeatureIds(target.snapshot.parameters);
+      const transparentObjectIds = current.transparentObjectIds.filter((id) =>
+        getValidObjectIds(target.snapshot.parameters).has(id),
+      );
       set({
         ...target.snapshot,
         hiddenFeatureIds: current.hiddenFeatureIds.filter((id) =>
           validFeatureIds.has(id),
         ),
+        hiddenPcbBodyIds: current.hiddenPcbBodyIds.filter((id) =>
+          validFeatureIds.has(id),
+        ),
         lockedFeatureIds: current.lockedFeatureIds.filter((id) =>
           validFeatureIds.has(id),
         ),
+        transparentObjectIds,
+        lidTransparent: transparentObjectIds.includes("lid"),
         canUndo: historyPast.length > 0,
         canRedo: true,
         cachedAt: persisted.updatedAt,
@@ -1265,14 +1378,22 @@ export const useDesignerStore = create<DesignerState>((set, get) => ({
         target.snapshot.stepPreview,
       );
       const validFeatureIds = getValidFeatureIds(target.snapshot.parameters);
+      const transparentObjectIds = current.transparentObjectIds.filter((id) =>
+        getValidObjectIds(target.snapshot.parameters).has(id),
+      );
       set({
         ...target.snapshot,
         hiddenFeatureIds: current.hiddenFeatureIds.filter((id) =>
           validFeatureIds.has(id),
         ),
+        hiddenPcbBodyIds: current.hiddenPcbBodyIds.filter((id) =>
+          validFeatureIds.has(id),
+        ),
         lockedFeatureIds: current.lockedFeatureIds.filter((id) =>
           validFeatureIds.has(id),
         ),
+        transparentObjectIds,
+        lidTransparent: transparentObjectIds.includes("lid"),
         canUndo: true,
         canRedo: historyFuture.length > 0,
         cachedAt: persisted.updatedAt,
@@ -1317,33 +1438,71 @@ export const useDesignerStore = create<DesignerState>((set, get) => ({
       };
     }),
   setSelectedPart: (selectedPart) =>
-    set((state) => ({
-      selectedPart,
-      selectedFeatureId:
+    set((state) => {
+      const selectedFeatureId =
         selectedPart === "pcb"
-          ? state.parameters.pcbReferences[0]?.id ?? null
+          ? state.parameters.pcbReferences[0]?.id ??
+            (state.parameters.parametricPcbEnabled
+              ? PARAMETRIC_PCB_FEATURE_ID
+              : null)
           : selectedPart === "panel"
-          ? state.parameters.panelPlacements[0]?.id ?? null
-          : selectedPart === "connector"
-            ? state.parameters.connectorPlacements[0]?.id ?? null
-            : selectedPart === "antenna"
-              ? state.parameters.antennaPlacements[0]?.id ?? null
-              : selectedPart === "custom"
-                ? state.parameters.customComponents[0]?.id ?? null
-                : selectedPart === "battery"
-                  ? state.parameters.batteryCompartments[0]?.id ?? null
-            : null,
-      focusedPart:
-        selectedPart === "project" ? null : state.focusedPart ? selectedPart : null,
-    })),
+            ? state.parameters.panelPlacements[0]?.id ?? null
+            : selectedPart === "connector"
+              ? state.parameters.connectorPlacements[0]?.id ?? null
+              : selectedPart === "antenna"
+                ? state.parameters.antennaPlacements[0]?.id ?? null
+                : selectedPart === "custom"
+                  ? state.parameters.customComponents[0]?.id ?? null
+                  : selectedPart === "battery"
+                    ? state.parameters.batteryCompartments[0]?.id ?? null
+                    : null;
+      const selectionChanged =
+        state.selectedPart !== selectedPart ||
+        state.selectedFeatureId !== selectedFeatureId;
+      return {
+        selectedPart,
+        selectedFeatureId,
+        focusedPart:
+          selectedPart === "project" ? null : state.focusedPart ? selectedPart : null,
+        transformEditMode: selectionChanged ? false : state.transformEditMode,
+        transformAxisConstraint: selectionChanged
+          ? "all"
+          : state.transformAxisConstraint,
+      };
+    }),
   setSelectedFeature: (selectedPart, selectedFeatureId) =>
-    set((state) => ({
-      selectedPart,
-      selectedFeatureId,
-      inspectorTab: "structure",
-      focusedPart: state.focusedPart ? selectedPart : null,
-    })),
+    set((state) => {
+      const selectionChanged =
+        state.selectedPart !== selectedPart ||
+        state.selectedFeatureId !== selectedFeatureId;
+      return {
+        selectedPart,
+        selectedFeatureId,
+        inspectorTab: "structure",
+        focusedPart: state.focusedPart ? selectedPart : null,
+        transformEditMode: selectionChanged ? false : state.transformEditMode,
+        transformAxisConstraint: selectionChanged
+          ? "all"
+          : state.transformAxisConstraint,
+      };
+    }),
   setTransformMode: (transformMode) => set({ transformMode }),
+  setTransformEditMode: (transformEditMode) =>
+    set((state) => ({
+      transformEditMode,
+      transformAxisConstraint: transformEditMode
+        ? state.transformAxisConstraint
+        : "all",
+    })),
+  toggleTransformEditMode: () =>
+    set((state) => ({
+      transformEditMode: !state.transformEditMode,
+      transformAxisConstraint: state.transformEditMode
+        ? "all"
+        : state.transformAxisConstraint,
+    })),
+  setTransformAxisConstraint: (transformAxisConstraint) =>
+    set({ transformAxisConstraint }),
   focusSelectedPart: () =>
     set((state) => ({
       focusedPart: state.selectedPart === "project" ? null : state.selectedPart,
@@ -1353,7 +1512,30 @@ export const useDesignerStore = create<DesignerState>((set, get) => ({
   toggleGrid: () => set((state) => ({ showGrid: !state.showGrid })),
   toggleExploded: () => set((state) => ({ exploded: !state.exploded })),
   toggleLidTransparency: () =>
-    set((state) => ({ lidTransparent: !state.lidTransparent })),
+    set((state) => {
+      const nextTransparent = state.transparentObjectIds.includes("lid")
+        ? state.transparentObjectIds.filter((id) => id !== "lid")
+        : [...state.transparentObjectIds, "lid"];
+      return {
+        lidTransparent: nextTransparent.includes("lid"),
+        transparentObjectIds: nextTransparent,
+      };
+    }),
+  toggleObjectTransparency: (id) =>
+    set((state) => {
+      const transparentObjectIds = state.transparentObjectIds.includes(id)
+        ? state.transparentObjectIds.filter((candidate) => candidate !== id)
+        : [...state.transparentObjectIds, id];
+      return {
+        transparentObjectIds,
+        lidTransparent: transparentObjectIds.includes("lid"),
+      };
+    }),
+  showAllOpaque: () =>
+    set({
+      lidTransparent: false,
+      transparentObjectIds: [],
+    }),
   toggleFaceVisibility: (face) =>
     set((state) => ({
       hiddenFaces: state.hiddenFaces.includes(face)
@@ -1362,12 +1544,24 @@ export const useDesignerStore = create<DesignerState>((set, get) => ({
     })),
   showAllFaces: () => set({ hiddenFaces: [] }),
   toggleFeatureVisibility: (id) =>
+    set((state) => {
+      const currentlyHidden = state.hiddenFeatureIds.includes(id);
+      return {
+        hiddenFeatureIds: currentlyHidden
+          ? state.hiddenFeatureIds.filter((candidate) => candidate !== id)
+          : [...state.hiddenFeatureIds, id],
+        hiddenPcbBodyIds: currentlyHidden
+          ? state.hiddenPcbBodyIds.filter((candidate) => candidate !== id)
+          : state.hiddenPcbBodyIds,
+      };
+    }),
+  togglePcbBodyVisibility: (id) =>
     set((state) => ({
-      hiddenFeatureIds: state.hiddenFeatureIds.includes(id)
-        ? state.hiddenFeatureIds.filter((candidate) => candidate !== id)
-        : [...state.hiddenFeatureIds, id],
+      hiddenPcbBodyIds: state.hiddenPcbBodyIds.includes(id)
+        ? state.hiddenPcbBodyIds.filter((candidate) => candidate !== id)
+        : [...state.hiddenPcbBodyIds, id],
     })),
-  showAllFeatures: () => set({ hiddenFeatureIds: [] }),
+  showAllFeatures: () => set({ hiddenFeatureIds: [], hiddenPcbBodyIds: [] }),
   toggleFeatureLock: (id) =>
     set((state) => ({
       lockedFeatureIds: state.lockedFeatureIds.includes(id)
@@ -1393,13 +1587,45 @@ export const useDesignerStore = create<DesignerState>((set, get) => ({
       inspectorTab: "dimensions",
       exploded: false,
       lidTransparent: false,
+      transparentObjectIds: [],
       hiddenFaces: [],
       hiddenFeatureIds: [],
+      hiddenPcbBodyIds: [],
       lockedFeatureIds: [],
       cachedAt: snapshot.updatedAt,
       cacheStatus: "saving",
+      transformEditMode: false,
+      transformAxisConstraint: "all",
     });
   },
+  addParametricPcb: () =>
+    set((state) => {
+      const parameters = constrainParameters({
+        ...state.parameters,
+        parametricPcbEnabled: true,
+      });
+      const primaryReference = parameters.pcbReferences[0]?.reference ?? null;
+      const primaryPreview = getPrimaryPreview(parameters.pcbReferences, cachedPcbPreviews);
+      const snapshot = persistSnapshot(
+        state.projectName,
+        parameters,
+        primaryReference,
+        primaryPreview,
+      );
+      return {
+        parameters,
+        pcbReference: primaryReference,
+        stepPreview: primaryPreview,
+        selectedPart: "pcb",
+        selectedFeatureId:
+          parameters.pcbReferences.length === 0
+            ? PARAMETRIC_PCB_FEATURE_ID
+            : parameters.pcbReferences[0]?.id ?? null,
+        focusedPart: state.focusedPart ? "pcb" : null,
+        cachedAt: snapshot.updatedAt,
+        cacheStatus: "saving",
+      };
+    }),
   setPcbReference: (pcbReference) =>
     set((state) => {
       const firstReference = state.parameters.pcbReferences.length === 0;
@@ -1414,6 +1640,7 @@ export const useDesignerStore = create<DesignerState>((set, get) => ({
       ];
       const parameters = constrainParameters({
         ...state.parameters,
+        parametricPcbEnabled: false,
         pcbReferences,
         ...(firstReference
           ? {
@@ -1462,6 +1689,7 @@ export const useDesignerStore = create<DesignerState>((set, get) => ({
       cachedPcbPreviews = { ...cachedPcbPreviews, [id]: stepPreview };
       const parameters = constrainParameters({
         ...state.parameters,
+        parametricPcbEnabled: false,
         pcbReferences,
         ...(firstReference
           ? {
@@ -1502,26 +1730,85 @@ export const useDesignerStore = create<DesignerState>((set, get) => ({
   updatePcbReferencePlacement: (id, changes) =>
     set((state) => {
       if (state.lockedFeatureIds.includes(id)) return {};
+      if (id === PARAMETRIC_PCB_FEATURE_ID) {
+        if (!state.parameters.parametricPcbEnabled) return {};
+        const railMovementAxis = getPcbRailMovementAxis(state.parameters);
+        const parameters = constrainParameters({
+          ...state.parameters,
+          pcbOffsetX: railMovementAxis !== null && railMovementAxis !== "x"
+            ? state.parameters.pcbOffsetX
+            : clampPcbPlanarOffset(changes.offsetX ?? state.parameters.pcbOffsetX),
+          pcbOffsetZ: railMovementAxis !== null && railMovementAxis !== "z"
+            ? state.parameters.pcbOffsetZ
+            : clampPcbPlanarOffset(changes.offsetZ ?? state.parameters.pcbOffsetZ),
+          pcbElevation: railMovementAxis !== null
+            ? state.parameters.pcbElevation
+            : Math.min(
+                300,
+                Math.max(
+                  -state.parameters.standoffHeight,
+                  changes.elevation ?? state.parameters.pcbElevation,
+                ),
+              ),
+        });
+        const snapshot = persistSnapshot(
+          state.projectName,
+          parameters,
+          parameters.pcbReferences[0]?.reference ?? null,
+          getPrimaryPreview(parameters.pcbReferences, cachedPcbPreviews),
+        );
+        return {
+          parameters,
+          selectedPart: "pcb",
+          selectedFeatureId: id,
+          focusedPart: state.focusedPart ? "pcb" : null,
+          cachedAt: snapshot.updatedAt,
+          cacheStatus: "saving",
+        };
+      }
       const parameters = {
         ...state.parameters,
         pcbReferences: state.parameters.pcbReferences.map((placement) =>
           placement.id === id
-            ? {
-                ...placement,
-                ...changes,
-                offsetX: Math.min(
-                  500,
-                  Math.max(-500, changes.offsetX ?? placement.offsetX),
-                ),
-                offsetZ: Math.min(
-                  500,
-                  Math.max(-500, changes.offsetZ ?? placement.offsetZ),
-                ),
-                elevation: Math.min(
-                  300,
-                  Math.max(0, changes.elevation ?? placement.elevation),
-                ),
-              }
+            ? (() => {
+                const nextRotation = changes.rotation ?? placement.rotation;
+                const railMovementAxis = getPcbRailMovementAxis(
+                  state.parameters,
+                  nextRotation,
+                );
+                const rotationChanged =
+                  changes.rotation !== undefined &&
+                  changes.rotation !== placement.rotation;
+                const hasPlanarOffsetChange =
+                  changes.offsetX !== undefined || changes.offsetZ !== undefined;
+                const rehomeForRailRotation =
+                  railMovementAxis !== null &&
+                  rotationChanged &&
+                  !hasPlanarOffsetChange;
+                return {
+                  ...placement,
+                  ...changes,
+                  offsetX: rehomeForRailRotation
+                    ? 0
+                    : railMovementAxis !== null && railMovementAxis !== "x"
+                    ? placement.offsetX
+                    : clampPcbPlanarOffset(changes.offsetX ?? placement.offsetX),
+                  offsetZ: rehomeForRailRotation
+                    ? 0
+                    : railMovementAxis !== null && railMovementAxis !== "z"
+                    ? placement.offsetZ
+                    : clampPcbPlanarOffset(changes.offsetZ ?? placement.offsetZ),
+                  elevation: railMovementAxis !== null
+                    ? placement.elevation
+                    : Math.min(
+                        300,
+                        Math.max(
+                          -state.parameters.standoffHeight,
+                          changes.elevation ?? placement.elevation,
+                        ),
+                      ),
+                };
+              })()
             : placement,
         ),
       };
@@ -1543,6 +1830,49 @@ export const useDesignerStore = create<DesignerState>((set, get) => ({
   clearPcbReference: (requestedId) =>
     set((state) => {
       const id = requestedId ?? state.parameters.pcbReferences[0]?.id;
+      if (requestedId === PARAMETRIC_PCB_FEATURE_ID) {
+        if (state.lockedFeatureIds.includes(PARAMETRIC_PCB_FEATURE_ID)) return {};
+        const parameters = constrainParameters({
+          ...state.parameters,
+          parametricPcbEnabled: false,
+        });
+        const primaryReference = parameters.pcbReferences[0]?.reference ?? null;
+        const primaryPreview = getPrimaryPreview(parameters.pcbReferences, cachedPcbPreviews);
+        const snapshot = persistSnapshot(
+          state.projectName,
+          parameters,
+          primaryReference,
+          primaryPreview,
+        );
+        const hasPcb = parameters.pcbReferences.length > 0;
+        return {
+          parameters,
+          pcbReference: primaryReference,
+          stepPreview: primaryPreview,
+          selectedPart:
+            state.selectedPart === "pcb" && !hasPcb ? "project" : state.selectedPart,
+          selectedFeatureId:
+            state.selectedFeatureId === PARAMETRIC_PCB_FEATURE_ID
+              ? parameters.pcbReferences[0]?.id ?? null
+              : state.selectedFeatureId,
+          focusedPart:
+            state.focusedPart === "pcb" && !hasPcb ? null : state.focusedPart,
+          hiddenFeatureIds: state.hiddenFeatureIds.filter(
+            (candidate) => candidate !== PARAMETRIC_PCB_FEATURE_ID,
+          ),
+          hiddenPcbBodyIds: state.hiddenPcbBodyIds.filter(
+            (candidate) => candidate !== PARAMETRIC_PCB_FEATURE_ID,
+          ),
+          lockedFeatureIds: state.lockedFeatureIds.filter(
+            (candidate) => candidate !== PARAMETRIC_PCB_FEATURE_ID,
+          ),
+          transparentObjectIds: state.transparentObjectIds.filter(
+            (candidate) => candidate !== PARAMETRIC_PCB_FEATURE_ID,
+          ),
+          cachedAt: snapshot.updatedAt,
+          cacheStatus: "saving",
+        };
+      }
       if (!id) return {};
       if (state.lockedFeatureIds.includes(id)) return {};
       const pcbReferences = state.parameters.pcbReferences.filter(
@@ -1598,10 +1928,15 @@ export const useDesignerStore = create<DesignerState>((set, get) => ({
       customComponentPreviews: {},
       hiddenFaces: [],
       hiddenFeatureIds: [],
+      hiddenPcbBodyIds: [],
       lockedFeatureIds: [],
+      transparentObjectIds: [],
+      lidTransparent: false,
       selectedPart: "project",
       selectedFeatureId: null,
       focusedPart: null,
+      transformEditMode: false,
+      transformAxisConstraint: "all",
       cachedAt: persisted.updatedAt,
       cacheStatus: "saving",
     });
@@ -1641,9 +1976,14 @@ export const useDesignerStore = create<DesignerState>((set, get) => ({
           pcbPreviews: cachedPcbPreviews,
           customComponentPreviews: cachedCustomComponentPreviews,
           hiddenFeatureIds: [],
+          hiddenPcbBodyIds: [],
           lockedFeatureIds: [],
+          transparentObjectIds: [],
+          lidTransparent: false,
           selectedFeatureId: null,
           focusedPart: null,
+          transformEditMode: false,
+          transformAxisConstraint: "all",
           cachedAt: cached.snapshot.updatedAt,
           cacheStatus: "saved",
         };
@@ -1687,11 +2027,20 @@ useDesignerStore.subscribe((state, previous) => {
   }
   historyFuture.length = 0;
   const validFeatureIds = getValidFeatureIds(state.parameters);
+  const validObjectIds = getValidObjectIds(state.parameters);
+  const transparentObjectIds = state.transparentObjectIds.filter((id) =>
+    validObjectIds.has(id),
+  );
   useDesignerStore.setState({
     canUndo: historyPast.length > 0,
     canRedo: false,
     hiddenFeatureIds: state.hiddenFeatureIds.filter((id) => validFeatureIds.has(id)),
+    hiddenPcbBodyIds: state.hiddenPcbBodyIds.filter((id) =>
+      validFeatureIds.has(id),
+    ),
     lockedFeatureIds: state.lockedFeatureIds.filter((id) => validFeatureIds.has(id)),
+    transparentObjectIds,
+    lidTransparent: transparentObjectIds.includes("lid"),
   });
 });
 

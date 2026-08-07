@@ -11,6 +11,7 @@ import {
   PANEL_SCREW_TAB_RADIUS,
 } from "../domain/enclosure";
 import type {
+  BatteryMountFace,
   DesignerParameters,
   EnclosureDimensions,
   EnclosureFace,
@@ -44,6 +45,11 @@ import {
   PANEL_SCREW_HEAD_RECESS_RADIUS,
 } from "../domain/screwRecess";
 import { getBatteryCompartmentLayout } from "../domain/batteries";
+import { getPcbMountingEnvelopes } from "../domain/pcbMounting";
+import {
+  getEffectivePcbRailLayout,
+  getPcbRailDirection,
+} from "../domain/pcbRailDirection";
 import {
   getAntennaDefinition,
   getConnectorDefinition,
@@ -454,6 +460,59 @@ function createTopCutter(
   );
 }
 
+function getSolidFaceSize(
+  face: EnclosureFace,
+  parameters: DesignerParameters,
+  dimensions: EnclosureDimensions,
+): readonly [number, number] {
+  if (face === "top" || face === "bottom") {
+    return [dimensions.outsideLength, dimensions.outsideWidth];
+  }
+  if (face === "front" || face === "back") {
+    return [dimensions.outsideLength, parameters.baseHeight];
+  }
+  return [dimensions.outsideWidth, parameters.baseHeight];
+}
+
+function createLocalLidCutout(
+  module: ManifoldToplevel,
+  u: number,
+  v: number,
+  width: number,
+  height: number,
+  radius: number,
+  depth: number,
+): ManifoldSolid {
+  const safeRadius = Math.min(radius, width / 2, height / 2);
+  const cutter =
+    Math.abs(width - height) < 0.001 && safeRadius >= width / 2 - 0.01
+      ? module.Manifold.cylinder(depth, width / 2, width / 2, 32, false)
+      : extrudePlate(module, width, height, safeRadius, depth);
+  return translateAndDispose(cutter, u, v, -0.2);
+}
+
+function createHorizontalCutout(
+  module: ManifoldToplevel,
+  u: number,
+  v: number,
+  width: number,
+  height: number,
+  radius: number,
+  depth: number,
+  z: number,
+): ManifoldSolid {
+  const cutter = createLocalLidCutout(
+    module,
+    u,
+    v,
+    width,
+    height,
+    radius,
+    depth,
+  );
+  return translateAndDispose(cutter, 0, 0, z + 0.2);
+}
+
 function addBossWithPilotHole(
   module: ManifoldToplevel,
   source: ManifoldSolid,
@@ -859,18 +918,30 @@ function applyBatteryCompartments(
   module: ManifoldToplevel,
   source: ManifoldSolid,
   parameters: DesignerParameters,
+  face: BatteryMountFace,
+  mountZ: number,
 ): ManifoldSolid {
   let result = source;
-  for (const placement of parameters.batteryCompartments) {
+  for (const placement of parameters.batteryCompartments.filter(
+    (compartment) => compartment.face === face,
+  )) {
     const layout = getBatteryCompartmentLayout(placement);
     let tray: ManifoldSolid | null = null;
     const addTrayPart = (part: ManifoldSolid) => {
       tray = tray ? unionAndDispose(tray, part) : part;
     };
+    const dimensions = deriveEnclosureDimensions(parameters);
+    const mountedOnTop = face === "top";
+    const mountedOnBottom = face === "bottom";
+    const mountedOnSide = !mountedOnTop && !mountedOnBottom;
+    const partZ = (height: number) =>
+      mountedOnTop ? mountZ - height : mountedOnBottom ? mountZ - 0.1 : -0.1;
+    const partHeight = (height: number) => height + 0.1;
+    const openSide = placement.insertionSide;
 
     if (layout.preset.shape === "cylinder") {
       const railHeight = layout.railHeight + 0.1;
-      const z = parameters.bottomThickness - 0.1;
+      const z = partZ(railHeight);
       const innerWidth = Math.max(2, placement.width - placement.wallThickness * 2);
       const contactBlockWidth = Math.max(
         placement.wallThickness,
@@ -889,7 +960,7 @@ function applyBatteryCompartments(
       addTrayPart(
         cubeAt(
           module,
-          [placement.width, placement.wallThickness, railHeight],
+          [placement.width, placement.wallThickness, partHeight(layout.railHeight)],
           -placement.width / 2,
           -placement.depth / 2,
           z,
@@ -898,7 +969,7 @@ function applyBatteryCompartments(
       addTrayPart(
         cubeAt(
           module,
-          [placement.width, placement.wallThickness, railHeight],
+          [placement.width, placement.wallThickness, partHeight(layout.railHeight)],
           -placement.width / 2,
           placement.depth / 2 - placement.wallThickness,
           z,
@@ -912,7 +983,7 @@ function applyBatteryCompartments(
         addTrayPart(
           cubeAt(
             module,
-            [innerWidth, placement.wallThickness, railHeight],
+            [innerWidth, placement.wallThickness, partHeight(layout.railHeight)],
             -innerWidth / 2,
             dividerY,
             z,
@@ -921,51 +992,130 @@ function applyBatteryCompartments(
       }
 
       for (const laneCenter of layout.laneCenters) {
-        addTrayPart(
-          cubeAt(
-            module,
-            [contactBlockWidth, contactBlockDepth, railHeight],
-            -placement.width / 2,
-            laneCenter - contactBlockDepth / 2,
-            z,
-          ),
-        );
-        addTrayPart(
-          cubeAt(
-            module,
-            [contactBlockWidth, contactBlockDepth, railHeight],
-            placement.width / 2 - contactBlockWidth,
-            laneCenter - contactBlockDepth / 2,
-            z,
-          ),
-        );
+        for (const side of ["left", "right"] as const) {
+          const isOpen = openSide === side;
+          const height = isOpen
+            ? Math.max(1, layout.railHeight * 0.32)
+            : layout.railHeight;
+          addTrayPart(
+            cubeAt(
+              module,
+              [
+                contactBlockWidth * (isOpen ? 0.55 : 1),
+                contactBlockDepth,
+                partHeight(height),
+              ],
+              side === "left"
+                ? -placement.width / 2
+                : placement.width / 2 - contactBlockWidth * (isOpen ? 0.55 : 1),
+              laneCenter - contactBlockDepth / 2,
+              partZ(height),
+            ),
+          );
+        }
       }
     } else {
       const innerWidth = Math.max(2, placement.width - placement.wallThickness * 2);
       const innerDepth = Math.max(2, placement.depth - placement.wallThickness * 2);
-      tray = extrudeRing(
-        module,
-        placement.width,
-        placement.depth,
-        innerWidth,
-        innerDepth,
-        Math.min(3, placement.width / 4, placement.depth / 4),
-        Math.min(2, innerWidth / 4, innerDepth / 4),
-        placement.height + 0.1,
-        parameters.bottomThickness - 0.1,
+      addTrayPart(
+        cubeAt(
+          module,
+          [placement.width, placement.wallThickness, partHeight(placement.height)],
+          -placement.width / 2,
+          -placement.depth / 2,
+          partZ(placement.height),
+        ),
+      );
+      addTrayPart(
+        cubeAt(
+          module,
+          [placement.width, placement.wallThickness, partHeight(placement.height)],
+          -placement.width / 2,
+          placement.depth / 2 - placement.wallThickness,
+          partZ(placement.height),
+        ),
+      );
+      const closedX =
+        openSide === "right"
+          ? -placement.width / 2
+          : placement.width / 2 - placement.wallThickness;
+      addTrayPart(
+        cubeAt(
+          module,
+          [placement.wallThickness, placement.depth, partHeight(placement.height)],
+          closedX,
+          -placement.depth / 2,
+          partZ(placement.height),
+        ),
+      );
+      const openX =
+        openSide === "right"
+          ? placement.width / 2 - placement.wallThickness * 0.65
+          : -placement.width / 2;
+      const entryGuideHeight = Math.max(1, placement.height * 0.28);
+      addTrayPart(
+        cubeAt(
+          module,
+          [
+            placement.wallThickness * 0.65,
+            placement.depth,
+            partHeight(entryGuideHeight),
+          ],
+          openX,
+          -placement.depth / 2,
+          partZ(entryGuideHeight),
+        ),
       );
       if (placement.cellCount > 1 && placement.preset !== "lipo") {
         const spacing = innerDepth / placement.cellCount;
         for (let index = 1; index < placement.cellCount; index += 1) {
-          const divider = cubeAt(
-            module,
-            [innerWidth, placement.wallThickness, placement.height + 0.1],
-            -innerWidth / 2,
-            -innerDepth / 2 + spacing * index - placement.wallThickness / 2,
-            parameters.bottomThickness - 0.1,
+          addTrayPart(
+            cubeAt(
+              module,
+              [innerWidth, placement.wallThickness, partHeight(placement.height)],
+              -innerWidth / 2,
+              -innerDepth / 2 + spacing * index - placement.wallThickness / 2,
+              partZ(placement.height),
+            ),
           );
-          tray = unionAndDispose(tray, divider);
         }
+      }
+    }
+
+    if (placement.retentionType === "elastic") {
+      const postRadius = Math.max(0.7, placement.wallThickness * 0.45);
+      const hookHeight = Math.max(2.4, placement.wallThickness * 1.9);
+      const hookX =
+        openSide === "right"
+          ? placement.width / 2 - Math.max(placement.wallThickness * 2, 3)
+          : -placement.width / 2 + Math.max(placement.wallThickness * 2, 3);
+      for (const y of [
+        -placement.depth / 2 - postRadius * 1.4,
+        placement.depth / 2 + postRadius * 1.4,
+      ]) {
+        addTrayPart(
+          cylinderAt(module, postRadius, partHeight(hookHeight), hookX, y, partZ(hookHeight), 20),
+        );
+      }
+    } else if (placement.retentionType === "clip") {
+      const clipHeight = Math.max(0.7, placement.wallThickness * 0.55);
+      const clipDepth = Math.max(1.2, placement.wallThickness * 1.1);
+      const clipZ = mountedOnTop
+        ? mountZ - placement.height * 0.7 - clipHeight
+        : mountZ + placement.height * 0.7;
+      for (const y of [
+        -placement.depth / 2 + placement.wallThickness,
+        placement.depth / 2 - placement.wallThickness - clipDepth,
+      ]) {
+        addTrayPart(
+          cubeAt(
+            module,
+            [Math.max(6, placement.width * 0.22), clipDepth, clipHeight],
+            -Math.max(6, placement.width * 0.22) / 2,
+            y,
+            clipZ,
+          ),
+        );
       }
     }
 
@@ -973,9 +1123,249 @@ function applyBatteryCompartments(
     if (placement.rotation !== 0) {
       tray = rotateAndDispose(tray, 0, 0, placement.rotation);
     }
-    tray = translateAndDispose(tray, placement.offsetX, placement.offsetZ, 0);
+    if (mountedOnSide) {
+      if (face === "front") {
+        tray = rotateAndDispose(tray, 90, 0, 0);
+        tray = translateAndDispose(
+          tray,
+          placement.offsetX,
+          dimensions.insideWidth / 2,
+          parameters.baseHeight / 2 + placement.offsetZ,
+        );
+      } else if (face === "back") {
+        tray = rotateAndDispose(tray, -90, 0, 0);
+        tray = translateAndDispose(
+          tray,
+          placement.offsetX,
+          -dimensions.insideWidth / 2,
+          parameters.baseHeight / 2 + placement.offsetZ,
+        );
+      } else if (face === "right") {
+        tray = rotateAndDispose(tray, 0, -90, 0);
+        tray = translateAndDispose(
+          tray,
+          dimensions.insideLength / 2,
+          parameters.baseHeight / 2 + placement.offsetZ,
+          placement.offsetX,
+        );
+      } else if (face === "left") {
+        tray = rotateAndDispose(tray, 0, 90, 0);
+        tray = translateAndDispose(
+          tray,
+          -dimensions.insideLength / 2,
+          parameters.baseHeight / 2 + placement.offsetZ,
+          placement.offsetX,
+        );
+      }
+    } else {
+      tray = translateAndDispose(tray, placement.offsetX, placement.offsetZ, 0);
+    }
     result = unionAndDispose(result, tray);
   }
+  return result;
+}
+
+function applyPcbRailMountingFeatures(
+  module: ManifoldToplevel,
+  source: ManifoldSolid,
+  parameters: DesignerParameters,
+  pcbReference: PcbReference | null,
+): ManifoldSolid {
+  if (parameters.pcbMountingType === "screw") return source;
+
+  let result = source;
+  for (const envelope of getPcbMountingEnvelopes(parameters, pcbReference)) {
+    const layout = getEffectivePcbRailLayout(parameters, envelope);
+    const railDirection = getPcbRailDirection(parameters, envelope.rotation);
+    let rails: ManifoldSolid | null = null;
+    const addRailPart = (part: ManifoldSolid) => {
+      rails = rails ? unionAndDispose(rails, part) : part;
+    };
+    const addCenteredBox = (
+      size: readonly [number, number, number],
+      centerX: number,
+      centerY: number,
+      centerZ: number,
+    ) => {
+      addRailPart(
+        cubeAt(
+          module,
+          size,
+          centerX - size[0] / 2,
+          centerY - size[1] / 2,
+          centerZ - size[2] / 2,
+        ),
+      );
+    };
+
+    const faceReach = Math.max(parameters.boardClearance, parameters.pcbRailWidth);
+    const railLength = layout.railLength + faceReach;
+    const railCenterX =
+      layout.openSideSign * (layout.stopWidth / 2 + faceReach / 2);
+    const lowerLedgeZ = layout.boardBottom - layout.ledgeThickness / 2;
+    const topLipZ =
+      layout.boardTop + parameters.pcbRailClearance + layout.lipThickness / 2;
+    const stopBottomZ = layout.boardBottom - layout.ledgeThickness;
+    const stopTopZ =
+      layout.boardTop + parameters.pcbRailClearance + layout.lipThickness;
+    const stopHeight = stopTopZ - stopBottomZ;
+    const stopCenterZ = (stopTopZ + stopBottomZ) / 2;
+    const closedEdgeX = -layout.openSideSign * (layout.travelLength / 2);
+    const stopLength = layout.stopWidth + faceReach;
+    const stopCenterX =
+      closedEdgeX + layout.openSideSign * (layout.stopWidth / 2 - faceReach / 2);
+
+    for (const sideSign of [-1, 1] as const) {
+      const ledgeDepth = faceReach + layout.ledgeOverlap;
+      const ledgeCenterY =
+        sideSign *
+        (layout.travelWidth / 2 + faceReach / 2 - layout.ledgeOverlap / 2);
+      addCenteredBox(
+        [railLength, ledgeDepth, layout.ledgeThickness],
+        railCenterX,
+        ledgeCenterY,
+        lowerLedgeZ,
+      );
+      const lipDepth = faceReach + layout.lipOverlap;
+      const lipCenterY =
+        sideSign *
+        (layout.travelWidth / 2 + faceReach / 2 - layout.lipOverlap / 2);
+      addCenteredBox(
+        [railLength, lipDepth, layout.lipThickness],
+        railCenterX,
+        lipCenterY,
+        topLipZ,
+      );
+    }
+
+    addCenteredBox(
+      [
+        stopLength,
+        layout.travelWidth + faceReach * 2,
+        stopHeight,
+      ],
+      stopCenterX,
+      0,
+      stopCenterZ,
+    );
+
+    if (parameters.pcbMountingType === "rail-elastic") {
+      const anchorRadius = Math.max(0.9, parameters.pcbRailWidth * 0.3);
+      const anchorHeight = Math.max(2.8, parameters.pcbElasticBandWidth + 1);
+      const anchorX =
+        closedEdgeX +
+        layout.openSideSign *
+          Math.max(parameters.pcbStopWidth * 0.65, anchorRadius + 1.6);
+      const laneOffset = Math.max(
+        parameters.pcbElasticBandWidth * 1.8,
+        Math.min(layout.travelWidth * 0.28, layout.travelWidth / 2 - 8),
+      );
+      const laneYs =
+        laneOffset > 0
+          ? [-laneOffset, laneOffset]
+          : [-layout.travelWidth * 0.2, layout.travelWidth * 0.2];
+      for (const laneY of laneYs) {
+        addRailPart(
+          cylinderAt(
+            module,
+            anchorRadius,
+            anchorHeight,
+            anchorX,
+            laneY,
+            layout.boardTop - 0.1,
+            20,
+          ),
+        );
+      }
+    }
+
+    if (!rails) continue;
+    const axisRotation = railDirection.axis === "z" ? 90 : 0;
+    if (axisRotation !== 0 || envelope.rotation !== 0) {
+      rails = rotateAndDispose(rails, 0, 0, axisRotation + envelope.rotation);
+    }
+    rails = translateAndDispose(rails, envelope.offsetX, envelope.offsetZ, 0);
+    result = unionAndDispose(result, rails);
+  }
+
+  return result;
+}
+
+function applyFixedTopFaceFeatures(
+  module: ManifoldToplevel,
+  source: ManifoldSolid,
+  parameters: DesignerParameters,
+): ManifoldSolid {
+  let result = source;
+  const cutDepth = parameters.lidThickness + 0.4;
+  const cutZ = parameters.baseHeight - 0.2;
+
+  for (const panel of parameters.panelPlacements.filter(
+    (placement) => placement.face === "top",
+  )) {
+    const inset = panel.insetDepth > 0;
+    const [openingWidth, openingHeight] = getPanelOpeningSize(panel);
+    result = subtractAndDispose(
+      result,
+      createHorizontalCutout(
+        module,
+        panel.offsetU,
+        panel.offsetV,
+        inset ? panel.width + 0.3 : openingWidth,
+        inset ? panel.height + 0.3 : openingHeight,
+        inset ? panel.cornerRadius + 0.15 : getPanelInnerCornerRadius(panel),
+        cutDepth,
+        cutZ,
+      ),
+    );
+  }
+
+  for (const placement of parameters.connectorPlacements) {
+    if (placement.surface === "panel") continue;
+    if (resolveConnectorFace(placement, parameters) !== "top") continue;
+    const connector = getConnectorDefinition(placement.definitionId);
+    const [width, height] = getRotatedCutoutSize(placement);
+    result = subtractAndDispose(
+      result,
+      createHorizontalCutout(
+        module,
+        placement.offsetU,
+        placement.offsetV,
+        width,
+        height,
+        connector.panelCutout.shape === "circle"
+          ? width / 2
+          : connector.panelCutout.cornerRadius,
+        cutDepth,
+        cutZ,
+      ),
+    );
+  }
+
+  for (const placement of parameters.antennaPlacements) {
+    const antenna = getAntennaDefinition(placement.definitionId);
+    if (
+      !antenna.enclosureCutout ||
+      placement.surface === "panel" ||
+      resolveAntennaFace(placement, parameters) !== "top"
+    ) {
+      continue;
+    }
+    result = subtractAndDispose(
+      result,
+      createHorizontalCutout(
+        module,
+        placement.offsetU,
+        placement.offsetV,
+        placement.cutoutDiameter,
+        placement.cutoutDiameter,
+        placement.cutoutDiameter / 2,
+        cutDepth,
+        cutZ,
+      ),
+    );
+  }
+
   return result;
 }
 
@@ -988,7 +1378,7 @@ function buildBase(
   const fastener = getFastenerDefinition(parameters.closureFastenerId);
   const wallHeight = parameters.baseHeight - parameters.bottomThickness;
   if (wallHeight <= 0.5) {
-    throw new Error("下壳高度必须大于底板厚度");
+    throw new Error("主体高度必须大于底面厚度");
   }
   const innerRadius = Math.max(0.5, parameters.cornerRadius - parameters.wallThickness);
   let base = extrudePlate(
@@ -1010,8 +1400,76 @@ function buildBase(
     parameters.bottomThickness,
   );
   base = unionAndDispose(base, wall);
+  if (parameters.lidFace !== "top") {
+    base = unionAndDispose(
+      base,
+      extrudePlate(
+        module,
+        dimensions.outsideLength,
+        dimensions.outsideWidth,
+        parameters.cornerRadius,
+        parameters.lidThickness,
+        parameters.baseHeight,
+      ),
+    );
+    base = applyFixedTopFaceFeatures(module, base, parameters);
+  }
+  if (parameters.lidFace === "bottom") {
+    base = subtractAndDispose(
+      base,
+      createFaceCutter(
+        module,
+        "bottom",
+        0,
+        0,
+        dimensions.insideLength,
+        dimensions.insideWidth,
+        innerRadius,
+        parameters,
+        dimensions,
+      ),
+    );
+  } else if (
+    parameters.lidFace === "front" ||
+    parameters.lidFace === "back" ||
+    parameters.lidFace === "left" ||
+    parameters.lidFace === "right"
+  ) {
+    const openingWidth =
+      parameters.lidFace === "left" || parameters.lidFace === "right"
+        ? dimensions.insideWidth
+        : dimensions.insideLength;
+    const openingHeight = Math.max(
+      2,
+      parameters.baseHeight - parameters.bottomThickness - parameters.wallThickness,
+    );
+    base = subtractAndDispose(
+      base,
+      createFaceCutter(
+        module,
+        parameters.lidFace,
+        0,
+        parameters.bottomThickness / 2,
+        openingWidth,
+        openingHeight,
+        Math.min(innerRadius, openingWidth / 2, openingHeight / 2),
+        parameters,
+        dimensions,
+      ),
+    );
+  }
   base = applyVentPattern(module, base, parameters);
-  base = applyBatteryCompartments(module, base, parameters);
+  base = applyBatteryCompartments(
+    module,
+    base,
+    parameters,
+    "bottom",
+    parameters.bottomThickness,
+  );
+  for (const face of ["front", "back", "left", "right"] as const) {
+    base = applyBatteryCompartments(module, base, parameters, face, 0);
+  }
+  base = applyPcbRailMountingFeatures(module, base, parameters, pcbReference);
 
   if (parameters.enclosureTemplateId === "wall-mount") {
     for (const x of [
@@ -1106,15 +1564,20 @@ function buildBase(
     }
   }
 
-  if (parameters.standoffHeight > 0.5) {
+  if (
+    parameters.standoffHeight > 0.5 &&
+    parameters.pcbMountingType !== "rail-elastic"
+  ) {
     for (const hole of getAssemblyMountingHoles(parameters, pcbReference)) {
+      const bossHeight = parameters.standoffHeight + (hole.elevation ?? 0);
+      if (bossHeight <= 0.5) continue;
       base = addBossWithPilotHole(
         module,
         base,
         hole.x,
         hole.y,
         parameters.bottomThickness,
-        parameters.standoffHeight + (hole.elevation ?? 0),
+        bossHeight,
         Math.max(3.2, hole.diameter / 2 + 1.4),
         Math.max(0.8, hole.diameter / 2 - 0.25),
       );
@@ -1186,7 +1649,7 @@ function buildBase(
   for (const placement of parameters.connectorPlacements) {
     if (placement.surface === "panel") continue;
     const face = resolveConnectorFace(placement, parameters);
-    if (face === "top") continue;
+    if (face === "top" || face === parameters.lidFace) continue;
     const connector = getConnectorDefinition(placement.definitionId);
     const [width, height] = getRotatedCutoutSize(placement);
     base = subtractAndDispose(
@@ -1211,7 +1674,7 @@ function buildBase(
     const antenna = getAntennaDefinition(placement.definitionId);
     if (!antenna.enclosureCutout || placement.surface === "panel") continue;
     const face = resolveAntennaFace(placement, parameters);
-    if (face === "top") continue;
+    if (face === "top" || face === parameters.lidFace) continue;
     base = subtractAndDispose(
       base,
       createFaceCutter(
@@ -1231,10 +1694,123 @@ function buildBase(
   return base;
 }
 
+function buildFlatLidFace(
+  module: ManifoldToplevel,
+  parameters: DesignerParameters,
+): ManifoldSolid {
+  const dimensions = deriveEnclosureDimensions(parameters);
+  const face = parameters.lidFace;
+  const [faceWidth, faceHeight] = getSolidFaceSize(face, parameters, dimensions);
+  const cornerRadius =
+    face === "top" || face === "bottom"
+      ? parameters.cornerRadius
+      : Math.min(parameters.cornerRadius, faceHeight / 2 - 0.1);
+  let lid = extrudePlate(
+    module,
+    faceWidth,
+    faceHeight,
+    cornerRadius,
+    parameters.lidThickness,
+  );
+  const cutDepth = parameters.lidThickness + 0.4;
+
+  for (const placement of parameters.connectorPlacements) {
+    if (placement.surface === "panel") continue;
+    if (resolveConnectorFace(placement, parameters) !== face) continue;
+    const connector = getConnectorDefinition(placement.definitionId);
+    const [width, height] = getRotatedCutoutSize(placement);
+    lid = subtractAndDispose(
+      lid,
+      createLocalLidCutout(
+        module,
+        placement.offsetU,
+        placement.offsetV,
+        width,
+        height,
+        connector.panelCutout.shape === "circle"
+          ? width / 2
+          : connector.panelCutout.cornerRadius,
+        cutDepth,
+      ),
+    );
+  }
+
+  for (const placement of parameters.antennaPlacements) {
+    const antenna = getAntennaDefinition(placement.definitionId);
+    if (!antenna.enclosureCutout || placement.surface === "panel") continue;
+    if (resolveAntennaFace(placement, parameters) !== face) continue;
+    lid = subtractAndDispose(
+      lid,
+      createLocalLidCutout(
+        module,
+        placement.offsetU,
+        placement.offsetV,
+        placement.cutoutDiameter,
+        placement.cutoutDiameter,
+        placement.cutoutDiameter / 2,
+        cutDepth,
+      ),
+    );
+  }
+
+  const fastener = getFastenerDefinition(parameters.closureFastenerId);
+  const points = getClosurePoints(faceWidth, faceHeight, parameters.wallThickness);
+  if (parameters.closureType === "screw") {
+    const headRecessDepth = getClosureScrewHeadRecessDepth(parameters);
+    for (const [u, v] of points) {
+      lid = subtractAndDispose(
+        lid,
+        createLocalLidCutout(
+          module,
+          u,
+          v,
+          fastener.clearanceDiameter,
+          fastener.clearanceDiameter,
+          fastener.clearanceDiameter / 2,
+          cutDepth,
+        ),
+      );
+      if (headRecessDepth > 0) {
+        lid = subtractAndDispose(
+          lid,
+          createLocalLidCutout(
+            module,
+            u,
+            v,
+            getClosureScrewHeadRecessRadius(fastener.clearanceDiameter) * 2,
+            getClosureScrewHeadRecessRadius(fastener.clearanceDiameter) * 2,
+            getClosureScrewHeadRecessRadius(fastener.clearanceDiameter),
+            headRecessDepth + 0.1,
+          ),
+        );
+      }
+    }
+  } else if (parameters.closureType === "magnet") {
+    for (const [u, v] of points) {
+      lid = subtractAndDispose(
+        lid,
+        createLocalLidCutout(
+          module,
+          u,
+          v,
+          MAGNET_GEOMETRY.pocketRadius * 2,
+          MAGNET_GEOMETRY.pocketRadius * 2,
+          MAGNET_GEOMETRY.pocketRadius,
+          MAGNET_GEOMETRY.lidPocketDepth,
+        ),
+      );
+    }
+  }
+
+  return lid;
+}
+
 function buildLid(
   module: ManifoldToplevel,
   parameters: DesignerParameters,
 ): ManifoldSolid {
+  if (parameters.lidFace !== "top") return buildFlatLidFace(module, parameters);
+
   const dimensions = deriveEnclosureDimensions(parameters);
   const fastener = getFastenerDefinition(parameters.closureFastenerId);
   const innerRadius = Math.max(0.5, parameters.cornerRadius - parameters.wallThickness);
@@ -1313,6 +1889,7 @@ function buildLid(
     );
   }
   lid = unionAndDispose(lid, plate);
+  lid = applyBatteryCompartments(module, lid, parameters, "top", lipHeight);
 
   for (const panel of topPanels) {
     if (panel.insetDepth <= 0) continue;

@@ -218,8 +218,77 @@ select:focus-visible {
   display: grid;
   min-width: 0;
   min-height: 0;
-  grid-template-columns: 224px minmax(320px, 1fr) 320px;
+  grid-template-columns:
+    var(--assembly-pane-width, 224px)
+    8px
+    minmax(320px, 1fr)
+    8px
+    var(--inspector-pane-width, 320px);
   overflow: hidden;
+}
+
+.pane-resizer {
+  position: relative;
+  z-index: 6;
+  display: block;
+  width: 8px;
+  min-width: 0;
+  height: 100%;
+  padding: 0;
+  background: var(--bg);
+  border: 0;
+  border-radius: 0;
+  cursor: col-resize;
+  touch-action: none;
+}
+
+.pane-resizer::before {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 3px;
+  width: 1px;
+  background: var(--border);
+  content: "";
+}
+
+.pane-resizer::after {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 3px;
+  height: 32px;
+  background: #aeb8b0;
+  border-radius: 999px;
+  content: "";
+  opacity: 0;
+  transform: translate(-50%, -50%);
+  transition:
+    opacity 120ms ease,
+    background 120ms ease;
+}
+
+.pane-resizer:hover::after,
+.pane-resizer:focus-visible::after,
+.pane-resizer.is-active::after {
+  opacity: 1;
+}
+
+.pane-resizer:hover,
+.pane-resizer:focus-visible,
+.pane-resizer.is-active {
+  background: #e5ebe7;
+  outline: 0;
+}
+
+.pane-resizer.is-active::after {
+  background: var(--accent);
+}
+
+.workbench.is-pane-resizing,
+.workbench.is-pane-resizing * {
+  cursor: col-resize !important;
+  user-select: none;
 }
 
 .mobile-assembly-button,
@@ -836,6 +905,11 @@ select:focus-visible {
   transform: translateX(12px);
 }
 
+.tree-transparency-controls {
+  padding: 2px 0;
+  border-top: 1px solid var(--border);
+}
+
 .tree-face-visibility {
   min-width: 0;
   margin: 0;
@@ -963,6 +1037,41 @@ select:focus-visible {
   border-color: var(--accent);
 }
 
+.tree-empty-state {
+  display: grid;
+  margin: 5px 10px 8px 32px;
+  padding: 9px;
+  grid-template-columns: 18px minmax(0, 1fr);
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+  background: var(--surface-muted);
+  border: 1px dashed var(--border-strong);
+  border-radius: 5px;
+  font-size: 10px;
+}
+
+.tree-empty-state > span {
+  min-width: 0;
+}
+
+.tree-empty-state button {
+  grid-column: 1 / -1;
+  height: 26px;
+  color: var(--accent-strong);
+  background: var(--surface);
+  border: 1px solid #b7d0bf;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 10px;
+}
+
+.tree-empty-state button:hover {
+  color: #ffffff;
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
 .icon-section-button {
   color: var(--muted);
   background: transparent;
@@ -976,6 +1085,12 @@ select:focus-visible {
 }
 
 .icon-section-button.is-visibility:hover {
+  color: #ffffff;
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.icon-section-button.is-transparency:hover {
   color: #ffffff;
   background: var(--accent);
   border-color: var(--accent);
@@ -1061,6 +1176,16 @@ select:focus-visible {
 
 .tree-item.is-feature-locked .tree-icon {
   color: var(--warning);
+}
+
+.tree-item.is-object-transparent .tree-icon {
+  color: var(--accent-strong);
+  opacity: 0.72;
+}
+
+.tree-item.is-pcb-body-hidden .tree-icon {
+  color: #7c8580;
+  opacity: 0.68;
 }
 
 .tree-item-state {
@@ -1199,6 +1324,52 @@ select:focus-visible {
 .viewport-focus-state button:hover {
   color: var(--ink);
   background: var(--surface-muted);
+}
+
+.viewport-edit-state {
+  position: absolute;
+  z-index: 7;
+  top: 52px;
+  left: 50%;
+  display: flex;
+  min-height: 31px;
+  padding: 0 9px;
+  align-items: center;
+  gap: 7px;
+  color: var(--muted);
+  background: rgba(250, 251, 249, 0.94);
+  border: 1px solid rgba(188, 196, 189, 0.88);
+  border-radius: 5px;
+  box-shadow: 0 5px 16px rgba(34, 44, 38, 0.12);
+  transform: translateX(-50%);
+  font-size: 10px;
+  font-weight: 650;
+  white-space: nowrap;
+}
+
+.viewport-edit-state.is-editing {
+  color: var(--accent-strong);
+  border-color: #b8cfbf;
+}
+
+.viewport-edit-shortcuts {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--subtle);
+  font-weight: 600;
+}
+
+.viewport-edit-shortcuts kbd {
+  min-width: 18px;
+  padding: 1px 4px;
+  color: var(--ink);
+  background: var(--surface-muted);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  font-family: inherit;
+  font-size: 9px;
+  text-align: center;
 }
 
 .viewport-canvas,
@@ -1610,6 +1781,81 @@ select:focus-visible {
   line-height: 1.55;
 }
 
+.display-spec-card {
+  display: grid;
+  margin-top: 10px;
+  padding: 9px;
+  gap: 8px;
+  color: #42504a;
+  background: linear-gradient(180deg, #f7fbf8 0%, #f0f6f2 100%);
+  border: 1px solid #c8dccf;
+  border-radius: 7px;
+}
+
+.display-spec-card-heading {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.display-spec-card-heading strong {
+  min-width: max-content;
+  color: #244e38;
+  font-size: 11px;
+  font-weight: 750;
+}
+
+.display-spec-card-heading span {
+  min-width: 0;
+  overflow: hidden;
+  color: #61716a;
+  font-size: 9px;
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.display-spec-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.display-spec-grid > span {
+  display: grid;
+  min-width: 0;
+  padding: 6px;
+  gap: 2px;
+  background: rgba(255, 255, 255, 0.7);
+  border: 1px solid rgba(145, 185, 160, 0.34);
+  border-radius: 5px;
+}
+
+.display-spec-grid small {
+  color: #728078;
+  font-size: 8px;
+}
+
+.display-spec-grid strong {
+  overflow: hidden;
+  color: #303b35;
+  font-size: 9px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.display-spec-card p {
+  margin: 0;
+  overflow-wrap: anywhere;
+  color: #68756e;
+  font-size: 9px;
+  line-height: 1.45;
+}
+
 .reference-summary {
   display: grid;
   min-height: 46px;
@@ -1915,7 +2161,12 @@ select:focus-visible {
 
 @media (max-width: 1100px) {
   .workbench {
-    grid-template-columns: 190px minmax(300px, 1fr) 292px;
+    grid-template-columns:
+      var(--assembly-pane-width, 190px)
+      8px
+      minmax(300px, 1fr)
+      8px
+      var(--inspector-pane-width, 292px);
   }
 
   .brand-block {
@@ -1930,6 +2181,10 @@ select:focus-visible {
 @media (max-width: 850px) {
   .workbench {
     grid-template-columns: minmax(300px, 1fr) 292px;
+  }
+
+  .pane-resizer {
+    display: none;
   }
 
   .assembly-panel {

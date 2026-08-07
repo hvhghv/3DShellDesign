@@ -11,6 +11,7 @@ import type {
   BatteryCompartmentPlacement,
   CustomComponentPlacement,
   DesignerParameters,
+  DisplayMountingType,
   EnclosureDimensions,
   EnclosureFace,
   PcbReference,
@@ -19,6 +20,15 @@ import type {
 } from "../domain/model";
 import { getPreviewSize } from "../domain/customComponents";
 import { getBatteryCompartmentLayout } from "../domain/batteries";
+import {
+  getPcbMountingEnvelopes,
+  PARAMETRIC_PCB_FEATURE_ID,
+  type PcbMountingEnvelope,
+} from "../domain/pcbMounting";
+import {
+  getEffectivePcbRailLayout,
+  getPcbRailDirection,
+} from "../domain/pcbRailDirection";
 import {
   getPanelPlacement,
   getPanelInnerCornerRadius,
@@ -45,6 +55,7 @@ import {
   getPanelScrewHeadRecessDepth,
 } from "../domain/screwRecess";
 import {
+  type ConnectorDefinition,
   getAntennaDefinition,
   getConnectorDefinition,
   getFastenerDefinition,
@@ -106,6 +117,22 @@ function createExtrudedGeometry(shape: THREE.Shape, height: number): THREE.Extru
   });
   geometry.center();
   geometry.rotateX(-Math.PI / 2);
+  geometry.computeVertexNormals();
+  return geometry;
+}
+
+function createFaceExtrudedGeometry(
+  shape: THREE.Shape,
+  thickness: number,
+  face: EnclosureFace,
+): THREE.ExtrudeGeometry {
+  const geometry = new THREE.ExtrudeGeometry(shape, {
+    depth: thickness,
+    bevelEnabled: false,
+    curveSegments: 12,
+  });
+  geometry.center();
+  orientGeometryToFace(geometry, face);
   geometry.computeVertexNormals();
   return geometry;
 }
@@ -220,21 +247,54 @@ function getPreviewFacePosition(
   parameters: DesignerParameters,
   dimensions: EnclosureDimensions,
   lidY: number,
+  followRemovableFace = false,
 ): [number, number, number] {
+  const lidFace = parameters.lidFace;
+  const lidExplodedOffset =
+    followRemovableFace && face === lidFace && face !== "top"
+      ? Math.max(0, lidY - parameters.baseHeight)
+      : 0;
+  const offset = normalOffset + lidExplodedOffset;
   if (face === "top") {
-    return [u, lidY + parameters.lidThickness + normalOffset, v];
+    const surfaceY =
+      lidFace === "top"
+        ? lidY + parameters.lidThickness
+        : parameters.baseHeight + parameters.lidThickness;
+    return [u, surfaceY + normalOffset, v];
   }
-  if (face === "bottom") return [u, -normalOffset, v];
+  if (face === "bottom") return [u, -offset, v];
   if (face === "front") {
-    return [u, parameters.baseHeight / 2 + v, dimensions.outsideWidth / 2 + normalOffset];
+    return [u, parameters.baseHeight / 2 + v, dimensions.outsideWidth / 2 + offset];
   }
   if (face === "back") {
-    return [u, parameters.baseHeight / 2 + v, -dimensions.outsideWidth / 2 - normalOffset];
+    return [u, parameters.baseHeight / 2 + v, -dimensions.outsideWidth / 2 - offset];
   }
   if (face === "right") {
-    return [dimensions.outsideLength / 2 + normalOffset, parameters.baseHeight / 2 + v, u];
+    return [dimensions.outsideLength / 2 + offset, parameters.baseHeight / 2 + v, u];
   }
-  return [-dimensions.outsideLength / 2 - normalOffset, parameters.baseHeight / 2 + v, u];
+  return [-dimensions.outsideLength / 2 - offset, parameters.baseHeight / 2 + v, u];
+}
+
+function isSideFace(face: EnclosureFace): boolean {
+  return face === "front" || face === "back" || face === "left" || face === "right";
+}
+
+function getPreviewFaceSize(
+  face: EnclosureFace,
+  parameters: DesignerParameters,
+  dimensions: EnclosureDimensions,
+): readonly [number, number] {
+  if (face === "top" || face === "bottom") {
+    return [dimensions.outsideLength, dimensions.outsideWidth];
+  }
+  if (face === "front" || face === "back") {
+    return [dimensions.outsideLength, parameters.baseHeight];
+  }
+  return [dimensions.outsideWidth, parameters.baseHeight];
+}
+
+function getFaceHoleV(face: EnclosureFace, offsetV: number): number {
+  return face === "top" || face === "bottom" ? -offsetV : offsetV;
 }
 
 function relativePosition(
@@ -400,6 +460,68 @@ function addCylinder(
   );
 }
 
+function makeMaterialTransparent(material: THREE.Material): THREE.Material {
+  const transparentMaterial = material.clone();
+  transparentMaterial.transparent = true;
+  transparentMaterial.opacity = Math.min(0.24, transparentMaterial.opacity || 1);
+  transparentMaterial.depthWrite = false;
+  transparentMaterial.depthTest = true;
+  transparentMaterial.premultipliedAlpha = true;
+  transparentMaterial.needsUpdate = true;
+  if ("forceSinglePass" in transparentMaterial) {
+    transparentMaterial.forceSinglePass = true;
+  }
+  return transparentMaterial;
+}
+
+function applyObjectTransparency(
+  root: THREE.Object3D,
+  transparentObjectIds: readonly string[],
+): void {
+  if (transparentObjectIds.length === 0) return;
+  const transparentObjects = new Set(transparentObjectIds);
+
+  const visit = (object: THREE.Object3D, inheritedTransparent: boolean) => {
+    const partId =
+      typeof object.userData.partId === "string"
+        ? object.userData.partId
+        : null;
+    const featureId =
+      typeof object.userData.featureId === "string"
+        ? object.userData.featureId
+        : null;
+    const transparent =
+      inheritedTransparent ||
+      Boolean(partId && transparentObjects.has(partId)) ||
+      Boolean(featureId && transparentObjects.has(featureId));
+
+    if (
+      transparent &&
+      (object instanceof THREE.Mesh || object instanceof THREE.LineSegments)
+    ) {
+      const sourceMaterials = Array.isArray(object.material)
+        ? object.material
+        : [object.material];
+      object.userData.detachedMaterials = [
+        ...(object.userData.detachedMaterials ?? []),
+        ...sourceMaterials,
+      ];
+      object.material = Array.isArray(object.material)
+        ? object.material.map(makeMaterialTransparent)
+        : makeMaterialTransparent(object.material);
+      if (object instanceof THREE.Mesh) {
+        object.castShadow = false;
+        object.receiveShadow = false;
+      }
+      object.renderOrder = Math.max(object.renderOrder, 4);
+    }
+
+    for (const child of object.children) visit(child, transparent);
+  };
+
+  visit(root, false);
+}
+
 function addCustomComponentPreview(
   root: THREE.Group,
   component: CustomComponentPlacement,
@@ -474,24 +596,104 @@ function addCustomComponentPreview(
   }
 }
 
+function getInteriorFaceMountTransform(
+  face: EnclosureFace,
+  offsetU: number,
+  offsetV: number,
+  depth: number,
+  parameters: DesignerParameters,
+  dimensions: EnclosureDimensions,
+  lidY: number,
+): {
+  position: [number, number, number];
+  rotation: [number, number, number];
+} {
+  if (face === "top") {
+    const topSurfaceY =
+      parameters.lidFace === "top"
+        ? lidY
+        : parameters.baseHeight + parameters.lidThickness;
+    return {
+      position: [offsetU, topSurfaceY - depth / 2, offsetV],
+      rotation: [Math.PI, 0, 0],
+    };
+  }
+  if (face === "bottom") {
+    return {
+      position: [offsetU, parameters.bottomThickness + depth / 2, offsetV],
+      rotation: [0, 0, 0],
+    };
+  }
+  if (face === "front") {
+    return {
+      position: [
+        offsetU,
+        parameters.baseHeight / 2 + offsetV,
+        dimensions.insideWidth / 2 - depth / 2,
+      ],
+      rotation: [-Math.PI / 2, 0, 0],
+    };
+  }
+  if (face === "back") {
+    return {
+      position: [
+        offsetU,
+        parameters.baseHeight / 2 + offsetV,
+        -dimensions.insideWidth / 2 + depth / 2,
+      ],
+      rotation: [Math.PI / 2, 0, 0],
+    };
+  }
+  if (face === "right") {
+    return {
+      position: [
+        dimensions.insideLength / 2 - depth / 2,
+        parameters.baseHeight / 2 + offsetV,
+        offsetU,
+      ],
+      rotation: [0, 0, Math.PI / 2],
+    };
+  }
+  return {
+    position: [
+      -dimensions.insideLength / 2 + depth / 2,
+      parameters.baseHeight / 2 + offsetV,
+      offsetU,
+    ],
+    rotation: [0, 0, -Math.PI / 2],
+  };
+}
+
 function addBatteryCompartmentPreview(
   root: THREE.Group,
   placement: BatteryCompartmentPlacement,
   parameters: DesignerParameters,
+  lidY: number,
   selected: boolean,
 ): void {
+  const dimensions = deriveEnclosureDimensions(parameters);
+  const transform = getInteriorFaceMountTransform(
+    placement.face,
+    placement.offsetX,
+    placement.offsetZ,
+    placement.height,
+    parameters,
+    dimensions,
+    lidY,
+  );
+  const partCenterY = (height: number, clearance = 0) =>
+    -placement.height / 2 + height / 2 + clearance;
+  const openSide = placement.insertionSide;
   const group = new THREE.Group();
   group.name = `battery-transform-${placement.id}`;
-  group.position.set(
-    placement.offsetX,
-    parameters.bottomThickness + placement.height / 2,
-    placement.offsetZ,
-  );
-  group.rotation.y = THREE.MathUtils.degToRad(placement.rotation);
+  group.position.set(...transform.position);
+  group.rotation.set(...transform.rotation);
+  group.rotateY(THREE.MathUtils.degToRad(placement.rotation));
   group.userData = {
     partId: "battery",
     featureId: placement.id,
     featureKind: "battery",
+    face: placement.face,
   };
   root.add(group);
 
@@ -502,12 +704,20 @@ function addBatteryCompartmentPreview(
     metalness: 0.38,
     roughness: 0.34,
   });
+  const retentionMaterial = standardMaterial(
+    placement.retentionType === "elastic" ? 0x171a18 : 0x33463e,
+    selected,
+    {
+      roughness: placement.retentionType === "elastic" ? 0.72 : 0.54,
+      metalness: 0.02,
+    },
+  );
   const layout = getBatteryCompartmentLayout(placement);
   const preset = layout.preset;
 
   if (preset.shape === "cylinder") {
     const railHeight = layout.railHeight;
-    const railY = railHeight / 2 - placement.height / 2;
+    const railY = partCenterY(railHeight);
     const sideRailLength = placement.width;
     const innerLength = Math.max(2, placement.width - placement.wallThickness * 2);
     const contactBlockWidth = Math.max(placement.wallThickness, layout.terminalAllowance);
@@ -548,18 +758,38 @@ function addBatteryCompartmentPreview(
     }
 
     layout.laneCenters.forEach((z, index) => {
-      for (const [side, x] of [
-        ["negative", -placement.width / 2 + contactBlockWidth / 2],
-        ["positive", placement.width / 2 - contactBlockWidth / 2],
+      for (const { side, x, entrySide } of [
+        {
+          side: "negative",
+          x: -placement.width / 2 + contactBlockWidth / 2,
+          entrySide: "left",
+        },
+        {
+          side: "positive",
+          x: placement.width / 2 - contactBlockWidth / 2,
+          entrySide: "right",
+        },
       ] as const) {
-        const endStop = addMesh(
-          group,
-          new THREE.BoxGeometry(contactBlockWidth, railHeight, contactBlockDepth),
-          trayMaterial,
-          "battery",
-          [x, railY, z],
-        );
-        endStop.name = `${placement.id}-end-stop-${index + 1}-${side}`;
+        if (openSide === entrySide) {
+          const guideHeight = Math.max(1, railHeight * 0.32);
+          const entryGuide = addMesh(
+            group,
+            new THREE.BoxGeometry(contactBlockWidth * 0.55, guideHeight, contactBlockDepth),
+            trayMaterial,
+            "battery",
+            [x, partCenterY(guideHeight), z],
+          );
+          entryGuide.name = `${placement.id}-entry-guide-${index + 1}-${side}`;
+        } else {
+          const endStop = addMesh(
+            group,
+            new THREE.BoxGeometry(contactBlockWidth, railHeight, contactBlockDepth),
+            trayMaterial,
+            "battery",
+            [x, railY, z],
+          );
+          endStop.name = `${placement.id}-end-stop-${index + 1}-${side}`;
+        }
 
         const contact = addMesh(
           group,
@@ -583,22 +813,101 @@ function addBatteryCompartmentPreview(
       }
     });
   } else {
-    const tray = addMesh(
+    const railY = partCenterY(placement.height);
+    const sideRailLength = placement.width;
+    for (const [name, z] of [
+      ["left", -placement.depth / 2 + placement.wallThickness / 2],
+      ["right", placement.depth / 2 - placement.wallThickness / 2],
+    ] as const) {
+      const rail = addMesh(
+        group,
+        new THREE.BoxGeometry(sideRailLength, placement.height, placement.wallThickness),
+        trayMaterial,
+        "battery",
+        [0, railY, z],
+      );
+      rail.name = `${placement.id}-side-rail-${name}`;
+    }
+    const closedX =
+      openSide === "right"
+        ? -placement.width / 2 + placement.wallThickness / 2
+        : placement.width / 2 - placement.wallThickness / 2;
+    const openX =
+      openSide === "right"
+        ? placement.width / 2 - placement.wallThickness / 2
+        : -placement.width / 2 + placement.wallThickness / 2;
+    const endStop = addMesh(
       group,
-      createRingGeometry(
-        placement.width,
-        placement.depth,
-        Math.max(2, placement.width - placement.wallThickness * 2),
-        Math.max(2, placement.depth - placement.wallThickness * 2),
-        placement.height,
-        Math.min(3, placement.width / 4, placement.depth / 4),
-        Math.min(2, placement.width / 4, placement.depth / 4),
-      ),
+      new THREE.BoxGeometry(placement.wallThickness, placement.height, placement.depth),
       trayMaterial,
       "battery",
-      [0, 0, 0],
+      [closedX, railY, 0],
     );
-    tray.name = `${placement.id}-tray-frame`;
+    endStop.name = `${placement.id}-box-end-stop`;
+    const entryGuideHeight = Math.max(1, placement.height * 0.28);
+    const entryGuide = addMesh(
+      group,
+      new THREE.BoxGeometry(placement.wallThickness * 0.65, entryGuideHeight, placement.depth),
+      trayMaterial,
+      "battery",
+      [openX, partCenterY(entryGuideHeight), 0],
+    );
+    entryGuide.name = `${placement.id}-box-entry-guide`;
+  }
+
+  if (placement.retentionType === "elastic") {
+    const postRadius = Math.max(0.7, placement.wallThickness * 0.45);
+    const hookHeight = Math.max(2.4, placement.wallThickness * 1.9);
+    const hookY = partCenterY(hookHeight);
+    const hookX = openSide === "right"
+      ? placement.width / 2 - Math.max(placement.wallThickness * 2, 3)
+      : -placement.width / 2 + Math.max(placement.wallThickness * 2, 3);
+    for (const [name, z] of [
+      ["left", -placement.depth / 2 - postRadius * 1.4],
+      ["right", placement.depth / 2 + postRadius * 1.4],
+    ] as const) {
+      const hook = addCylinder(
+        group,
+        postRadius,
+        hookHeight,
+        [hookX, hookY, z],
+        trayMaterial,
+        "battery",
+        20,
+      );
+      hook.name = `${placement.id}-elastic-hook-${name}`;
+    }
+    const bandY = -placement.height / 2 + preset.cellHeight + 0.85;
+    const band = addMesh(
+      group,
+      new THREE.BoxGeometry(
+        Math.max(placement.wallThickness * 1.8, 2.6),
+        0.6,
+        placement.depth + postRadius * 5,
+      ),
+      retentionMaterial,
+      "battery",
+      [hookX, bandY, 0],
+      false,
+    );
+    band.name = `${placement.id}-elastic-band`;
+  } else if (placement.retentionType === "clip") {
+    const clipHeight = Math.max(0.7, placement.wallThickness * 0.55);
+    const clipDepth = Math.max(1.2, placement.wallThickness * 1.1);
+    const clipY = -placement.height / 2 + placement.height * 0.7;
+    for (const [name, z] of [
+      ["left", -placement.depth / 2 + placement.wallThickness + clipDepth / 2],
+      ["right", placement.depth / 2 - placement.wallThickness - clipDepth / 2],
+    ] as const) {
+      const clip = addMesh(
+        group,
+        new THREE.BoxGeometry(Math.max(6, placement.width * 0.22), clipHeight, clipDepth),
+        retentionMaterial,
+        "battery",
+        [0, clipY, z],
+      );
+      clip.name = `${placement.id}-retention-clip-${name}`;
+    }
   }
 
   const cellMaterial = standardMaterial(
@@ -629,13 +938,569 @@ function addBatteryCompartmentPreview(
       group,
       geometry,
       cellMaterial.clone(),
-      "battery",
-      [0, preset.cellHeight / 2 - placement.height / 2 + 0.2, z],
+        "battery",
+        [
+          0,
+          preset.cellHeight / 2 - placement.height / 2 + 0.2,
+          z,
+        ],
     );
     cell.name = `${placement.id}-cell-${index + 1}`;
   });
   cellMaterial.dispose();
   contactMaterial.dispose();
+}
+
+function rotateSurfaceOffset(
+  u: number,
+  v: number,
+  rotation: number,
+): readonly [number, number] {
+  const normalized = ((rotation % 360) + 360) % 360;
+  if (normalized === 90) return [v, -u];
+  if (normalized === 180) return [-u, -v];
+  if (normalized === 270) return [-v, u];
+  return [u, v];
+}
+
+function getRotatedSurfaceSize(
+  width: number,
+  height: number,
+  rotation: number,
+): readonly [number, number] {
+  return rotation === 90 || rotation === 270
+    ? [height, width]
+    : [width, height];
+}
+
+function addLcdwikiDisplayPreview(
+  group: THREE.Group,
+  connector: ConnectorDefinition,
+  featureId: string,
+  rotation: number,
+  face: EnclosureFace,
+  surfaceU: number,
+  surfaceV: number,
+  surfaceOutset: number,
+  origin: readonly [number, number, number],
+  parameters: DesignerParameters,
+  dimensions: EnclosureDimensions,
+  lidY: number,
+  followRemovableFace: boolean,
+  displayMountingType: DisplayMountingType | undefined,
+  selected: boolean,
+): void {
+  const spec = connector.displaySpec;
+  if (!spec) return;
+
+  const normalOffset = (u: number, v: number, offset: number) => {
+    const [rotatedU, rotatedV] = rotateSurfaceOffset(u, v, rotation);
+    return relativePosition(
+      getPreviewFacePosition(
+        face,
+        surfaceU + rotatedU,
+        surfaceV + rotatedV,
+        offset,
+        parameters,
+        dimensions,
+        lidY,
+        followRemovableFace,
+      ),
+      origin,
+    );
+  };
+  const addDisplayMesh = (
+    name: string,
+    geometry: THREE.BufferGeometry,
+    material: THREE.Material,
+    u: number,
+    v: number,
+    offset: number,
+    showEdges = true,
+  ) => {
+    const mesh = addMesh(
+      group,
+      geometry,
+      material,
+      "connector",
+      normalOffset(u, v, offset),
+      showEdges,
+    );
+    mesh.name = `${featureId}-${name}`;
+    mesh.userData.featureId = featureId;
+    mesh.userData.featureKind = "connector";
+    return mesh;
+  };
+  const addDisplayOutline = (
+    name: string,
+    geometry: THREE.BufferGeometry,
+    color: THREE.ColorRepresentation,
+    opacity: number,
+    u: number,
+    v: number,
+    offset: number,
+  ) => {
+    const outline = addPreviewOutline(
+      group,
+      geometry,
+      color,
+      opacity,
+      "connector",
+      normalOffset(u, v, offset),
+    );
+    outline.name = `${featureId}-${name}`;
+    outline.userData.featureId = featureId;
+    outline.userData.featureKind = "connector";
+    return outline;
+  };
+  const faceBox = (width: number, height: number, depth: number) => {
+    const [rotatedWidth, rotatedHeight] = getRotatedSurfaceSize(
+      width,
+      height,
+      rotation,
+    );
+    return createFaceBoxGeometry(rotatedWidth, rotatedHeight, depth, face);
+  };
+  const facePlane = (width: number, height: number) => {
+    const [rotatedWidth, rotatedHeight] = getRotatedSurfaceSize(
+      width,
+      height,
+      rotation,
+    );
+    return createFacePlaneGeometry(rotatedWidth, rotatedHeight, face);
+  };
+  const faceCylinder = (radius: number, depth: number, segments = 28) =>
+    createFaceCylinderGeometry(radius, depth, face, segments);
+
+  const frontSurfaceOffset = surfaceOutset + 0.5;
+  const totalDepth = connector.visualGeometry.depth;
+  const pcbThickness = 1.6;
+  const pcbCenterOffset =
+    frontSurfaceOffset - totalDepth + pcbThickness / 2;
+  const pcbFrontOffset = pcbCenterOffset + pcbThickness / 2 + 0.04;
+  const pcbBackOffset = pcbCenterOffset - pcbThickness / 2 - 0.04;
+  const glassDepth = Math.max(0.8, Math.min(2.4, totalDepth - pcbThickness - 0.25));
+  const glassCenterOffset = frontSurfaceOffset - glassDepth / 2;
+  const screenOffsetV =
+    spec.diagonalInch <= 2.2
+      ? 0.6
+      : spec.diagonalInch <= 2.4
+        ? 2.2
+        : spec.diagonalInch <= 2.8
+          ? 3.4
+          : spec.diagonalInch <= 3.2
+            ? 3.6
+            : spec.diagonalInch <= 3.5
+              ? 3.8
+              : 4.6;
+  const lcdOuterWidth = Math.min(
+    spec.pcbWidth,
+    spec.windowWidth + (spec.touch === "resistive" ? 5.4 : 6.2),
+  );
+  const lcdOuterHeight = Math.min(
+    spec.pcbHeight - 4,
+    spec.windowHeight + (spec.touch === "resistive" ? 8.8 : 10),
+  );
+
+  addDisplayMesh(
+    "display-pcb",
+    faceBox(spec.pcbWidth, spec.pcbHeight, pcbThickness),
+    standardMaterial(0x24543c, selected, {
+      metalness: 0.08,
+      roughness: 0.52,
+    }),
+    0,
+    0,
+    pcbCenterOffset,
+  );
+  addDisplayMesh(
+    "display-lcd-panel",
+    faceBox(lcdOuterWidth, lcdOuterHeight, glassDepth),
+    standardMaterial(0x111716, selected, {
+      metalness: 0.18,
+      roughness: 0.3,
+    }),
+    0,
+    screenOffsetV,
+    glassCenterOffset,
+  );
+  if (spec.touch === "resistive") {
+    addDisplayMesh(
+      "display-touch-overlay",
+      facePlane(spec.windowWidth, spec.windowHeight),
+      standardMaterial(0x8ec7cf, selected, {
+        metalness: 0.02,
+        roughness: 0.08,
+        transparent: true,
+        opacity: 0.34,
+        depthWrite: false,
+      }),
+      0,
+      screenOffsetV,
+      frontSurfaceOffset + 0.075,
+      false,
+    ).renderOrder = 7;
+  }
+  addDisplayMesh(
+    "display-active-area",
+    facePlane(spec.activeAreaWidth, spec.activeAreaHeight),
+    standardMaterial(0x1f6f91, selected, {
+      metalness: 0.04,
+      roughness: 0.16,
+      transparent: true,
+      opacity: 0.9,
+      depthWrite: false,
+    }),
+    0,
+    screenOffsetV,
+    frontSurfaceOffset + 0.1,
+    false,
+  ).renderOrder = 8;
+  addDisplayOutline(
+    "display-window-outline",
+    facePlane(spec.windowWidth, spec.windowHeight),
+    0x6ad0df,
+    0.72,
+    0,
+    screenOffsetV,
+    frontSurfaceOffset + 0.12,
+  );
+
+  const headerPitch = 2.54;
+  const headerWidth = (spec.headerPins - 1) * headerPitch;
+  const headerV = -spec.pcbHeight / 2 + 5.1;
+  addDisplayMesh(
+    "display-header-body",
+    faceBox(headerWidth + 2.6, 3.4, 1.25),
+    standardMaterial(0x202321, selected, {
+      metalness: 0.12,
+      roughness: 0.44,
+    }),
+    0,
+    headerV,
+    pcbFrontOffset + 0.62,
+  );
+  for (let index = 0; index < spec.headerPins; index += 1) {
+    const pinU = -headerWidth / 2 + index * headerPitch;
+    addDisplayMesh(
+      `display-header-pin-${index + 1}`,
+      faceBox(0.78, 2.6, 0.34),
+      standardMaterial(0xd7b24a, selected, {
+        metalness: 0.78,
+        roughness: 0.24,
+      }),
+      pinU,
+      headerV,
+      pcbFrontOffset + 0.22,
+      false,
+    );
+  }
+
+  const holeU = spec.pcbWidth / 2 - 3;
+  const holeV = spec.pcbHeight / 2 - 3;
+  const mountingHolePositions: ReadonlyArray<readonly [number, number]> = [
+    [-holeU, -holeV],
+    [holeU, -holeV],
+    [-holeU, holeV],
+    [holeU, holeV],
+  ];
+  mountingHolePositions.forEach(([u, v], index) => {
+    addDisplayMesh(
+      `display-mount-pad-${index + 1}`,
+      faceCylinder(2.35, 0.1, 32),
+      standardMaterial(0xc9a34d, selected, {
+        metalness: 0.58,
+        roughness: 0.28,
+      }),
+      u,
+      v,
+      pcbFrontOffset + 0.08,
+      false,
+    );
+    addDisplayMesh(
+      `display-mount-hole-${index + 1}`,
+      faceCylinder(1.6, 0.12, 32),
+      standardMaterial(0x101413, selected, {
+        metalness: 0.02,
+        roughness: 0.66,
+      }),
+      u,
+      v,
+      pcbFrontOffset + 0.12,
+      false,
+    );
+  });
+
+  if (displayMountingType === "screw") {
+    const bossDepth = Math.max(0.8, Math.abs(surfaceOutset - pcbBackOffset));
+    const bossCenterOffset = (surfaceOutset + pcbBackOffset) / 2;
+    mountingHolePositions.forEach(([u, v], index) => {
+      addDisplayMesh(
+        `display-screw-boss-${index + 1}`,
+        faceCylinder(2.55, bossDepth, 32),
+        standardMaterial(0x9f9a8b, selected, {
+          metalness: 0.02,
+          roughness: 0.58,
+        }),
+        u,
+        v,
+        bossCenterOffset,
+      );
+      addDisplayMesh(
+        `display-screw-${index + 1}`,
+        faceCylinder(1.18, 0.42, 32),
+        standardMaterial(0xbfc4c6, selected, {
+          metalness: 0.78,
+          roughness: 0.2,
+        }),
+        u,
+        v,
+        pcbFrontOffset + 0.32,
+        false,
+      );
+    });
+  }
+
+  const chipOffset = pcbBackOffset - 0.38;
+  const chipMaterial = standardMaterial(0x202423, selected, {
+    metalness: 0.12,
+    roughness: 0.5,
+  });
+  [
+    [spec.pcbWidth / 2 - 10, -spec.pcbHeight / 2 + 20, 7, 5],
+    [spec.pcbWidth / 2 - 17, -spec.pcbHeight / 2 + 12, 4.5, 2.6],
+    [spec.pcbWidth / 2 - 7, -spec.pcbHeight / 2 + 10, 3.2, 2.2],
+    [-spec.pcbWidth / 2 + 9, -spec.pcbHeight / 2 + 11, 4, 2.4],
+  ].forEach(([u, v, width, height], index) => {
+    addDisplayMesh(
+      `display-smd-${index + 1}`,
+      faceBox(width, height, 0.75),
+      chipMaterial.clone(),
+      u,
+      v,
+      chipOffset,
+      false,
+    );
+  });
+  chipMaterial.dispose();
+
+  const tailMaterial = standardMaterial(
+    spec.touch === "resistive" ? 0x2ca078 : 0xc7b37b,
+    selected,
+    {
+      metalness: 0.04,
+      roughness: 0.42,
+      transparent: true,
+      opacity: spec.touch === "resistive" ? 0.82 : 0.68,
+    },
+  );
+  addDisplayMesh(
+    spec.touch === "resistive" ? "display-touch-tail" : "display-pull-tape",
+    faceBox(spec.touch === "resistive" ? 9 : 6, spec.touch === "resistive" ? 7 : 4, 0.22),
+    tailMaterial,
+    Math.min(spec.pcbWidth / 2 - 4, spec.windowWidth / 2 + 3.5),
+    screenOffsetV + spec.windowHeight / 2 - 8,
+    frontSurfaceOffset + 0.18,
+    false,
+  );
+}
+
+function addPcbRailMountingPreview(
+  root: THREE.Group,
+  envelope: PcbMountingEnvelope,
+  parameters: DesignerParameters,
+  selected: boolean,
+): void {
+  if (parameters.pcbMountingType === "screw") return;
+
+  const layout = getEffectivePcbRailLayout(parameters, envelope);
+  const railDirection = getPcbRailDirection(parameters, envelope.rotation);
+  const group = new THREE.Group();
+  group.name = `pcb-mount-transform-${envelope.id}`;
+  group.position.set(envelope.offsetX, 0, envelope.offsetZ);
+  group.rotation.y =
+    THREE.MathUtils.degToRad(envelope.rotation) +
+    (railDirection.axis === "z" ? -Math.PI / 2 : 0);
+  group.userData = {
+    partId: "base",
+    featureId: envelope.id,
+    featureKind: "pcb-mount",
+  };
+  root.add(group);
+
+  const railMaterial = standardMaterial(0x3d6652, selected, {
+    roughness: 0.58,
+  });
+  const screwMaterial = standardMaterial(0x59615d, selected, {
+    metalness: 0.66,
+    roughness: 0.28,
+  });
+  const bandMaterial = standardMaterial(0x171a18, selected, {
+    roughness: 0.72,
+  });
+  const faceReach = Math.max(parameters.boardClearance, parameters.pcbRailWidth);
+  const railLength = layout.railLength + faceReach;
+  const railCenterX =
+    layout.openSideSign * (layout.stopWidth / 2 + faceReach / 2);
+  const lowerLedgeY = layout.boardBottom - layout.ledgeThickness / 2;
+  const topLipY =
+    layout.boardTop + parameters.pcbRailClearance + layout.lipThickness / 2;
+  const stopBottomY = layout.boardBottom - layout.ledgeThickness;
+  const stopTopY =
+    layout.boardTop + parameters.pcbRailClearance + layout.lipThickness;
+  const stopHeight = stopTopY - stopBottomY;
+  const stopCenterY = (stopTopY + stopBottomY) / 2;
+  const closedEdgeX = -layout.openSideSign * (layout.travelLength / 2);
+  const stopLength = layout.stopWidth + faceReach;
+  const stopCenterX =
+    closedEdgeX + layout.openSideSign * (layout.stopWidth / 2 - faceReach / 2);
+
+  for (const [name, sideSign] of [
+    ["left", -1],
+    ["right", 1],
+  ] as const) {
+    const ledgeDepth = faceReach + layout.ledgeOverlap;
+    const ledgeCenterZ =
+      sideSign *
+      (layout.travelWidth / 2 + faceReach / 2 - layout.ledgeOverlap / 2);
+    const ledge = addMesh(
+      group,
+      new THREE.BoxGeometry(
+        railLength,
+        layout.ledgeThickness,
+        ledgeDepth,
+      ),
+      railMaterial,
+      "base",
+      [
+        railCenterX,
+        lowerLedgeY,
+        ledgeCenterZ,
+      ],
+    );
+    ledge.name = `${envelope.id}-pcb-rail-${name}-lower-ledge`;
+
+    const lipDepth = faceReach + layout.lipOverlap;
+    const lipCenterZ =
+      sideSign *
+      (layout.travelWidth / 2 + faceReach / 2 - layout.lipOverlap / 2);
+    const lip = addMesh(
+      group,
+      new THREE.BoxGeometry(
+        railLength,
+        layout.lipThickness,
+        lipDepth,
+      ),
+      railMaterial,
+      "base",
+      [
+        railCenterX,
+        topLipY,
+        lipCenterZ,
+      ],
+    );
+    lip.name = `${envelope.id}-pcb-rail-${name}-top-lip`;
+  }
+
+  const stop = addMesh(
+    group,
+    new THREE.BoxGeometry(
+      stopLength,
+      stopHeight,
+      layout.travelWidth + faceReach * 2,
+    ),
+    railMaterial,
+    "base",
+    [stopCenterX, stopCenterY, 0],
+  );
+  stop.name = `${envelope.id}-pcb-rail-closed-stop`;
+
+  if (parameters.pcbMountingType === "rail-screw") {
+    for (const sideSign of [-1, 1] as const) {
+      const screw = addCylinder(
+        group,
+        1.8,
+        0.9,
+        [
+          layout.openSideSign * (layout.travelLength / 2 - 2),
+          topLipY + layout.lipThickness / 2 + 0.45,
+          sideSign * (layout.travelWidth / 2 + parameters.pcbRailWidth / 2),
+        ],
+        screwMaterial,
+        "base",
+        24,
+      );
+      screw.name = `${envelope.id}-pcb-rail-lock-screw-${sideSign > 0 ? "right" : "left"}`;
+    }
+  } else {
+    const bandRadius = Math.max(
+      0.35,
+      Math.min(0.9, parameters.pcbElasticBandWidth * 0.22),
+    );
+    const anchorRadius = Math.max(0.9, parameters.pcbRailWidth * 0.3);
+    const anchorHeight = Math.max(2.8, parameters.pcbElasticBandWidth + 1);
+    const anchorX =
+      closedEdgeX +
+      layout.openSideSign *
+        Math.max(parameters.pcbStopWidth * 0.65, anchorRadius + 1.6);
+    const openInsideX =
+      layout.openSideX -
+      layout.openSideSign * Math.max(1.2, parameters.pcbElasticBandWidth / 2);
+    const openWrapX =
+      layout.openSideX +
+      layout.openSideSign *
+        Math.max(1.2, parameters.pcbRailClearance + bandRadius * 1.8);
+    const closedWrapX =
+      anchorX -
+      layout.openSideSign * Math.max(1.2, anchorRadius + bandRadius);
+    const topY = layout.boardTop + bandRadius + 0.08;
+    const bottomY = layout.boardBottom - bandRadius - 0.08;
+    const midY = (topY + bottomY) / 2;
+    const laneOffset = Math.max(
+      parameters.pcbElasticBandWidth * 1.8,
+      Math.min(layout.travelWidth * 0.28, layout.travelWidth / 2 - 8),
+    );
+    const laneZs =
+      laneOffset > 0
+        ? [-laneOffset, laneOffset]
+        : [-layout.travelWidth * 0.2, layout.travelWidth * 0.2];
+
+    laneZs.forEach((laneZ, index) => {
+      const anchor = addCylinder(
+        group,
+        anchorRadius,
+        anchorHeight,
+        [anchorX, layout.boardTop + anchorHeight / 2, laneZ],
+        railMaterial,
+        "base",
+        20,
+      );
+      anchor.name = `${envelope.id}-pcb-elastic-anchor-${index + 1}`;
+
+      const bandPath = new THREE.CatmullRomCurve3(
+        [
+          new THREE.Vector3(anchorX, topY, laneZ),
+          new THREE.Vector3(openInsideX, topY, laneZ),
+          new THREE.Vector3(openWrapX, midY, laneZ),
+          new THREE.Vector3(openInsideX, bottomY, laneZ),
+          new THREE.Vector3(closedWrapX, bottomY, laneZ),
+          new THREE.Vector3(anchorX, midY, laneZ),
+        ],
+        true,
+        "catmullrom",
+        0.08,
+      );
+      const band = addMesh(
+        group,
+        new THREE.TubeGeometry(bandPath, 48, bandRadius, 10, true),
+        bandMaterial,
+        "base",
+        [0, 0, 0],
+        false,
+      );
+      band.name = `${envelope.id}-pcb-elastic-band-loop-${index + 1}`;
+    });
+  }
 }
 
 function addClosureFeatures(
@@ -974,6 +1839,182 @@ function addClosureFeatures(
 
   }
 
+function createRemovableFaceGeometry(
+  parameters: DesignerParameters,
+  dimensions: EnclosureDimensions,
+  face: EnclosureFace,
+  panels: readonly { offsetU: number; offsetV: number; width: number; height: number; insetDepth: number; cornerRadius: number; borderWidth: number; }[],
+): THREE.ExtrudeGeometry {
+  const [faceWidth, faceHeight] = getPreviewFaceSize(face, parameters, dimensions);
+  const shape = createRoundedShape(faceWidth, faceHeight, parameters.cornerRadius);
+  for (const panel of panels) {
+    const inset = panel.insetDepth > 0;
+    const [openingWidth, openingHeight] = getPanelOpeningSize(panel);
+    shape.holes.push(createRoundedHole(
+      inset ? panel.width + 0.3 : openingWidth,
+      inset ? panel.height + 0.3 : openingHeight,
+      inset ? panel.cornerRadius + 0.15 : getPanelInnerCornerRadius(panel),
+      panel.offsetU,
+      getFaceHoleV(face, panel.offsetV),
+    ));
+  }
+  return createFaceExtrudedGeometry(shape, parameters.lidThickness, face);
+}
+
+function addGenericFaceClosureFeatures(
+  root: THREE.Group,
+  parameters: DesignerParameters,
+  selectedPart: SelectablePart,
+  lidFace: EnclosureFace,
+  lidY: number,
+  dimensions: EnclosureDimensions,
+): void {
+  const [faceWidth, faceHeight] = getPreviewFaceSize(lidFace, parameters, dimensions);
+  const points = getClosurePoints(faceWidth, faceHeight, parameters.wallThickness);
+  const shellColor = getMaterial(parameters.shellMaterialId).color;
+
+  if (parameters.closureType === "screw") {
+    const fastener = getFastenerDefinition(parameters.closureFastenerId);
+    const headRecessDepth = getClosureScrewHeadRecessDepth(parameters);
+    const baseMaterial = standardMaterial(shellColor, selectedPart === "base");
+    const screwMaterial = standardMaterial(0x48514e, selectedPart === "lid", {
+      metalness: 0.62,
+      roughness: 0.28,
+    });
+    for (const [pointU, pointV] of points) {
+      const bossPosition = getPreviewFacePosition(
+        lidFace,
+        pointU,
+        pointV,
+        -parameters.wallThickness / 2,
+        parameters,
+        dimensions,
+        lidY,
+      );
+      const boss = addMesh(
+        root,
+        createFaceCylinderGeometry(
+          fastener.bossDiameter / 2,
+          Math.max(parameters.wallThickness, 2.4),
+          lidFace,
+        ),
+        baseMaterial,
+        "base",
+        bossPosition,
+      );
+      boss.name = "closure-side-boss";
+
+      const headDepth =
+        headRecessDepth > 0 ? headRecessDepth : parameters.lidThickness + 0.5;
+      const headPosition = getPreviewFacePosition(
+        lidFace,
+        pointU,
+        pointV,
+        parameters.lidThickness - headDepth / 2 + 0.01,
+        parameters,
+        dimensions,
+        lidY,
+        true,
+      );
+      const screwHead = addMesh(
+        root,
+        createFaceCylinderGeometry(
+          headRecessDepth > 0
+            ? getClosureScrewHeadRecessRadius(fastener.clearanceDiameter) - 0.1
+            : fastener.clearanceDiameter / 2,
+          headDepth,
+          lidFace,
+        ),
+        screwMaterial,
+        "lid",
+        headPosition,
+      );
+      screwHead.name = "closure-screw-head";
+    }
+    return;
+  }
+
+  if (parameters.closureType === "magnet") {
+    const magnetMaterial = standardMaterial(0xc9933d, selectedPart === "lid", {
+      metalness: 0.72,
+      roughness: 0.24,
+    });
+    for (const [pointU, pointV] of points) {
+      const baseMagnet = addMesh(
+        root,
+        createFaceCylinderGeometry(
+          MAGNET_GEOMETRY.diameter / 2,
+          MAGNET_GEOMETRY.thickness,
+          lidFace,
+        ),
+        magnetMaterial,
+        "base",
+        getPreviewFacePosition(
+          lidFace,
+          pointU,
+          pointV,
+          -MAGNET_GEOMETRY.thickness / 2,
+          parameters,
+          dimensions,
+          lidY,
+        ),
+      );
+      baseMagnet.name = "base-magnet";
+      const lidMagnet = addMesh(
+        root,
+        createFaceCylinderGeometry(
+          MAGNET_GEOMETRY.diameter / 2,
+          MAGNET_GEOMETRY.thickness,
+          lidFace,
+        ),
+        magnetMaterial,
+        "lid",
+        getPreviewFacePosition(
+          lidFace,
+          pointU,
+          pointV,
+          parameters.lidThickness - MAGNET_GEOMETRY.thickness / 2,
+          parameters,
+          dimensions,
+          lidY,
+          true,
+        ),
+      );
+      lidMagnet.name = "lid-magnet";
+    }
+    return;
+  }
+
+  const quickReleaseMaterial = standardMaterial(shellColor, selectedPart === "lid");
+  const markerDepth = Math.min(2.2, parameters.lidThickness + 0.4);
+  for (const [index, pointV] of [-faceHeight / 2 + 3, faceHeight / 2 - 3].entries()) {
+    const marker = addMesh(
+      root,
+      createFaceBoxGeometry(Math.min(18, faceWidth * 0.36), 2.4, markerDepth, lidFace),
+      quickReleaseMaterial,
+      "lid",
+      getPreviewFacePosition(
+        lidFace,
+        0,
+        pointV,
+        parameters.lidThickness - markerDepth / 2,
+        parameters,
+        dimensions,
+        lidY,
+        true,
+      ),
+    );
+    marker.name =
+      parameters.closureType === "hinge"
+        ? "quick-hinge-marker"
+        : parameters.closureType === "pin"
+          ? "quick-pin-marker"
+          : parameters.closureType === "slide"
+            ? "quick-slide-marker"
+            : `quick-${parameters.closureType}-marker-${index + 1}`;
+  }
+}
+
 export function buildPreviewModel(
   parameters: DesignerParameters,
   selectedPart: SelectablePart,
@@ -987,41 +2028,48 @@ export function buildPreviewModel(
   lidTransparent = false,
   hiddenFaces: readonly EnclosureFace[] = [],
   hiddenFeatureIds: readonly string[] = [],
+  transparentObjectIds: readonly string[] = [],
+  hiddenPcbBodyIds: readonly string[] = [],
 ): THREE.Group {
   const root = new THREE.Group();
   root.name = "enclosure-preview";
   root.position.y = exploded ? 10 : 0;
   const dimensions = deriveEnclosureDimensions(parameters);
   const shellProfile = getMaterial(parameters.shellMaterialId);
+  const transparentIds = lidTransparent
+    ? Array.from(new Set([...transparentObjectIds, "lid"]))
+    : transparentObjectIds;
   const shellMaterial = standardMaterial(shellProfile.color, selectedPart === "base");
-  const lidMaterial = standardMaterial(shellProfile.color, selectedPart === "lid", {
-    transparent: lidTransparent,
-    opacity: lidTransparent ? 0.24 : 1,
-    depthWrite: !lidTransparent,
-  });
+  const lidMaterial = standardMaterial(shellProfile.color, selectedPart === "lid");
   const pcbMaterial = standardMaterial(0x2f7751, selectedPart === "pcb", {
     roughness: 0.46,
   });
+  const lidFace = parameters.lidFace;
   const wallHeight = parameters.baseHeight - parameters.bottomThickness;
   const explodedGap = exploded ? 24 : 0;
   const lidY = parameters.baseHeight + explodedGap;
   const innerRadius = Math.max(0.5, parameters.cornerRadius - parameters.wallThickness);
+  const hiddenShellFaces = isSideFace(lidFace)
+    ? Array.from(new Set([...hiddenFaces, lidFace]))
+    : hiddenFaces;
 
-  const bottomPlate = addMesh(
-    root,
-    createPlateGeometry(
-      dimensions.outsideLength,
-      dimensions.outsideWidth,
-      parameters.bottomThickness,
-      parameters.cornerRadius,
-    ),
-    shellMaterial,
-    "base",
-    [0, parameters.bottomThickness / 2, 0],
-    true,
-    "bottom",
-  );
-  bottomPlate.name = "base-bottom-face";
+  if (lidFace !== "bottom") {
+    const bottomPlate = addMesh(
+      root,
+      createPlateGeometry(
+        dimensions.outsideLength,
+        dimensions.outsideWidth,
+        parameters.bottomThickness,
+        parameters.cornerRadius,
+      ),
+      shellMaterial,
+      "base",
+      [0, parameters.bottomThickness / 2, 0],
+      true,
+      "bottom",
+    );
+    bottomPlate.name = "base-bottom-face";
+  }
 
   const shellWalls = addMesh(
     root,
@@ -1033,13 +2081,31 @@ export function buildPreviewModel(
       wallHeight,
       parameters.cornerRadius,
       innerRadius,
-      hiddenFaces,
+      hiddenShellFaces,
     ),
     shellMaterial,
     "base",
     [0, parameters.bottomThickness + wallHeight / 2, 0],
   );
   shellWalls.name = "base-side-faces";
+
+  if (lidFace !== "top") {
+    const fixedTop = addMesh(
+      root,
+      createPlateGeometry(
+        dimensions.outsideLength,
+        dimensions.outsideWidth,
+        parameters.lidThickness,
+        parameters.cornerRadius,
+      ),
+      shellMaterial,
+      "base",
+      [0, parameters.baseHeight + parameters.lidThickness / 2, 0],
+      true,
+      "top",
+    );
+    fixedTop.name = "base-top-face";
+  }
 
   if (parameters.enclosureTemplateId === "wall-mount") {
     const earMaterial = standardMaterial(shellProfile.color, selectedPart === "base");
@@ -1096,94 +2162,109 @@ export function buildPreviewModel(
   const lipHeight = 2.2;
   const lipOuterLength = dimensions.insideLength - 0.45;
   const lipOuterWidth = dimensions.insideWidth - 0.45;
-  if (parameters.closureType === "slide") {
-    for (const pointZ of [-lipOuterWidth / 2, lipOuterWidth / 2]) {
-      addMesh(
-        root,
-        new THREE.BoxGeometry(lipOuterLength - 6, lipHeight, 1.2),
-        lidMaterial,
-        "lid",
-        [0, lidY - lipHeight / 2, pointZ],
-      );
-    }
-  } else {
-    addMesh(
-      root,
-      createRingGeometry(
-        lipOuterLength,
-        lipOuterWidth,
-        lipOuterLength - 2.2,
-        lipOuterWidth - 2.2,
-        lipHeight,
-        innerRadius,
-        Math.max(0.5, innerRadius - 1.1),
-      ),
-      lidMaterial,
-      "lid",
-      [0, lidY - lipHeight / 2, 0],
-    );
-  }
-
-  const topPanels = parameters.panelPlacements.filter((panel) => panel.face === "top");
-  if (topPanels.length > 0) {
-    const lidShape = createRoundedShape(
-      dimensions.outsideLength,
-      dimensions.outsideWidth,
-      parameters.cornerRadius,
-    );
-    for (const panel of topPanels) {
-      const inset = panel.insetDepth > 0;
-      const [openingWidth, openingHeight] = getPanelOpeningSize(panel);
-      lidShape.holes.push(createRoundedHole(
-        inset ? panel.width + 0.3 : openingWidth,
-        inset ? panel.height + 0.3 : openingHeight,
-        inset ? panel.cornerRadius + 0.15 : getPanelInnerCornerRadius(panel),
-        panel.offsetU,
-        -panel.offsetV,
-      ));
-    }
-    addMesh(
-      root,
-      createExtrudedGeometry(lidShape, parameters.lidThickness),
-      lidMaterial,
-      "lid",
-      [0, lidY + parameters.lidThickness / 2, 0],
-    );
-
-    for (const panel of topPanels) {
-      if (panel.insetDepth <= 0) continue;
-      const supportThickness = parameters.lidThickness - panel.insetDepth;
-      const [openingWidth, openingHeight] = getPanelOpeningSize(panel);
+  const lidPanels =
+    lidFace === "top"
+      ? parameters.panelPlacements.filter((panel) => panel.face === "top")
+      : [];
+  if (lidFace === "top") {
+    if (parameters.closureType === "slide") {
+      for (const pointZ of [-lipOuterWidth / 2, lipOuterWidth / 2]) {
+        addMesh(
+          root,
+          new THREE.BoxGeometry(lipOuterLength - 6, lipHeight, 1.2),
+          lidMaterial,
+          "lid",
+          [0, lidY - lipHeight / 2, pointZ],
+        );
+      }
+    } else {
       addMesh(
         root,
         createRingGeometry(
-          panel.width + 0.3,
-          panel.height + 0.3,
-          openingWidth,
-          openingHeight,
-          supportThickness,
-          panel.cornerRadius + 0.15,
-          getPanelInnerCornerRadius(panel),
+          lipOuterLength,
+          lipOuterWidth,
+          lipOuterLength - 2.2,
+          lipOuterWidth - 2.2,
+          lipHeight,
+          innerRadius,
+          Math.max(0.5, innerRadius - 1.1),
         ),
         lidMaterial,
         "lid",
-        [panel.offsetU, lidY + supportThickness / 2, panel.offsetV],
+        [0, lidY - lipHeight / 2, 0],
       );
     }
 
+    if (lidPanels.length > 0) {
+      addMesh(
+        root,
+        createRemovableFaceGeometry(parameters, dimensions, lidFace, lidPanels),
+        lidMaterial,
+        "lid",
+        [0, lidY + parameters.lidThickness / 2, 0],
+      );
+
+      for (const panel of lidPanels) {
+        if (panel.insetDepth <= 0) continue;
+        const supportThickness = parameters.lidThickness - panel.insetDepth;
+        const [openingWidth, openingHeight] = getPanelOpeningSize(panel);
+        addMesh(
+          root,
+          createRingGeometry(
+            panel.width + 0.3,
+            panel.height + 0.3,
+            openingWidth,
+            openingHeight,
+            supportThickness,
+            panel.cornerRadius + 0.15,
+            getPanelInnerCornerRadius(panel),
+          ),
+          lidMaterial,
+          "lid",
+          [panel.offsetU, lidY + supportThickness / 2, panel.offsetV],
+        );
+      }
+    } else {
+      addMesh(
+        root,
+        createPlateGeometry(
+          dimensions.outsideLength,
+          dimensions.outsideWidth,
+          parameters.lidThickness,
+          parameters.cornerRadius,
+        ),
+        lidMaterial,
+        "lid",
+        [0, lidY + parameters.lidThickness / 2, 0],
+      );
+    }
   } else {
-    addMesh(
+    const lidPosition = getPreviewFacePosition(
+      lidFace,
+      0,
+      0,
+      parameters.lidThickness / 2,
+      parameters,
+      dimensions,
+      lidY,
+      true,
+    );
+    const removableFace = addMesh(
       root,
-      createPlateGeometry(
-        dimensions.outsideLength,
-        dimensions.outsideWidth,
+      createFacePlateGeometry(
+        getPreviewFaceSize(lidFace, parameters, dimensions)[0],
+        getPreviewFaceSize(lidFace, parameters, dimensions)[1],
         parameters.lidThickness,
-        parameters.cornerRadius,
+        Math.min(parameters.cornerRadius, getPreviewFaceSize(lidFace, parameters, dimensions)[1] / 2 - 0.1),
+        lidFace,
       ),
       lidMaterial,
       "lid",
-      [0, lidY + parameters.lidThickness / 2, 0],
+      lidPosition,
+      true,
+      lidFace,
     );
+    removableFace.name = `lid-${lidFace}-face`;
   }
 
   for (const panel of parameters.panelPlacements) {
@@ -1496,10 +2577,21 @@ export function buildPreviewModel(
   const standoffMaterial = standardMaterial(shellProfile.color, selectedPart === "base");
   const holeMaterial = standardMaterial(0x1d2522, selectedPart === "pcb");
   const boardBottom = parameters.bottomThickness + parameters.standoffHeight;
+  for (const envelope of getPcbMountingEnvelopes(parameters, pcbReference)) {
+    addPcbRailMountingPreview(
+      root,
+      envelope,
+      parameters,
+      selectedPart === "pcb" &&
+        (selectedFeatureId === null || selectedFeatureId === envelope.id),
+    );
+  }
   if (parameters.pcbReferences.length > 0) {
     for (const placement of parameters.pcbReferences) {
       const reference = placement.reference;
-      const preview = pcbPreviews[placement.id];
+      const preview =
+        pcbPreviews[placement.id] ??
+        (placement.id === parameters.pcbReferences[0]?.id ? stepPreview : null);
       const selected =
         selectedPart === "pcb" &&
         (selectedFeatureId === null || selectedFeatureId === placement.id);
@@ -1554,35 +2646,60 @@ export function buildPreviewModel(
         );
       }
 
-      for (const mountingPoint of getCenteredMountingHoles(parameters, reference)) {
-        const local = new THREE.Vector3(mountingPoint.x, 0, mountingPoint.y)
-          .applyAxisAngle(new THREE.Vector3(0, 1, 0), boardGroup.rotation.y);
-        const standoffHeight = parameters.standoffHeight + placement.elevation;
-        addCylinder(
-          root,
-          Math.max(3.2, mountingPoint.diameter / 2 + 1.4),
-          standoffHeight,
-          [
-            placement.offsetX + local.x,
-            parameters.bottomThickness + standoffHeight / 2,
-            placement.offsetZ + local.z,
-          ],
-          standoffMaterial,
-          "base",
-        );
-        addCylinder(
-          boardGroup,
-          mountingPoint.diameter / 2,
-          reference.thickness + 0.2,
-          [mountingPoint.x, reference.thickness / 2 + 0.1, mountingPoint.y],
-          holeMaterial,
-          "pcb",
-          20,
-        );
+      if (parameters.pcbMountingType !== "rail-elastic") {
+        const mountingGroup = new THREE.Group();
+        mountingGroup.name = `pcb-mount-transform-${placement.id}-screw`;
+        mountingGroup.userData = {
+          partId: "base",
+          featureId: placement.id,
+          featureKind: "pcb-mount",
+        };
+        root.add(mountingGroup);
+        getCenteredMountingHoles(parameters, reference).forEach((mountingPoint, index) => {
+          const local = new THREE.Vector3(mountingPoint.x, 0, mountingPoint.y)
+            .applyAxisAngle(new THREE.Vector3(0, 1, 0), boardGroup.rotation.y);
+          const standoffHeight = parameters.standoffHeight + placement.elevation;
+          if (standoffHeight <= 0.2) return;
+          const standoff = addCylinder(
+            mountingGroup,
+            Math.max(3.2, mountingPoint.diameter / 2 + 1.4),
+            standoffHeight,
+            [
+              placement.offsetX + local.x,
+              parameters.bottomThickness + standoffHeight / 2,
+              placement.offsetZ + local.z,
+            ],
+            standoffMaterial,
+            "base",
+          );
+          standoff.name = `${placement.id}-pcb-standoff-${index + 1}`;
+          addCylinder(
+            boardGroup,
+            mountingPoint.diameter / 2,
+            reference.thickness + 0.2,
+            [mountingPoint.x, reference.thickness / 2 + 0.1, mountingPoint.y],
+            holeMaterial,
+            "pcb",
+            20,
+          );
+        });
       }
     }
-  } else {
-    const boardY = boardBottom + parameters.pcbThickness / 2;
+  } else if (parameters.parametricPcbEnabled) {
+    const boardGroup = new THREE.Group();
+    boardGroup.name = `pcb-transform-${PARAMETRIC_PCB_FEATURE_ID}`;
+    boardGroup.position.set(
+      parameters.pcbOffsetX,
+      boardBottom + parameters.pcbElevation,
+      parameters.pcbOffsetZ,
+    );
+    boardGroup.userData = {
+      partId: "pcb",
+      featureId: PARAMETRIC_PCB_FEATURE_ID,
+      featureKind: "pcb",
+    };
+    root.add(boardGroup);
+    const boardY = parameters.pcbThickness / 2;
     if (stepPreview) {
       for (const previewMesh of stepPreview.meshes) {
         const geometry = new THREE.BufferGeometry();
@@ -1598,18 +2715,18 @@ export function buildPreviewModel(
         } else geometry.computeVertexNormals();
         geometry.setIndex(new THREE.BufferAttribute(previewMesh.indices, 1));
         addMesh(
-          root,
+          boardGroup,
           geometry,
           standardMaterial(new THREE.Color(...previewMesh.color), selectedPart === "pcb", {
             roughness: 0.48,
           }),
           "pcb",
-          [0, boardBottom, 0],
+          [0, 0, 0],
         );
       }
     } else {
       addMesh(
-        root,
+        boardGroup,
         new THREE.BoxGeometry(
           parameters.pcbLength,
           parameters.pcbThickness,
@@ -1620,24 +2737,43 @@ export function buildPreviewModel(
         [0, boardY, 0],
       );
     }
-    for (const mountingPoint of getCenteredMountingHoles(parameters, pcbReference)) {
-      const { x, y: z, diameter } = mountingPoint;
-      addCylinder(
-        root,
-        Math.max(3.2, diameter / 2 + 1.4),
-        parameters.standoffHeight,
-        [x, parameters.bottomThickness + parameters.standoffHeight / 2, z],
-        standoffMaterial,
-        "base",
-      );
-      addCylinder(
-        root,
-        diameter / 2,
-        parameters.pcbThickness + 0.2,
-        [x, boardY + 0.1, z],
-        holeMaterial,
-        "pcb",
-        20,
+    if (parameters.pcbMountingType !== "rail-elastic") {
+      const mountingGroup = new THREE.Group();
+      mountingGroup.name = `pcb-mount-transform-${PARAMETRIC_PCB_FEATURE_ID}-screw`;
+      mountingGroup.userData = {
+        partId: "base",
+        featureId: PARAMETRIC_PCB_FEATURE_ID,
+        featureKind: "pcb-mount",
+      };
+      root.add(mountingGroup);
+      getCenteredMountingHoles(parameters, pcbReference).forEach(
+        (mountingPoint, index) => {
+        const { x, y: z, diameter } = mountingPoint;
+        const supportHeight = parameters.standoffHeight + parameters.pcbElevation;
+        if (supportHeight <= 0.2) return;
+        const standoff = addCylinder(
+          mountingGroup,
+          Math.max(3.2, diameter / 2 + 1.4),
+          supportHeight,
+          [
+            parameters.pcbOffsetX + x,
+            parameters.bottomThickness + supportHeight / 2,
+            parameters.pcbOffsetZ + z,
+          ],
+          standoffMaterial,
+          "base",
+        );
+        standoff.name = `${PARAMETRIC_PCB_FEATURE_ID}-pcb-standoff-${index + 1}`;
+        addCylinder(
+          boardGroup,
+          diameter / 2,
+          parameters.pcbThickness + 0.2,
+          [x, boardY + 0.1, z],
+          holeMaterial,
+          "pcb",
+          20,
+        );
+        },
       );
     }
   }
@@ -1657,6 +2793,7 @@ export function buildPreviewModel(
       root,
       compartment,
       parameters,
+      lidY,
       selectedPart === "battery" &&
         (selectedFeatureId === null || selectedFeatureId === compartment.id),
     );
@@ -1682,28 +2819,6 @@ export function buildPreviewModel(
     const connectorSelected =
       selectedPart === "connector" &&
       (selectedFeatureId === null || selectedFeatureId === placement.id);
-    const portMaterial = standardMaterial(connector.visualGeometry.color, connectorSelected, {
-      metalness: 0.78,
-      roughness: 0.22,
-    });
-    const visualGeometry =
-      connector.visualGeometry.shape === "circle"
-        ? createFaceCylinderGeometry(
-            connector.visualGeometry.width / 2,
-            connector.visualGeometry.depth,
-            face,
-            28,
-          )
-        : createFaceBoxGeometry(
-            quarterTurn
-              ? connector.visualGeometry.height
-              : connector.visualGeometry.width,
-            quarterTurn
-              ? connector.visualGeometry.width
-              : connector.visualGeometry.height,
-            connector.visualGeometry.depth,
-            face,
-          );
     const connectorPosition = getPreviewFacePosition(
       face,
       surfaceU,
@@ -1712,6 +2827,7 @@ export function buildPreviewModel(
       parameters,
       dimensions,
       lidY,
+      placement.surface !== "panel" && face === lidFace,
     );
     const connectorGroup = new THREE.Group();
     connectorGroup.position.set(...connectorPosition);
@@ -1727,15 +2843,61 @@ export function buildPreviewModel(
     };
     root.add(connectorGroup);
     connectorGroup.name = `connector-transform-${placement.id}`;
-    const connectorMesh = addMesh(
-      connectorGroup,
-      visualGeometry,
-      portMaterial,
-      "connector",
-      [0, 0, 0],
-    );
-    connectorMesh.name = placement.id;
-    connectorMesh.userData.featureId = placement.id;
+    if (connector.category === "display") {
+      addLcdwikiDisplayPreview(
+        connectorGroup,
+        connector,
+        placement.id,
+        placement.rotation,
+        face,
+        surfaceU,
+        surfaceV,
+        surfaceOutset,
+        connectorPosition,
+        parameters,
+        dimensions,
+        lidY,
+        placement.surface !== "panel" && face === lidFace,
+        placement.displayMountingType,
+        connectorSelected,
+      );
+    } else {
+      const portMaterial = standardMaterial(
+        connector.visualGeometry.color,
+        connectorSelected,
+        {
+          metalness: 0.78,
+          roughness: 0.22,
+        },
+      );
+      const visualGeometry =
+        connector.visualGeometry.shape === "circle"
+          ? createFaceCylinderGeometry(
+              connector.visualGeometry.width / 2,
+              connector.visualGeometry.depth,
+              face,
+              28,
+            )
+          : createFaceBoxGeometry(
+              quarterTurn
+                ? connector.visualGeometry.height
+                : connector.visualGeometry.width,
+              quarterTurn
+                ? connector.visualGeometry.width
+                : connector.visualGeometry.height,
+              connector.visualGeometry.depth,
+              face,
+            );
+      const connectorMesh = addMesh(
+        connectorGroup,
+        visualGeometry,
+        portMaterial,
+        "connector",
+        [0, 0, 0],
+      );
+      connectorMesh.name = placement.id;
+      connectorMesh.userData.featureId = placement.id;
+    }
 
     const openingGeometry =
       connector.panelCutout.shape === "circle"
@@ -1749,6 +2911,7 @@ export function buildPreviewModel(
       parameters,
       dimensions,
       lidY,
+      placement.surface !== "panel" && face === lidFace,
     );
     const opening = addPreviewOutline(
       connectorGroup,
@@ -1772,6 +2935,7 @@ export function buildPreviewModel(
         parameters,
         dimensions,
         lidY,
+        placement.surface !== "panel" && face === lidFace,
       );
       const keepoutOutline = addPreviewOutline(
         connectorGroup,
@@ -1828,6 +2992,7 @@ export function buildPreviewModel(
       parameters,
       dimensions,
       lidY,
+      placement.surface !== "panel" && face === lidFace,
     );
     const [baseWidth, baseHeight] = external
       ? [placement.cutoutDiameter, placement.cutoutDiameter]
@@ -1895,6 +3060,7 @@ export function buildPreviewModel(
           parameters,
           dimensions,
           lidY,
+          placement.surface !== "panel" && face === lidFace,
         );
         addMesh(
           antennaGroup,
@@ -1913,6 +3079,7 @@ export function buildPreviewModel(
         parameters,
         dimensions,
         lidY,
+        placement.surface !== "panel" && face === lidFace,
       );
       const opening = addMesh(
         antennaGroup,
@@ -1939,6 +3106,7 @@ export function buildPreviewModel(
         parameters,
         dimensions,
         lidY,
+        placement.surface !== "panel" && face === lidFace,
       );
       const keepoutOutline = addPreviewOutline(
         antennaGroup,
@@ -1957,21 +3125,34 @@ export function buildPreviewModel(
     }
   }
 
-  addClosureFeatures(
-    root,
-    parameters,
-    selectedPart,
-    lidY,
-    dimensions.outsideLength,
-    dimensions.outsideWidth,
-  );
+  if (lidFace === "top") {
+    addClosureFeatures(
+      root,
+      parameters,
+      selectedPart,
+      lidY,
+      dimensions.outsideLength,
+      dimensions.outsideWidth,
+    );
+  } else {
+    addGenericFaceClosureFeatures(
+      root,
+      parameters,
+      selectedPart,
+      lidFace,
+      lidY,
+      dimensions,
+    );
+  }
+
+  applyObjectTransparency(root, transparentIds);
 
   if (hiddenFaces.length > 0) {
     const hidden = new Set(hiddenFaces);
     root.traverse((object) => {
       const enclosureFace = object.userData.enclosureFace as EnclosureFace | undefined;
       if (enclosureFace && hidden.has(enclosureFace)) object.visible = false;
-      if (hidden.has("top") && object.userData.partId === "lid") {
+      if (hidden.has(lidFace) && object.userData.partId === "lid") {
         object.visible = false;
       }
     });
@@ -1983,6 +3164,19 @@ export function buildPreviewModel(
       if (
         typeof object.userData.featureId === "string" &&
         hiddenFeatures.has(object.userData.featureId)
+      ) {
+        object.visible = false;
+      }
+    });
+  }
+
+  if (hiddenPcbBodyIds.length > 0) {
+    const hiddenPcbBodies = new Set(hiddenPcbBodyIds);
+    root.traverse((object) => {
+      if (
+        object.userData.featureKind === "pcb" &&
+        typeof object.userData.featureId === "string" &&
+        hiddenPcbBodies.has(object.userData.featureId)
       ) {
         object.visible = false;
       }
@@ -2010,6 +3204,10 @@ export function disposePreviewModel(root: THREE.Object3D): void {
       } else {
         object.material.dispose();
       }
+      const detachedMaterials = object.userData.detachedMaterials as
+        | THREE.Material[]
+        | undefined;
+      detachedMaterials?.forEach((material) => material.dispose());
     }
   });
 }

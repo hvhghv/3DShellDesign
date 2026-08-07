@@ -4,6 +4,7 @@ import {
   ArrowRightLeft,
   BadgeCheck,
   CheckCircle2,
+  CircuitBoard,
   Eye,
   EyeOff,
   Info,
@@ -21,6 +22,9 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { deriveEnclosureDimensions, validateDesign } from "../domain/enclosure";
 import {
   BATTERY_PRESETS,
+  BATTERY_INSERTION_SIDE_LABELS,
+  BATTERY_MOUNT_FACE_LABELS,
+  BATTERY_RETENTION_LABELS,
   getBatteryMaxRailHeight,
   getBatteryPreset,
 } from "../domain/batteries";
@@ -30,12 +34,25 @@ import {
 } from "../domain/magnetSupport";
 import { getMaterial, PANEL_MATERIALS, SHELL_MATERIALS } from "../domain/materials";
 import type {
+  BatteryInsertionSide,
+  BatteryMountFace,
+  BatteryRetentionType,
+  DisplayMountingType,
   EnclosureFace,
   InspectorTab,
+  PcbMountingType,
   PlacementRotation,
   SelectablePart,
   ValidationIssue,
 } from "../domain/model";
+import {
+  getPcbRailEntryDescription,
+  getPcbRailMovementAxis,
+} from "../domain/pcbRailDirection";
+import {
+  PARAMETRIC_PCB_FEATURE_ID,
+  PCB_MOUNTING_LABELS,
+} from "../domain/pcbMounting";
 import {
   ENCLOSURE_FACE_OPTIONS,
   getFaceLabel,
@@ -46,6 +63,7 @@ import {
   ANTENNA_DEFINITIONS,
   CONNECTOR_DEFINITIONS,
   FASTENER_DEFINITIONS,
+  type ConnectorDefinition,
   getAntennaDefinition,
   getConnectorDefinition,
   getFastenerDefinition,
@@ -62,6 +80,7 @@ interface NumberFieldProps {
   max: number;
   step?: number;
   unit?: string;
+  disabled?: boolean;
   onChange: (value: number) => void;
 }
 
@@ -72,6 +91,7 @@ function NumberField({
   max,
   step = 0.1,
   unit = "mm",
+  disabled = false,
   onChange,
 }: NumberFieldProps) {
   const [draftValue, setDraftValue] = useState(String(value));
@@ -108,6 +128,7 @@ function NumberField({
           min={min}
           max={max}
           step={step}
+          disabled={disabled}
           onFocus={() => {
             editingRef.current = true;
           }}
@@ -132,7 +153,7 @@ function NumberField({
 }
 
 interface ScrewHeadRecessControlsProps {
-  scope: "顶盖" | "面板";
+  scope: "可拆面" | "面板";
   enabled: boolean;
   depth: number;
   thickness: number;
@@ -192,20 +213,42 @@ function MaterialBadge({ materialId }: { materialId: string }) {
 function FeatureStateBanner({
   hidden,
   locked,
+  transparent,
+  bodyHidden,
   onShow,
   onUnlock,
+  onToggleTransparency,
+  onShowBody,
 }: {
   hidden: boolean;
   locked: boolean;
+  transparent: boolean;
+  bodyHidden: boolean;
   onShow: () => void;
   onUnlock: () => void;
+  onToggleTransparency: () => void;
+  onShowBody: () => void;
 }) {
-  if (!hidden && !locked) return null;
+  if (!hidden && !locked && !transparent && !bodyHidden) return null;
+  const stateLabels = [
+    hidden ? "隐藏" : null,
+    bodyHidden ? "PCB主体隐藏" : null,
+    locked ? "锁定" : null,
+    transparent ? "半透明" : null,
+  ].filter(Boolean);
   return (
     <div className="feature-state-banner" role="status">
       <span>
-        {hidden ? <EyeOff size={14} /> : <Lock size={14} />}
-        {hidden && locked ? "对象已隐藏并锁定" : hidden ? "对象已隐藏" : "对象已锁定"}
+        {hidden ? (
+          <EyeOff size={14} />
+        ) : bodyHidden ? (
+          <CircuitBoard size={14} />
+        ) : locked ? (
+          <Lock size={14} />
+        ) : (
+          <Eye size={14} />
+        )}
+        对象已{stateLabels.join("、")}
       </span>
       <span className="feature-state-actions">
         {hidden ? (
@@ -213,9 +256,29 @@ function FeatureStateBanner({
             <Eye size={14} />
           </button>
         ) : null}
+        {bodyHidden ? (
+          <button
+            type="button"
+            onClick={onShowBody}
+            title="显示PCB主体"
+            aria-label="显示PCB主体"
+          >
+            <CircuitBoard size={14} />
+          </button>
+        ) : null}
         {locked ? (
           <button type="button" onClick={onUnlock} title="解锁对象" aria-label="解锁对象">
             <LockOpen size={14} />
+          </button>
+        ) : null}
+        {transparent ? (
+          <button
+            type="button"
+            onClick={onToggleTransparency}
+            title="恢复不透明"
+            aria-label="恢复不透明"
+          >
+            <Eye size={14} />
           </button>
         ) : null}
       </span>
@@ -226,14 +289,92 @@ function FeatureStateBanner({
 const PART_LABELS: Record<SelectablePart, string> = {
   project: "项目参数",
   pcb: "PCB 与包络",
-  base: "下壳参数",
-  lid: "顶盖参数",
+  base: "壳体主体",
+  lid: "可拆面",
   panel: "面板参数",
   connector: "接口放置",
   antenna: "天线与射频空间",
   custom: "自定义组件",
   battery: "电池仓",
 };
+
+const CONNECTOR_CATEGORY_LABELS = {
+  usb: "USB",
+  power: "电源",
+  network: "网络",
+  terminal: "端子",
+  fpc: "FPC",
+  display: "显示屏",
+} as const;
+
+const DISPLAY_MOUNTING_OPTIONS: ReadonlyArray<{
+  id: DisplayMountingType;
+  name: string;
+}> = [
+  { id: "none", name: "无" },
+  { id: "screw", name: "螺丝" },
+];
+
+function ConnectorDefinitionOptions() {
+  return Object.entries(CONNECTOR_CATEGORY_LABELS).map(([category, label]) => {
+    const definitions = CONNECTOR_DEFINITIONS.filter(
+      (definition) => definition.category === category,
+    );
+    if (definitions.length === 0) return null;
+    return (
+      <optgroup key={category} label={label}>
+        {definitions.map((item) => (
+          <option key={item.id} value={item.id}>{item.name}</option>
+        ))}
+      </optgroup>
+    );
+  });
+}
+
+function getShortDrawingSource(source: string): string {
+  return source.split(/[\\/]/).pop() || source;
+}
+
+function DisplaySpecSummary({
+  definition,
+}: {
+  definition: ConnectorDefinition;
+}) {
+  const spec = definition.displaySpec;
+  if (!spec) {
+    return <p className="material-note">{definition.metadata.notes}</p>;
+  }
+
+  return (
+    <div className="display-spec-card" aria-label="显示屏规格摘要">
+      <div className="display-spec-card-heading">
+        <strong>{spec.diagonalInch.toFixed(1)}寸 SPI 屏</strong>
+        <span>{spec.resolution} · {spec.touch === "resistive" ? "电阻触摸" : "无触摸"}</span>
+      </div>
+      <div className="display-spec-grid">
+        <span>
+          <small>PCB</small>
+          <strong>{spec.pcbWidth.toFixed(2)} × {spec.pcbHeight.toFixed(2)}</strong>
+        </span>
+        <span>
+          <small>AA</small>
+          <strong>{spec.activeAreaWidth.toFixed(2)} × {spec.activeAreaHeight.toFixed(2)}</strong>
+        </span>
+        <span>
+          <small>开窗</small>
+          <strong>{spec.windowWidth.toFixed(2)} × {spec.windowHeight.toFixed(2)}</strong>
+        </span>
+        <span>
+          <small>厚度</small>
+          <strong>{spec.totalThicknessWithHeader.toFixed(2)} mm</strong>
+        </span>
+      </div>
+      <p>
+        驱动 {spec.driveIc} · {spec.headerPins}Pin · 资料 {getShortDrawingSource(spec.sourceDrawing)}
+      </p>
+    </div>
+  );
+}
 
 function IssueIcon({ issue }: { issue: ValidationIssue }) {
   if (issue.level === "error") return <AlertTriangle size={15} />;
@@ -249,11 +390,21 @@ export function Inspector() {
   const selectedPart = useDesignerStore((state) => state.selectedPart);
   const selectedFeatureId = useDesignerStore((state) => state.selectedFeatureId);
   const hiddenFeatureIds = useDesignerStore((state) => state.hiddenFeatureIds);
+  const hiddenPcbBodyIds = useDesignerStore((state) => state.hiddenPcbBodyIds);
   const lockedFeatureIds = useDesignerStore((state) => state.lockedFeatureIds);
+  const transparentObjectIds = useDesignerStore(
+    (state) => state.transparentObjectIds,
+  );
   const toggleFeatureVisibility = useDesignerStore(
     (state) => state.toggleFeatureVisibility,
   );
+  const togglePcbBodyVisibility = useDesignerStore(
+    (state) => state.togglePcbBodyVisibility,
+  );
   const toggleFeatureLock = useDesignerStore((state) => state.toggleFeatureLock);
+  const toggleObjectTransparency = useDesignerStore(
+    (state) => state.toggleObjectTransparency,
+  );
   const inspectorTab = useDesignerStore((state) => state.inspectorTab);
   const setInspectorTab = useDesignerStore((state) => state.setInspectorTab);
   const setParameter = useDesignerStore((state) => state.setParameter);
@@ -294,6 +445,18 @@ export function Inspector() {
   const selectedFeatureLocked = Boolean(
     selectedFeatureId && lockedFeatureIds.includes(selectedFeatureId),
   );
+  const selectedFeatureTransparent = Boolean(
+    selectedFeatureId && transparentObjectIds.includes(selectedFeatureId),
+  );
+  const selectedFeatureBodyHidden = Boolean(
+    selectedPart === "pcb" &&
+      selectedFeatureId &&
+      hiddenPcbBodyIds.includes(selectedFeatureId),
+  );
+  const pcbRailMounted = parameters.pcbMountingType !== "screw";
+  const parametricPcbRailMovementAxis = getPcbRailMovementAxis(parameters);
+  const isObjectTransparent = (id: string) => transparentObjectIds.includes(id);
+  const isPcbBodyHidden = (id: string) => hiddenPcbBodyIds.includes(id);
   useEffect(() => {
     inspectorRef.current
       ?.querySelectorAll<HTMLElement>(".contextual-inspector .inspector-section")
@@ -313,8 +476,12 @@ export function Inspector() {
     <FeatureStateBanner
       hidden={selectedFeatureHidden}
       locked={selectedFeatureLocked}
+      transparent={selectedFeatureTransparent}
+      bodyHidden={selectedFeatureBodyHidden}
       onShow={() => toggleFeatureVisibility(selectedFeatureId)}
       onUnlock={() => toggleFeatureLock(selectedFeatureId)}
+      onToggleTransparency={() => toggleObjectTransparency(selectedFeatureId)}
+      onShowBody={() => togglePcbBodyVisibility(selectedFeatureId)}
     />
   ) : null;
   const selectedPcbReference =
@@ -380,10 +547,54 @@ export function Inspector() {
     { id: "structure", label: "结构" },
     { id: "materials", label: "材料" },
   ];
+  const pcbMountingControls = (
+    <section className="inspector-section">
+      <h2>PCB 固定方式</h2>
+      <label className="select-field">
+        <span>固定结构</span>
+        <select
+          aria-label="PCB 固定结构"
+          value={parameters.pcbMountingType}
+          onChange={(event) =>
+            setParameter("pcbMountingType", event.currentTarget.value as PcbMountingType)
+          }
+        >
+          {Object.entries(PCB_MOUNTING_LABELS).map(([id, label]) => (
+            <option key={id} value={id}>{label}</option>
+          ))}
+        </select>
+      </label>
+      {parameters.pcbMountingType !== "screw" ? (
+        <>
+          <p className="material-note">
+            滑入方向：从 {getPcbRailEntryDescription(parameters, 0)}；侧向可拆面会自动决定滑槽开口，避免入口方向和可拆面不一致。
+          </p>
+          <NumberField label="导轨宽度" value={parameters.pcbRailWidth} min={1.2} max={8} step={0.1} onChange={(value) => setParameter("pcbRailWidth", value)} />
+          <NumberField label="压边高度" value={parameters.pcbRailHeight} min={1} max={6} step={0.1} onChange={(value) => setParameter("pcbRailHeight", value)} />
+          <NumberField label="滑槽余量" value={parameters.pcbRailClearance} min={0.1} max={2} step={0.1} onChange={(value) => setParameter("pcbRailClearance", value)} />
+          <NumberField label="闭口挡块" value={parameters.pcbStopWidth} min={0.8} max={20} step={0.5} onChange={(value) => setParameter("pcbStopWidth", value)} />
+          {parameters.pcbMountingType === "rail-elastic" ? (
+            <NumberField label="橡皮筋宽度" value={parameters.pcbElasticBandWidth} min={1} max={8} step={0.5} onChange={(value) => setParameter("pcbElasticBandWidth", value)} />
+          ) : null}
+          <p className="material-note">
+            两侧导轨会从可拆面方向引出，只形成下托边和上压边，不再生成底部支撑墙；橡皮筋模式会在闭口端生成挂点，让橡皮筋沿 PCB 长度方向从上下两面绕过，防止 PCB 顺着滑槽弹出。
+          </p>
+        </>
+      ) : (
+        <p className="material-note">
+          使用 PCB 安装孔生成螺丝柱；适合需要长期固定、不频繁拆装的结构。
+        </p>
+      )}
+    </section>
+  );
 
   if (selectedPart === "pcb" && selectedPcbReference) {
     const placement = selectedPcbReference;
     const reference = placement.reference;
+    const pcbRailMovementAxis = getPcbRailMovementAxis(
+      parameters,
+      placement.rotation,
+    );
     return (
       <aside ref={inspectorRef} className="inspector-panel" aria-label="PCB 检查器">
         <div className="inspector-title">
@@ -395,19 +606,68 @@ export function Inspector() {
           <section className="inspector-section">
             <div className="section-heading-row">
               <h2>PCB 参考位置</h2>
-              <button
-                className="icon-section-button"
-                type="button"
-                title="移除当前 PCB 参考"
-                aria-label="移除当前 PCB 参考"
-                onClick={() => clearPcbReference(placement.id)}
-              >
-                <Trash2 size={14} />
-              </button>
+              <span className="section-heading-actions">
+                <button
+                  className="icon-section-button is-visibility"
+                  type="button"
+                  title={selectedFeatureHidden ? "显示当前 PCB 全部" : "全隐藏当前 PCB"}
+                  aria-label={selectedFeatureHidden ? "显示当前 PCB 全部" : "全隐藏当前 PCB"}
+                  onClick={() => toggleFeatureVisibility(placement.id)}
+                >
+                  {selectedFeatureHidden ? <Eye size={14} /> : <EyeOff size={14} />}
+                </button>
+                <button
+                  className="icon-section-button is-visibility"
+                  type="button"
+                  title={
+                    isPcbBodyHidden(placement.id)
+                      ? "显示当前 PCB 主体"
+                      : "隐藏当前 PCB 主体"
+                  }
+                  aria-label={
+                    isPcbBodyHidden(placement.id)
+                      ? "显示当前 PCB 主体"
+                      : "隐藏当前 PCB 主体"
+                  }
+                  onClick={() => togglePcbBodyVisibility(placement.id)}
+                >
+                  <CircuitBoard size={14} />
+                </button>
+                <button
+                  className="icon-section-button is-transparency"
+                  type="button"
+                  title={
+                    isObjectTransparent(placement.id)
+                      ? "恢复当前 PCB 不透明"
+                      : "当前 PCB 半透明"
+                  }
+                  aria-label={
+                    isObjectTransparent(placement.id)
+                      ? "恢复当前 PCB 不透明"
+                      : "当前 PCB 半透明"
+                  }
+                  onClick={() => toggleObjectTransparency(placement.id)}
+                >
+                  {isObjectTransparent(placement.id) ? (
+                    <EyeOff size={14} />
+                  ) : (
+                    <Eye size={14} />
+                  )}
+                </button>
+                <button
+                  className="icon-section-button"
+                  type="button"
+                  title="移除当前 PCB 参考"
+                  aria-label="移除当前 PCB 参考"
+                  onClick={() => clearPcbReference(placement.id)}
+                >
+                  <Trash2 size={14} />
+                </button>
+              </span>
             </div>
-            <NumberField label="X 偏移" value={placement.offsetX} min={-500} max={500} step={1} onChange={(value) => updatePcbReferencePlacement(placement.id, { offsetX: value })} />
-            <NumberField label="Z 偏移" value={placement.offsetZ} min={-500} max={500} step={1} onChange={(value) => updatePcbReferencePlacement(placement.id, { offsetZ: value })} />
-            <NumberField label="抬高" value={placement.elevation} min={0} max={300} step={1} onChange={(value) => updatePcbReferencePlacement(placement.id, { elevation: value })} />
+            <NumberField label="X 偏移" value={placement.offsetX} min={-500} max={500} step={1} disabled={pcbRailMounted && pcbRailMovementAxis !== "x"} onChange={(value) => updatePcbReferencePlacement(placement.id, { offsetX: value })} />
+            <NumberField label="Z 偏移" value={placement.offsetZ} min={-500} max={500} step={1} disabled={pcbRailMounted && pcbRailMovementAxis !== "z"} onChange={(value) => updatePcbReferencePlacement(placement.id, { offsetZ: value })} />
+            <NumberField label="Y 偏移" value={placement.elevation} min={-parameters.standoffHeight} max={300} step={1} disabled={pcbRailMounted} onChange={(value) => updatePcbReferencePlacement(placement.id, { elevation: value })} />
             <label className="select-field">
               <span>平面旋转</span>
               <select
@@ -427,6 +687,11 @@ export function Inspector() {
             <p className="material-note">
               {(reference.bounds.maxX - reference.bounds.minX).toFixed(1)} × {(reference.bounds.maxY - reference.bounds.minY).toFixed(1)} × {reference.thickness.toFixed(1)} mm
             </p>
+            {pcbRailMounted ? (
+              <p className="material-note">
+                当前 PCB 使用滑槽固定，入口从 {getPcbRailEntryDescription(parameters, placement.rotation)}；只允许沿 {pcbRailMovementAxis?.toUpperCase() ?? "当前滑槽"} 轴调整位置，其他轴会由滑槽结构约束。
+              </p>
+            ) : null}
             <p className="material-note">
               {reference.format === "kicad_pcb"
                 ? `KiCad ${reference.version ?? "未知版本"} · ${reference.outlineElements} 段板框 · ${reference.mountingHoles.length} 个安装孔`
@@ -435,6 +700,86 @@ export function Inspector() {
                   : `STEP ${reference.outlineElements} 个实体 · ${(reference.triangleCount ?? 0).toLocaleString()} 三角面 · 高 ${(reference.overallHeight ?? 0).toFixed(1)} mm`}
             </p>
           </section>
+          {pcbMountingControls}
+        </div>
+      </aside>
+    );
+  }
+
+  if (selectedPart === "pcb" && parameters.parametricPcbEnabled) {
+    const pcbHidden = hiddenFeatureIds.includes(PARAMETRIC_PCB_FEATURE_ID);
+    const pcbLocked = lockedFeatureIds.includes(PARAMETRIC_PCB_FEATURE_ID);
+    const pcbTransparent = isObjectTransparent(PARAMETRIC_PCB_FEATURE_ID);
+    const pcbBodyHidden = isPcbBodyHidden(PARAMETRIC_PCB_FEATURE_ID);
+    return (
+      <aside ref={inspectorRef} className="inspector-panel" aria-label="参数 PCB 检查器">
+        <div className="inspector-title">
+          <span>参数 PCB</span>
+          <small>{parameters.pcbLength.toFixed(1)} × {parameters.pcbWidth.toFixed(1)} × {parameters.pcbThickness.toFixed(1)} mm</small>
+        </div>
+        <div className="inspector-scroll contextual-inspector">
+          <FeatureStateBanner
+            hidden={pcbHidden}
+            locked={pcbLocked}
+            transparent={pcbTransparent}
+            bodyHidden={pcbBodyHidden}
+            onShow={() => toggleFeatureVisibility(PARAMETRIC_PCB_FEATURE_ID)}
+            onUnlock={() => toggleFeatureLock(PARAMETRIC_PCB_FEATURE_ID)}
+            onToggleTransparency={() =>
+              toggleObjectTransparency(PARAMETRIC_PCB_FEATURE_ID)
+            }
+            onShowBody={() => togglePcbBodyVisibility(PARAMETRIC_PCB_FEATURE_ID)}
+          />
+          <section className="inspector-section">
+            <div className="section-heading-row">
+              <h2>PCB 位置</h2>
+              <span className="section-heading-actions">
+                <button
+                  className="icon-section-button is-visibility"
+                  type="button"
+                  title={pcbHidden ? "显示参数 PCB 全部" : "全隐藏参数 PCB"}
+                  aria-label={pcbHidden ? "显示参数 PCB 全部" : "全隐藏参数 PCB"}
+                  onClick={() => toggleFeatureVisibility(PARAMETRIC_PCB_FEATURE_ID)}
+                >
+                  {pcbHidden ? <Eye size={14} /> : <EyeOff size={14} />}
+                </button>
+                <button
+                  className="icon-section-button is-visibility"
+                  type="button"
+                  title={pcbBodyHidden ? "显示参数 PCB 主体" : "隐藏参数 PCB 主体"}
+                  aria-label={pcbBodyHidden ? "显示参数 PCB 主体" : "隐藏参数 PCB 主体"}
+                  onClick={() => togglePcbBodyVisibility(PARAMETRIC_PCB_FEATURE_ID)}
+                >
+                  <CircuitBoard size={14} />
+                </button>
+                <button
+                  className="icon-section-button is-transparency"
+                  type="button"
+                  title={pcbTransparent ? "恢复参数 PCB 不透明" : "参数 PCB 半透明"}
+                  aria-label={pcbTransparent ? "恢复参数 PCB 不透明" : "参数 PCB 半透明"}
+                  onClick={() => toggleObjectTransparency(PARAMETRIC_PCB_FEATURE_ID)}
+                >
+                  {pcbTransparent ? <EyeOff size={14} /> : <Eye size={14} />}
+                </button>
+              </span>
+            </div>
+            <NumberField label="X 位置" value={parameters.pcbOffsetX} min={-500} max={500} step={1} disabled={pcbRailMounted && parametricPcbRailMovementAxis !== "x"} onChange={(value) => setParameter("pcbOffsetX", value)} />
+            <NumberField label="Y 偏移" value={parameters.pcbElevation} min={-parameters.standoffHeight} max={300} step={1} disabled={pcbRailMounted} onChange={(value) => setParameter("pcbElevation", value)} />
+            <NumberField label="Z 位置" value={parameters.pcbOffsetZ} min={-500} max={500} step={1} disabled={pcbRailMounted && parametricPcbRailMovementAxis !== "z"} onChange={(value) => setParameter("pcbOffsetZ", value)} />
+            <p className="material-note">
+              {pcbRailMounted
+                ? `当前 PCB 使用滑槽固定，入口从 ${getPcbRailEntryDescription(parameters, 0)}；只允许沿 ${parametricPcbRailMovementAxis?.toUpperCase() ?? "当前滑槽"} 轴调整位置，其他轴会由滑槽结构约束。`
+                : "Y 偏移是相对“PCB 基准高度”的附加高度；可输入负值下移，但最低不会穿过底板。"}
+            </p>
+          </section>
+          <section className="inspector-section">
+            <h2>PCB 尺寸</h2>
+            <NumberField label="长度" value={parameters.pcbLength} min={20} max={300} step={1} onChange={(value) => setParameter("pcbLength", value)} />
+            <NumberField label="宽度" value={parameters.pcbWidth} min={20} max={220} step={1} onChange={(value) => setParameter("pcbWidth", value)} />
+            <NumberField label="板厚" value={parameters.pcbThickness} min={0.6} max={5} onChange={(value) => setParameter("pcbThickness", value)} />
+            <NumberField label="最高元件" value={parameters.componentHeight} min={0} max={80} step={0.5} onChange={(value) => setParameter("componentHeight", value)} />
+          </section>
+          {pcbMountingControls}
         </div>
       </aside>
     );
@@ -453,15 +798,38 @@ export function Inspector() {
           <section className="inspector-section">
             <div className="section-heading-row">
               <h2>自定义组件参数</h2>
-              <button
-                className="icon-section-button"
-                type="button"
-                title="删除当前自定义组件"
-                aria-label="删除当前自定义组件"
-                onClick={() => removeCustomComponent(component.id)}
-              >
-                <Trash2 size={14} />
-              </button>
+              <span className="section-heading-actions">
+                <button
+                  className="icon-section-button is-transparency"
+                  type="button"
+                  title={
+                    isObjectTransparent(component.id)
+                      ? "恢复当前自定义组件不透明"
+                      : "当前自定义组件半透明"
+                  }
+                  aria-label={
+                    isObjectTransparent(component.id)
+                      ? "恢复当前自定义组件不透明"
+                      : "当前自定义组件半透明"
+                  }
+                  onClick={() => toggleObjectTransparency(component.id)}
+                >
+                  {isObjectTransparent(component.id) ? (
+                    <EyeOff size={14} />
+                  ) : (
+                    <Eye size={14} />
+                  )}
+                </button>
+                <button
+                  className="icon-section-button"
+                  type="button"
+                  title="删除当前自定义组件"
+                  aria-label="删除当前自定义组件"
+                  onClick={() => removeCustomComponent(component.id)}
+                >
+                  <Trash2 size={14} />
+                </button>
+              </span>
             </div>
             <label className="select-field">
               <span>名称</span>
@@ -540,15 +908,38 @@ export function Inspector() {
           <section className="inspector-section">
             <div className="section-heading-row">
               <h2>电池仓参数</h2>
-              <button
-                className="icon-section-button"
-                type="button"
-                title="删除当前电池仓"
-                aria-label="删除当前电池仓"
-                onClick={() => removeBatteryCompartment(compartment.id)}
-              >
-                <Trash2 size={14} />
-              </button>
+              <span className="section-heading-actions">
+                <button
+                  className="icon-section-button is-transparency"
+                  type="button"
+                  title={
+                    isObjectTransparent(compartment.id)
+                      ? "恢复当前电池仓不透明"
+                      : "当前电池仓半透明"
+                  }
+                  aria-label={
+                    isObjectTransparent(compartment.id)
+                      ? "恢复当前电池仓不透明"
+                      : "当前电池仓半透明"
+                  }
+                  onClick={() => toggleObjectTransparency(compartment.id)}
+                >
+                  {isObjectTransparent(compartment.id) ? (
+                    <EyeOff size={14} />
+                  ) : (
+                    <Eye size={14} />
+                  )}
+                </button>
+                <button
+                  className="icon-section-button"
+                  type="button"
+                  title="删除当前电池仓"
+                  aria-label="删除当前电池仓"
+                  onClick={() => removeBatteryCompartment(compartment.id)}
+                >
+                  <Trash2 size={14} />
+                </button>
+              </span>
             </div>
             <label className="select-field">
               <span>电池规格</span>
@@ -567,14 +958,65 @@ export function Inspector() {
                 ))}
               </select>
             </label>
+            <label className="select-field">
+              <span>安装位置</span>
+              <select
+                aria-label={`电池仓 ${selectedBatteryCompartmentIndex + 1} 安装位置`}
+                value={compartment.face}
+                onChange={(event) =>
+                  updateBatteryCompartment(compartment.id, {
+                    face: event.currentTarget.value as BatteryMountFace,
+                  })
+                }
+              >
+                {Object.entries(BATTERY_MOUNT_FACE_LABELS).map(([id, label]) => (
+                  <option key={id} value={id}>{label}</option>
+                ))}
+              </select>
+            </label>
+            <label className="select-field">
+              <span>固定方式</span>
+              <select
+                aria-label={`电池仓 ${selectedBatteryCompartmentIndex + 1} 固定方式`}
+                value={compartment.retentionType}
+                onChange={(event) =>
+                  updateBatteryCompartment(compartment.id, {
+                    retentionType: event.currentTarget.value as BatteryRetentionType,
+                  })
+                }
+              >
+                {Object.entries(BATTERY_RETENTION_LABELS).map(([id, label]) => (
+                  <option key={id} value={id}>{label}</option>
+                ))}
+              </select>
+            </label>
+            <label className="select-field">
+              <span>滑入方向</span>
+              <select
+                aria-label={`电池仓 ${selectedBatteryCompartmentIndex + 1} 滑入方向`}
+                value={compartment.insertionSide}
+                onChange={(event) =>
+                  updateBatteryCompartment(compartment.id, {
+                    insertionSide: event.currentTarget.value as BatteryInsertionSide,
+                  })
+                }
+              >
+                {Object.entries(BATTERY_INSERTION_SIDE_LABELS).map(([id, label]) => (
+                  <option key={id} value={id}>{label}</option>
+                ))}
+              </select>
+            </label>
+            <p className="material-note">
+              入口端只生成低矮导向块，另一端保留止挡；橡皮筋模式会生成挂耳，电池从滑入端推入后用橡皮筋封口。
+            </p>
             <NumberField label="槽位数量" value={compartment.cellCount} min={1} max={6} step={1} unit="槽" onChange={(value) => updateBatteryCompartment(compartment.id, { cellCount: value })} />
             <NumberField label="仓体长度" value={compartment.width} min={4} max={300} step={1} onChange={(value) => updateBatteryCompartment(compartment.id, { width: value })} />
             <NumberField label="仓体宽度" value={compartment.depth} min={4} max={300} step={1} onChange={(value) => updateBatteryCompartment(compartment.id, { depth: value })} />
             <NumberField label="挡边高度" value={compartment.height} min={4} max={getBatteryMaxRailHeight(preset)} step={0.5} onChange={(value) => updateBatteryCompartment(compartment.id, { height: value })} />
             <NumberField label="仓壁厚度" value={compartment.wallThickness} min={0.8} max={5} step={0.1} onChange={(value) => updateBatteryCompartment(compartment.id, { wallThickness: value })} />
             <NumberField label="电池间隙" value={compartment.clearance} min={0.2} max={5} step={0.1} onChange={(value) => updateBatteryCompartment(compartment.id, { clearance: value })} />
-            <NumberField label="X 偏移" value={compartment.offsetX} min={-500} max={500} step={1} onChange={(value) => updateBatteryCompartment(compartment.id, { offsetX: value })} />
-            <NumberField label="Z 偏移" value={compartment.offsetZ} min={-500} max={500} step={1} onChange={(value) => updateBatteryCompartment(compartment.id, { offsetZ: value })} />
+            <NumberField label="面内横向" value={compartment.offsetX} min={-500} max={500} step={1} onChange={(value) => updateBatteryCompartment(compartment.id, { offsetX: value })} />
+            <NumberField label="面内纵向" value={compartment.offsetZ} min={-500} max={500} step={1} onChange={(value) => updateBatteryCompartment(compartment.id, { offsetZ: value })} />
             <label className="select-field">
               <span>平面旋转</span>
               <select
@@ -621,6 +1063,27 @@ export function Inspector() {
                   onClick={() => toggleFeatureVisibility(panel.id)}
                 >
                   {selectedFeatureHidden ? <Eye size={14} /> : <EyeOff size={14} />}
+                </button>
+                <button
+                  className="icon-section-button is-transparency"
+                  type="button"
+                  title={
+                    isObjectTransparent(panel.id)
+                      ? "恢复当前面板不透明"
+                      : "当前面板半透明"
+                  }
+                  aria-label={
+                    isObjectTransparent(panel.id)
+                      ? "恢复当前面板不透明"
+                      : "当前面板半透明"
+                  }
+                  onClick={() => toggleObjectTransparency(panel.id)}
+                >
+                  {isObjectTransparent(panel.id) ? (
+                    <EyeOff size={14} />
+                  ) : (
+                    <Eye size={14} />
+                  )}
                 </button>
                 <button
                   className="icon-section-button"
@@ -740,16 +1203,39 @@ export function Inspector() {
           {featureStateBanner}
           <section className="inspector-section connector-placement">
             <div className="section-heading-row">
-              <h2>接口参数</h2>
-              <button
-                className="icon-section-button"
-                type="button"
-                title="删除当前接口"
-                aria-label="删除当前接口"
-                onClick={() => removeConnectorPlacement(placement.id)}
-              >
-                <Trash2 size={14} />
-              </button>
+              <h2>{definition.displaySpec ? "显示屏参数" : "接口参数"}</h2>
+              <span className="section-heading-actions">
+                <button
+                  className="icon-section-button is-transparency"
+                  type="button"
+                  title={
+                    isObjectTransparent(placement.id)
+                      ? "恢复当前接口不透明"
+                      : "当前接口半透明"
+                  }
+                  aria-label={
+                    isObjectTransparent(placement.id)
+                      ? "恢复当前接口不透明"
+                      : "当前接口半透明"
+                  }
+                  onClick={() => toggleObjectTransparency(placement.id)}
+                >
+                  {isObjectTransparent(placement.id) ? (
+                    <EyeOff size={14} />
+                  ) : (
+                    <Eye size={14} />
+                  )}
+                </button>
+                <button
+                  className="icon-section-button"
+                  type="button"
+                  title="删除当前接口"
+                  aria-label="删除当前接口"
+                  onClick={() => removeConnectorPlacement(placement.id)}
+                >
+                  <Trash2 size={14} />
+                </button>
+              </span>
             </div>
             <label className="select-field">
               <span>器件</span>
@@ -760,9 +1246,7 @@ export function Inspector() {
                   setConnectorDefinition(placement.id, event.currentTarget.value)
                 }
               >
-                {CONNECTOR_DEFINITIONS.map((item) => (
-                  <option key={item.id} value={item.id}>{item.name}</option>
-                ))}
+                <ConnectorDefinitionOptions />
               </select>
             </label>
             <label className="select-field">
@@ -811,7 +1295,7 @@ export function Inspector() {
                 label="孔径"
                 value={placement.cutoutWidth}
                 min={1}
-                max={60}
+                max={120}
                 onChange={(value) =>
                   updateConnectorPlacement(placement.id, {
                     cutoutWidth: value,
@@ -821,13 +1305,31 @@ export function Inspector() {
               />
             ) : (
               <>
-                <NumberField label="开孔宽度" value={placement.cutoutWidth} min={1} max={60} onChange={(value) => updateConnectorPlacement(placement.id, { cutoutWidth: value })} />
-                <NumberField label="开孔高度" value={placement.cutoutHeight} min={1} max={60} onChange={(value) => updateConnectorPlacement(placement.id, { cutoutHeight: value })} />
+                <NumberField label={definition.displaySpec ? "开窗宽度" : "开孔宽度"} value={placement.cutoutWidth} min={1} max={220} onChange={(value) => updateConnectorPlacement(placement.id, { cutoutWidth: value })} />
+                <NumberField label={definition.displaySpec ? "开窗高度" : "开孔高度"} value={placement.cutoutHeight} min={1} max={220} onChange={(value) => updateConnectorPlacement(placement.id, { cutoutHeight: value })} />
               </>
             )}
             <NumberField label="横向偏移" value={placement.offsetU} min={-300} max={300} step={1} onChange={(value) => updateConnectorPlacement(placement.id, { offsetU: value })} />
             <NumberField label="纵向偏移" value={placement.offsetV} min={-300} max={300} step={1} onChange={(value) => updateConnectorPlacement(placement.id, { offsetV: value })} />
-            <p className="material-note">{definition.metadata.notes}</p>
+            {definition.displaySpec ? (
+              <label className="select-field">
+                <span>固定方式</span>
+                <select
+                  aria-label={`接口 ${selectedConnectorIndex + 1} 显示屏固定`}
+                  value={placement.displayMountingType ?? "none"}
+                  onChange={(event) =>
+                    updateConnectorPlacement(placement.id, {
+                      displayMountingType: event.currentTarget.value as DisplayMountingType,
+                    })
+                  }
+                >
+                  {DISPLAY_MOUNTING_OPTIONS.map((option) => (
+                    <option key={option.id} value={option.id}>{option.name}</option>
+                  ))}
+                </select>
+              </label>
+            ) : null}
+            <DisplaySpecSummary definition={definition} />
           </section>
         </div>
       </aside>
@@ -852,15 +1354,38 @@ export function Inspector() {
           <section className="inspector-section">
             <div className="section-heading-row">
               <h2>天线参数</h2>
-              <button
-                className="icon-section-button"
-                type="button"
-                title="删除当前天线"
-                aria-label="删除当前天线"
-                onClick={() => removeAntennaPlacement(placement.id)}
-              >
-                <Trash2 size={14} />
-              </button>
+              <span className="section-heading-actions">
+                <button
+                  className="icon-section-button is-transparency"
+                  type="button"
+                  title={
+                    isObjectTransparent(placement.id)
+                      ? "恢复当前天线不透明"
+                      : "当前天线半透明"
+                  }
+                  aria-label={
+                    isObjectTransparent(placement.id)
+                      ? "恢复当前天线不透明"
+                      : "当前天线半透明"
+                  }
+                  onClick={() => toggleObjectTransparency(placement.id)}
+                >
+                  {isObjectTransparent(placement.id) ? (
+                    <EyeOff size={14} />
+                  ) : (
+                    <Eye size={14} />
+                  )}
+                </button>
+                <button
+                  className="icon-section-button"
+                  type="button"
+                  title="删除当前天线"
+                  aria-label="删除当前天线"
+                  onClick={() => removeAntennaPlacement(placement.id)}
+                >
+                  <Trash2 size={14} />
+                </button>
+              </span>
             </div>
             <label className="select-field">
               <span>类型</span>
@@ -1012,14 +1537,29 @@ export function Inspector() {
               <NumberField label="最高元件" value={parameters.componentHeight} min={0} max={80} step={0.5} onChange={(value) => setParameter("componentHeight", value)} />
               <NumberField label="板边间隙" value={parameters.boardClearance} min={0} max={15} onChange={(value) => setParameter("boardClearance", value)} />
             </section>
+            {pcbMountingControls}
             <section className="inspector-section">
               <h2>壳体</h2>
               <NumberField label="壁厚" value={parameters.wallThickness} min={0.8} max={8} onChange={(value) => setParameter("wallThickness", value)} />
-              <NumberField label="底厚" value={parameters.bottomThickness} min={0.8} max={8} onChange={(value) => setParameter("bottomThickness", value)} />
-              <NumberField label="下壳高度" value={parameters.baseHeight} min={8} max={120} step={1} onChange={(value) => setParameter("baseHeight", value)} />
+              <NumberField label="底面厚度" value={parameters.bottomThickness} min={0.8} max={8} onChange={(value) => setParameter("bottomThickness", value)} />
+              <NumberField label="内部深度" value={parameters.baseHeight} min={8} max={120} step={1} onChange={(value) => setParameter("baseHeight", value)} />
               <NumberField label="外圆角" value={parameters.cornerRadius} min={0.5} max={30} onChange={(value) => setParameter("cornerRadius", value)} />
-              <NumberField label="PCB 离底" value={parameters.standoffHeight} min={0} max={30} onChange={(value) => setParameter("standoffHeight", value)} />
-              <NumberField label="顶盖厚度" value={parameters.lidThickness} min={0.8} max={8} onChange={(value) => setParameter("lidThickness", value)} />
+              <NumberField label="PCB 基准高度" value={parameters.standoffHeight} min={0} max={30} onChange={(value) => setParameter("standoffHeight", value)} />
+              <label className="select-field">
+                <span>可拆面位置</span>
+                <select
+                  aria-label="可拆面位置"
+                  value={parameters.lidFace}
+                  onChange={(event) =>
+                    setParameter("lidFace", event.currentTarget.value as EnclosureFace)
+                  }
+                >
+                  {ENCLOSURE_FACE_OPTIONS.map((option) => (
+                    <option key={option.id} value={option.id}>{option.name}</option>
+                  ))}
+                </select>
+              </label>
+              <NumberField label="可拆面厚度" value={parameters.lidThickness} min={0.8} max={8} onChange={(value) => setParameter("lidThickness", value)} />
             </section>
           </>
         ) : null}
@@ -1027,8 +1567,8 @@ export function Inspector() {
         {inspectorTab === "structure" ? (
           <>
             <section className="inspector-section">
-              <h2>顶盖固定</h2>
-              <div className="closure-control" role="group" aria-label="顶盖固定方式">
+              <h2>可拆面固定</h2>
+              <div className="closure-control" role="group" aria-label="可拆面固定方式">
                 <button className={parameters.closureType === "screw" ? "is-active" : ""} type="button" onClick={() => setParameter("closureType", "screw")}>
                   <Wrench size={17} />
                   <span>螺丝</span>
@@ -1073,7 +1613,7 @@ export function Inspector() {
                     </select>
                   </label>
                   <ScrewHeadRecessControls
-                    scope="顶盖"
+                    scope="可拆面"
                     enabled={parameters.closureScrewHeadRecessEnabled}
                     depth={parameters.closureScrewHeadRecessDepth}
                     thickness={parameters.lidThickness}
@@ -1116,15 +1656,38 @@ export function Inspector() {
               <div className="section-heading-row">
                 <h2>面板参数</h2>
                 {selectedPanel ? (
-                  <button
-                    className="icon-section-button"
-                    type="button"
-                    title="删除当前面板"
-                    aria-label="删除当前面板"
-                    onClick={() => removePanelPlacement(selectedPanel.id)}
-                  >
-                    <Trash2 size={14} />
-                  </button>
+                  <span className="section-heading-actions">
+                    <button
+                      className="icon-section-button is-transparency"
+                      type="button"
+                      title={
+                        isObjectTransparent(selectedPanel.id)
+                          ? "恢复当前面板不透明"
+                          : "当前面板半透明"
+                      }
+                      aria-label={
+                        isObjectTransparent(selectedPanel.id)
+                          ? "恢复当前面板不透明"
+                          : "当前面板半透明"
+                      }
+                      onClick={() => toggleObjectTransparency(selectedPanel.id)}
+                    >
+                      {isObjectTransparent(selectedPanel.id) ? (
+                        <EyeOff size={14} />
+                      ) : (
+                        <Eye size={14} />
+                      )}
+                    </button>
+                    <button
+                      className="icon-section-button"
+                      type="button"
+                      title="删除当前面板"
+                      aria-label="删除当前面板"
+                      onClick={() => removePanelPlacement(selectedPanel.id)}
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                  </span>
                 ) : null}
               </div>
               {selectedPanel ? (
@@ -1193,17 +1756,40 @@ export function Inspector() {
             </section>
             <section className="inspector-section">
               <div className="section-heading-row">
-                <h2>接口参数</h2>
+                <h2>{selectedConnector && getConnectorDefinition(selectedConnector.definitionId).displaySpec ? "显示屏参数" : "接口参数"}</h2>
                 {selectedConnector ? (
-                  <button
-                    className="icon-section-button"
-                    type="button"
-                    title="删除当前接口"
-                    aria-label="删除当前接口"
-                    onClick={() => removeConnectorPlacement(selectedConnector.id)}
-                  >
-                    <Trash2 size={14} />
-                  </button>
+                  <span className="section-heading-actions">
+                    <button
+                      className="icon-section-button is-transparency"
+                      type="button"
+                      title={
+                        isObjectTransparent(selectedConnector.id)
+                          ? "恢复当前接口不透明"
+                          : "当前接口半透明"
+                      }
+                      aria-label={
+                        isObjectTransparent(selectedConnector.id)
+                          ? "恢复当前接口不透明"
+                          : "当前接口半透明"
+                      }
+                      onClick={() => toggleObjectTransparency(selectedConnector.id)}
+                    >
+                      {isObjectTransparent(selectedConnector.id) ? (
+                        <EyeOff size={14} />
+                      ) : (
+                        <Eye size={14} />
+                      )}
+                    </button>
+                    <button
+                      className="icon-section-button"
+                      type="button"
+                      title="删除当前接口"
+                      aria-label="删除当前接口"
+                      onClick={() => removeConnectorPlacement(selectedConnector.id)}
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                  </span>
                 ) : null}
               </div>
               {selectedConnector ? (() => {
@@ -1225,9 +1811,7 @@ export function Inspector() {
                         setConnectorDefinition(placement.id, event.currentTarget.value)
                       }
                     >
-                      {CONNECTOR_DEFINITIONS.map((definition) => (
-                        <option key={definition.id} value={definition.id}>{definition.name}</option>
-                      ))}
+                      <ConnectorDefinitionOptions />
                     </select>
                   </label>
                   <label className="select-field">
@@ -1276,7 +1860,7 @@ export function Inspector() {
                       label="孔径"
                       value={placement.cutoutWidth}
                       min={1}
-                      max={60}
+                      max={120}
                       onChange={(value) => {
                         updateConnectorPlacement(placement.id, {
                           cutoutWidth: value,
@@ -1286,13 +1870,31 @@ export function Inspector() {
                     />
                   ) : (
                     <>
-                      <NumberField label="开孔宽度" value={placement.cutoutWidth} min={1} max={60} onChange={(value) => updateConnectorPlacement(placement.id, { cutoutWidth: value })} />
-                      <NumberField label="开孔高度" value={placement.cutoutHeight} min={1} max={60} onChange={(value) => updateConnectorPlacement(placement.id, { cutoutHeight: value })} />
+                      <NumberField label={definition.displaySpec ? "开窗宽度" : "开孔宽度"} value={placement.cutoutWidth} min={1} max={220} onChange={(value) => updateConnectorPlacement(placement.id, { cutoutWidth: value })} />
+                      <NumberField label={definition.displaySpec ? "开窗高度" : "开孔高度"} value={placement.cutoutHeight} min={1} max={220} onChange={(value) => updateConnectorPlacement(placement.id, { cutoutHeight: value })} />
                     </>
                   )}
                   <NumberField label="横向偏移" value={placement.offsetU} min={-300} max={300} step={1} onChange={(value) => updateConnectorPlacement(placement.id, { offsetU: value })} />
                   <NumberField label="纵向偏移" value={placement.offsetV} min={-300} max={300} step={1} onChange={(value) => updateConnectorPlacement(placement.id, { offsetV: value })} />
-                  <p className="material-note">{definition.metadata.notes}</p>
+                  {definition.displaySpec ? (
+                    <label className="select-field">
+                      <span>固定方式</span>
+                      <select
+                        aria-label={`接口 ${index + 1} 显示屏固定`}
+                        value={placement.displayMountingType ?? "none"}
+                        onChange={(event) =>
+                          updateConnectorPlacement(placement.id, {
+                            displayMountingType: event.currentTarget.value as DisplayMountingType,
+                          })
+                        }
+                      >
+                        {DISPLAY_MOUNTING_OPTIONS.map((option) => (
+                          <option key={option.id} value={option.id}>{option.name}</option>
+                        ))}
+                      </select>
+                    </label>
+                  ) : null}
+                  <DisplaySpecSummary definition={definition} />
                   </div>
                 );
               })() : null}

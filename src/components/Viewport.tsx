@@ -4,10 +4,56 @@ import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { TransformControls } from "three/examples/jsm/controls/TransformControls.js";
 import { buildPreviewModel, disposePreviewModel } from "../geometry/buildPreviewModel";
-import { useDesignerStore } from "../store/designerStore";
-import type { EnclosureFace, SelectablePart } from "../domain/model";
+import { getPcbRailMovementAxis } from "../domain/pcbRailDirection";
+import {
+  useDesignerStore,
+  type TransformAxisConstraint,
+  type TransformMode,
+} from "../store/designerStore";
+import type { DesignerParameters, EnclosureFace, SelectablePart } from "../domain/model";
 import { SELECTABLE_PART_LABELS } from "../domain/parts";
 import { getPlacementSurfaceOffsets } from "../domain/placements";
+
+type EditableViewportPart =
+  | "pcb"
+  | "panel"
+  | "connector"
+  | "antenna"
+  | "custom"
+  | "battery";
+
+function isEditableViewportPart(part: SelectablePart): part is EditableViewportPart {
+  return (
+    part === "pcb" ||
+    part === "panel" ||
+    part === "connector" ||
+    part === "antenna" ||
+    part === "custom" ||
+    part === "battery"
+  );
+}
+
+function canScalePart(part: SelectablePart): boolean {
+  return part === "panel" || part === "custom";
+}
+
+function canScaleFeatureKind(featureKind: string | undefined): boolean {
+  return featureKind === "panel" || featureKind === "custom";
+}
+
+function getEffectiveTransformMode(
+  requestedMode: TransformMode,
+  scalable: boolean,
+): TransformMode {
+  return requestedMode === "scale" && scalable ? "scale" : "move";
+}
+
+function isShortcutInputTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false;
+  return Boolean(
+    target.closest("input, textarea, select, button, [contenteditable='true']"),
+  );
+}
 
 function getEditableFeature(object: THREE.Object3D | null): THREE.Object3D | null {
   let current = object;
@@ -101,13 +147,95 @@ function configureAllTransformAxes(controls: TransformControls): void {
   controls.showXZ = true;
 }
 
-function configureFloorTransformAxes(controls: TransformControls): void {
-  controls.showX = true;
+function configurePcbTransformAxes(
+  controls: TransformControls,
+  railMovementAxis: "x" | "z" | null,
+): void {
+  if (railMovementAxis === null) {
+    configureAllTransformAxes(controls);
+    return;
+  }
+  controls.showX = railMovementAxis === "x";
   controls.showY = false;
-  controls.showZ = true;
+  controls.showZ = railMovementAxis === "z";
   controls.showXY = false;
   controls.showYZ = false;
-  controls.showXZ = true;
+  controls.showXZ = false;
+}
+
+function applyAxisConstraint(
+  controls: TransformControls,
+  axis: TransformAxisConstraint,
+): void {
+  if (axis === "all") return;
+  if (
+    (axis === "x" && !controls.showX) ||
+    (axis === "y" && !controls.showY) ||
+    (axis === "z" && !controls.showZ)
+  ) {
+    return;
+  }
+  const allowX = controls.showX;
+  const allowY = controls.showY;
+  const allowZ = controls.showZ;
+  controls.showX = axis === "x" && allowX;
+  controls.showY = axis === "y" && allowY;
+  controls.showZ = axis === "z" && allowZ;
+  controls.showXY = false;
+  controls.showYZ = false;
+  controls.showXZ = false;
+}
+
+function isAxisAvailableOnFace(
+  face: EnclosureFace,
+  axis: TransformAxisConstraint,
+): boolean {
+  if (axis === "all") return true;
+  if (face === "top" || face === "bottom") return axis === "x" || axis === "z";
+  if (face === "left" || face === "right") return axis === "y" || axis === "z";
+  return axis === "x" || axis === "y";
+}
+
+function getPcbFeatureRotation(
+  parameters: Pick<DesignerParameters, "pcbReferences">,
+  selectedFeatureId: string | null,
+): number {
+  if (!selectedFeatureId) return 0;
+  return (
+    parameters.pcbReferences.find((placement) => placement.id === selectedFeatureId)
+      ?.rotation ?? 0
+  );
+}
+
+function canUseAxisConstraint(
+  axis: TransformAxisConstraint,
+  selectedPart: SelectablePart,
+  selectedFeatureId: string | null,
+  model: THREE.Object3D | null,
+  parameters: Pick<
+    DesignerParameters,
+    | "lidFace"
+    | "pcbInsertionSide"
+    | "pcbMountingType"
+    | "pcbRailAxis"
+    | "pcbReferences"
+  >,
+): boolean {
+  if (axis === "all") return true;
+  if (selectedPart === "pcb") {
+    const railMovementAxis = getPcbRailMovementAxis(
+      parameters,
+      getPcbFeatureRotation(parameters, selectedFeatureId),
+    );
+    return railMovementAxis === null ? true : axis === railMovementAxis;
+  }
+  if (selectedPart === "custom") return true;
+  if (!selectedFeatureId || !isEditableViewportPart(selectedPart)) return false;
+  const feature = model
+    ? findEditableFeature(model, selectedFeatureId, selectedPart)
+    : null;
+  const face = feature?.userData.face as EnclosureFace | undefined;
+  return face ? isAxisAvailableOnFace(face, axis) : true;
 }
 
 function commitFeatureTransform(object: THREE.Object3D): void {
@@ -116,6 +244,10 @@ function commitFeatureTransform(object: THREE.Object3D): void {
   const featureKind = object.userData.featureKind as string | undefined;
   const face = object.userData.face as EnclosureFace | undefined;
   if (!featureId) return;
+  const effectiveTransformMode = getEffectiveTransformMode(
+    state.transformMode,
+    canScaleFeatureKind(featureKind),
+  );
 
   if (featureKind === "pcb") {
     state.updatePcbReferencePlacement(featureId, {
@@ -130,7 +262,7 @@ function commitFeatureTransform(object: THREE.Object3D): void {
   }
 
   if (featureKind === "custom") {
-    if (state.transformMode === "move") {
+    if (effectiveTransformMode === "move") {
       state.updateCustomComponent(featureId, {
         positionX: object.position.x,
         positionY: object.position.y,
@@ -156,6 +288,15 @@ function commitFeatureTransform(object: THREE.Object3D): void {
   }
 
   if (featureKind === "battery") {
+    if (face) {
+      const [offsetX, offsetZ] = getSurfaceCoordinates(
+        face,
+        object.position,
+        state.parameters.baseHeight,
+      );
+      state.updateBatteryCompartment(featureId, { offsetX, offsetZ });
+      return;
+    }
     state.updateBatteryCompartment(featureId, {
       offsetX: object.position.x,
       offsetZ: object.position.z,
@@ -165,7 +306,7 @@ function commitFeatureTransform(object: THREE.Object3D): void {
 
   if (!face) return;
 
-  if (state.transformMode === "move" || featureKind === "antenna") {
+  if (effectiveTransformMode === "move") {
     let [offsetU, offsetV] = getSurfaceCoordinates(
       face,
       object.position,
@@ -275,21 +416,108 @@ export function Viewport() {
     (state) => state.customComponentPreviews,
   );
   const lidTransparent = useDesignerStore((state) => state.lidTransparent);
+  const transparentObjectIds = useDesignerStore(
+    (state) => state.transparentObjectIds,
+  );
   const hiddenFaces = useDesignerStore((state) => state.hiddenFaces);
   const hiddenFeatureIds = useDesignerStore((state) => state.hiddenFeatureIds);
+  const hiddenPcbBodyIds = useDesignerStore((state) => state.hiddenPcbBodyIds);
   const lockedFeatureIds = useDesignerStore((state) => state.lockedFeatureIds);
   const selectedPart = useDesignerStore((state) => state.selectedPart);
   const selectedFeatureId = useDesignerStore((state) => state.selectedFeatureId);
   const transformMode = useDesignerStore((state) => state.transformMode);
+  const transformEditMode = useDesignerStore((state) => state.transformEditMode);
+  const transformAxisConstraint = useDesignerStore(
+    (state) => state.transformAxisConstraint,
+  );
   const focusedPart = useDesignerStore((state) => state.focusedPart);
   const setSelectedPart = useDesignerStore((state) => state.setSelectedPart);
   const setSelectedFeature = useDesignerStore((state) => state.setSelectedFeature);
   const setTransformMode = useDesignerStore((state) => state.setTransformMode);
+  const setTransformEditMode = useDesignerStore(
+    (state) => state.setTransformEditMode,
+  );
   const focusSelectedPart = useDesignerStore((state) => state.focusSelectedPart);
   const showAllParts = useDesignerStore((state) => state.showAllParts);
   const showGrid = useDesignerStore((state) => state.showGrid);
   const exploded = useDesignerStore((state) => state.exploded);
   const cameraResetToken = useDesignerStore((state) => state.cameraResetToken);
+  const selectedPartEditable = isEditableViewportPart(selectedPart);
+  const selectedFeatureReadOnly = Boolean(
+    selectedFeatureId &&
+      (hiddenFeatureIds.includes(selectedFeatureId) ||
+        lockedFeatureIds.includes(selectedFeatureId)),
+  );
+  const selectedFeatureEditable = Boolean(
+    selectedFeatureId && selectedPartEditable && !selectedFeatureReadOnly,
+  );
+  const selectedFeatureScalable = canScalePart(selectedPart);
+  const effectiveTransformMode = getEffectiveTransformMode(
+    transformMode,
+    selectedFeatureScalable,
+  );
+
+  useEffect(() => {
+    const handleTransformShortcuts = (event: KeyboardEvent) => {
+      if (
+        event.defaultPrevented ||
+        event.repeat ||
+        event.isComposing ||
+        event.altKey ||
+        event.ctrlKey ||
+        event.metaKey ||
+        isShortcutInputTarget(event.target)
+      ) {
+        return;
+      }
+
+      const state = useDesignerStore.getState();
+      const editable =
+        Boolean(state.selectedFeatureId) &&
+        isEditableViewportPart(state.selectedPart) &&
+        !state.hiddenFeatureIds.includes(state.selectedFeatureId as string) &&
+        !state.lockedFeatureIds.includes(state.selectedFeatureId as string);
+      if (event.key === "Tab") {
+        if (!editable) return;
+        state.toggleTransformEditMode();
+        event.preventDefault();
+        return;
+      }
+
+      if (event.key === "Escape" && state.transformEditMode) {
+        state.setTransformEditMode(false);
+        event.preventDefault();
+        return;
+      }
+
+      const key = event.key.toLocaleLowerCase();
+      if (
+        state.transformEditMode &&
+        (key === "x" || key === "y" || key === "z")
+      ) {
+        const nextAxis = key as TransformAxisConstraint;
+        if (
+          !canUseAxisConstraint(
+            nextAxis,
+            state.selectedPart,
+            state.selectedFeatureId,
+            modelRef.current,
+            state.parameters,
+          )
+        ) {
+          event.preventDefault();
+          return;
+        }
+        state.setTransformAxisConstraint(
+          state.transformAxisConstraint === nextAxis ? "all" : nextAxis,
+        );
+        event.preventDefault();
+      }
+    };
+
+    window.addEventListener("keydown", handleTransformShortcuts);
+    return () => window.removeEventListener("keydown", handleTransformShortcuts);
+  }, []);
 
   useEffect(() => {
     const host = hostRef.current;
@@ -518,6 +746,8 @@ export function Viewport() {
       lidTransparent,
       hiddenFaces,
       hiddenFeatureIds,
+      transparentObjectIds,
+      hiddenPcbBodyIds,
     );
     scene.add(model);
     modelRef.current = model;
@@ -525,30 +755,32 @@ export function Viewport() {
     const transformControls = transformControlsRef.current;
     if (
       transformControls &&
+      transformEditMode &&
       selectedFeatureId &&
       !hiddenFeatureIds.includes(selectedFeatureId) &&
       !lockedFeatureIds.includes(selectedFeatureId) &&
-      (selectedPart === "panel" ||
-        selectedPart === "connector" ||
-        selectedPart === "antenna" ||
-        selectedPart === "pcb" ||
-        selectedPart === "custom" ||
-        selectedPart === "battery")
+      selectedPartEditable
     ) {
       const feature = findEditableFeature(model, selectedFeatureId, selectedPart);
       if (feature) {
         attachedFeatureRef.current = feature;
         transformControls.setMode(
-          selectedPart === "antenna" ||
-            selectedPart === "pcb" ||
-            selectedPart === "battery" ||
-            transformMode === "move"
-            ? "translate"
-            : "scale",
+          effectiveTransformMode === "scale" ? "scale" : "translate",
         );
         if (selectedPart === "battery") {
-          configureFloorTransformAxes(transformControls);
-        } else if (selectedPart === "pcb" || selectedPart === "custom") {
+          configureTransformAxes(
+            transformControls,
+            feature.userData.face as EnclosureFace,
+          );
+        } else if (selectedPart === "pcb") {
+          configurePcbTransformAxes(
+            transformControls,
+            getPcbRailMovementAxis(
+              parameters,
+              getPcbFeatureRotation(parameters, selectedFeatureId),
+            ),
+          );
+        } else if (selectedPart === "custom") {
           configureAllTransformAxes(transformControls);
         } else {
           configureTransformAxes(
@@ -556,6 +788,7 @@ export function Viewport() {
             feature.userData.face as EnclosureFace,
           );
         }
+        applyAxisConstraint(transformControls, transformAxisConstraint);
         transformControls.attach(feature);
       } else {
         transformControls.detach();
@@ -592,11 +825,17 @@ export function Viewport() {
     customComponentPreviews,
     hiddenFaces,
     hiddenFeatureIds,
+    hiddenPcbBodyIds,
     lidTransparent,
+    transparentObjectIds,
     lockedFeatureIds,
+    effectiveTransformMode,
     selectedFeatureId,
+    selectedPartEditable,
     selectedPart,
     stepPreview,
+    transformAxisConstraint,
+    transformEditMode,
     transformMode,
   ]);
 
@@ -615,11 +854,11 @@ export function Viewport() {
     }
   }, [cameraResetToken]);
 
-  const selectedFeatureReadOnly = Boolean(
-    selectedFeatureId &&
-      (hiddenFeatureIds.includes(selectedFeatureId) ||
-        lockedFeatureIds.includes(selectedFeatureId)),
-  );
+  useEffect(() => {
+    if (transformEditMode && !selectedFeatureEditable) {
+      setTransformEditMode(false);
+    }
+  }, [selectedFeatureEditable, setTransformEditMode, transformEditMode]);
 
   return (
     <>
@@ -628,14 +867,11 @@ export function Viewport() {
         data-focused-part={focusedPart ?? "all"}
         data-selected-feature={selectedFeatureId ?? "none"}
         data-lid-transparent={String(lidTransparent)}
+        data-transparent-objects={transparentObjectIds.join(",")}
         data-selected-feature-readonly={String(selectedFeatureReadOnly)}
-        data-transform-mode={
-          selectedPart === "antenna" ||
-          selectedPart === "pcb" ||
-          selectedPart === "battery"
-            ? "move"
-            : transformMode
-        }
+        data-transform-mode={effectiveTransformMode}
+        data-transform-edit-mode={String(transformEditMode)}
+        data-transform-axis={transformAxisConstraint}
         data-reference-kind={
           parameters.pcbReferences.length > 1
             ? "multiple"
@@ -663,48 +899,63 @@ export function Viewport() {
           </button>
         </div>
       ) : null}
+      {selectedFeatureId && selectedPartEditable ? (
+        <div
+          className={`viewport-edit-state ${transformEditMode ? "is-editing" : ""}`}
+          role="status"
+        >
+          <Move3D size={14} />
+          <span>
+            {selectedFeatureReadOnly
+              ? "对象已隐藏或锁定，不能编辑"
+              : transformEditMode
+                ? `${effectiveTransformMode === "scale" ? "缩放" : "移动"}编辑中 · ${
+                    transformAxisConstraint === "all"
+                      ? "自由轴"
+                      : `${transformAxisConstraint.toUpperCase()} 轴`
+                  }`
+                : "已选中对象，按 Tab 进入编辑模式"}
+          </span>
+          {!selectedFeatureReadOnly ? (
+            <span className="viewport-edit-shortcuts">
+              <kbd>Tab</kbd>
+              {transformEditMode ? "退出" : "编辑"}
+              {transformEditMode ? (
+                <>
+                  <kbd>X</kbd>
+                  <kbd>Y</kbd>
+                  <kbd>Z</kbd>
+                  锁轴
+                </>
+              ) : null}
+            </span>
+          ) : null}
+        </div>
+      ) : null}
       <div className="viewport-transform-controls" role="group" aria-label="3D 编辑工具">
         <button
-          className={`icon-button ${transformMode === "move" || selectedPart === "antenna" || selectedPart === "pcb" || selectedPart === "battery" ? "is-active" : ""}`}
+          className={`icon-button ${effectiveTransformMode === "move" ? "is-active" : ""}`}
           type="button"
-          disabled={
-            selectedFeatureReadOnly ||
-            (selectedPart !== "panel" &&
-              selectedPart !== "connector" &&
-              selectedPart !== "antenna" &&
-              selectedPart !== "pcb" &&
-              selectedPart !== "custom" &&
-              selectedPart !== "battery")
-          }
+          disabled={!selectedFeatureEditable}
           onClick={() => setTransformMode("move")}
-          title="移动选中对象"
+          title="移动选中对象（按 Tab 进入编辑模式后拖动）"
           aria-label="移动选中对象"
-          aria-pressed={
-            transformMode === "move" ||
-            selectedPart === "antenna" ||
-            selectedPart === "pcb" ||
-            selectedPart === "battery"
-          }
+          aria-pressed={effectiveTransformMode === "move"}
         >
           <Move3D size={17} />
         </button>
         <button
-          className={`icon-button ${transformMode === "scale" && selectedPart !== "antenna" && selectedPart !== "pcb" ? "is-active" : ""}`}
+          className={`icon-button ${effectiveTransformMode === "scale" ? "is-active" : ""}`}
           type="button"
-          disabled={
-            selectedFeatureReadOnly ||
-            (selectedPart !== "panel" &&
-              selectedPart !== "connector" &&
-              selectedPart !== "custom")
-          }
+          disabled={!selectedFeatureEditable || !selectedFeatureScalable}
           onClick={() => setTransformMode("scale")}
-          title="缩放选中对象"
-          aria-label="缩放选中对象"
-          aria-pressed={
-            transformMode === "scale" &&
-            selectedPart !== "antenna" &&
-            selectedPart !== "pcb"
+          title={
+            selectedFeatureScalable
+              ? "缩放选中对象（按 Tab 进入编辑模式后拖动）"
+              : "该器件为固定尺寸，不能用拖动缩放"
           }
+          aria-label="缩放选中对象"
+          aria-pressed={effectiveTransformMode === "scale"}
         >
           <Scaling size={17} />
         </button>

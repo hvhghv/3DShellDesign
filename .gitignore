@@ -6,4 +6,4 @@ playwright-report/
 test-results/
 *.local
 *.log
-
+tmp

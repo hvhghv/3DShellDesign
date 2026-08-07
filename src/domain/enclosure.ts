@@ -9,6 +9,12 @@ import {
   getBatteryPreset,
 } from "./batteries";
 import {
+  isPcbInsertionSide,
+  isPcbMountingType,
+  isPcbRailAxis,
+} from "./pcbMounting";
+import { synchronizePcbRailDirection } from "./pcbRailDirection";
+import {
   createConnectorPlacement,
   createAntennaPlacement,
   createPanelPlacement,
@@ -34,6 +40,7 @@ import type {
   CustomComponentPlacement,
   ClosureType,
   DesignerParameters,
+  DisplayMountingType,
   EnclosureDimensions,
   PcbReference,
   PcbReferencePlacement,
@@ -55,8 +62,18 @@ function isClosureType(value: unknown): value is ClosureType {
   return CLOSURE_TYPES.some((type) => type === value);
 }
 
+const DISPLAY_MOUNTING_TYPES: readonly DisplayMountingType[] = [
+  "none",
+  "screw",
+];
+
+function isDisplayMountingType(value: unknown): value is DisplayMountingType {
+  return DISPLAY_MOUNTING_TYPES.some((type) => type === value);
+}
+
 export const DEFAULT_PARAMETERS: DesignerParameters = {
   enclosureTemplateId: "rounded-split",
+  parametricPcbEnabled: true,
   pcbLength: 100,
   pcbWidth: 70,
   pcbThickness: 1.6,
@@ -67,6 +84,18 @@ export const DEFAULT_PARAMETERS: DesignerParameters = {
   baseHeight: 24,
   cornerRadius: 6,
   standoffHeight: 4,
+  pcbOffsetX: 0,
+  pcbOffsetZ: 0,
+  pcbElevation: 0,
+  pcbMountingType: "screw",
+  pcbRailClearance: 0.4,
+  pcbRailWidth: 3,
+  pcbRailHeight: 2.2,
+  pcbStopWidth: 4,
+  pcbElasticBandWidth: 3,
+  pcbRailAxis: "z",
+  pcbInsertionSide: "right",
+  lidFace: "top",
   lidThickness: 2,
   closureType: "screw",
   magnetSupportType: "corner-shelf",
@@ -131,6 +160,7 @@ export function deriveEnclosureDimensions(
       parameters.baseHeight -
       parameters.bottomThickness -
       parameters.standoffHeight -
+      parameters.pcbElevation -
       parameters.pcbThickness,
     mountingInset: Math.max(4, parameters.boardClearance + 1.5),
   };
@@ -150,6 +180,7 @@ export function getPanelMountingPoints(
 }
 
 interface LegacyDesignerParameters extends Partial<DesignerParameters> {
+  parametricPcbEnabled?: boolean;
   typeCPortEnabled?: boolean;
   connectorDefinitionId?: string;
   typeCPortWidth?: number;
@@ -196,6 +227,7 @@ export function normalizeDesignerParameters(value: unknown): DesignerParameters 
       candidate.standoffHeight,
       DEFAULT_PARAMETERS.standoffHeight,
     ),
+    pcbElevation: finiteOr(candidate.pcbElevation, DEFAULT_PARAMETERS.pcbElevation),
     pcbThickness: finiteOr(
       candidate.pcbThickness,
       DEFAULT_PARAMETERS.pcbThickness,
@@ -302,6 +334,11 @@ export function normalizeDesignerParameters(value: unknown): DesignerParameters 
         rotation: isPlacementRotation(raw.rotation) ? raw.rotation : 0,
         cutoutWidth: finiteOr(raw.cutoutWidth, definition.panelCutout.width),
         cutoutHeight: finiteOr(raw.cutoutHeight, definition.panelCutout.height),
+        displayMountingType: definition.displaySpec
+          ? isDisplayMountingType(raw.displayMountingType)
+            ? raw.displayMountingType
+            : "none"
+          : undefined,
       };
     });
   } else if (candidate.typeCPortEnabled === false) {
@@ -468,6 +505,7 @@ export function normalizeDesignerParameters(value: unknown): DesignerParameters 
           compartment && typeof compartment === "object"
             ? (compartment as Partial<BatteryCompartmentPlacement>)
             : {};
+        const rawFace = (raw as { face?: unknown }).face;
         const fallback = createBatteryCompartment(
           typeof raw.id === "string" && raw.id
             ? raw.id
@@ -485,6 +523,25 @@ export function normalizeDesignerParameters(value: unknown): DesignerParameters 
           ...raw,
           id: fallback.id,
           preset: fallback.preset,
+          face:
+            rawFace === "lid"
+              ? "top"
+              : rawFace === "top" ||
+                  rawFace === "bottom" ||
+                  rawFace === "front" ||
+                  rawFace === "back" ||
+                  rawFace === "left" ||
+                  rawFace === "right"
+                ? rawFace
+                : fallback.face,
+          retentionType:
+            raw.retentionType === "elastic" || raw.retentionType === "clip"
+              ? raw.retentionType
+              : fallback.retentionType,
+          insertionSide:
+            raw.insertionSide === "left" || raw.insertionSide === "right"
+              ? raw.insertionSide
+              : fallback.insertionSide,
           cellCount: finiteOr(raw.cellCount, fallback.cellCount),
           width: finiteOr(raw.width, fallback.width),
           depth: finiteOr(raw.depth, fallback.depth),
@@ -507,9 +564,62 @@ export function normalizeDesignerParameters(value: unknown): DesignerParameters 
     customComponents,
     batteryCompartments,
     pcbReferences,
+    parametricPcbEnabled:
+      typeof candidate.parametricPcbEnabled === "boolean"
+        ? candidate.parametricPcbEnabled
+        : pcbReferences.length > 0
+          ? false
+        : DEFAULT_PARAMETERS.parametricPcbEnabled,
     closureType: isClosureType(candidate.closureType)
       ? candidate.closureType
       : DEFAULT_PARAMETERS.closureType,
+    pcbMountingType: isPcbMountingType(candidate.pcbMountingType)
+      ? candidate.pcbMountingType
+      : DEFAULT_PARAMETERS.pcbMountingType,
+    pcbOffsetX: Math.min(
+      500,
+      Math.max(-500, finiteOr(candidate.pcbOffsetX, DEFAULT_PARAMETERS.pcbOffsetX)),
+    ),
+    pcbOffsetZ: Math.min(
+      500,
+      Math.max(-500, finiteOr(candidate.pcbOffsetZ, DEFAULT_PARAMETERS.pcbOffsetZ)),
+    ),
+    pcbElevation: Math.min(
+      300,
+      Math.max(
+        -dimensionSource.standoffHeight,
+        finiteOr(candidate.pcbElevation, DEFAULT_PARAMETERS.pcbElevation),
+      ),
+    ),
+    pcbRailClearance: Math.min(
+      2,
+      Math.max(0.1, finiteOr(candidate.pcbRailClearance, DEFAULT_PARAMETERS.pcbRailClearance)),
+    ),
+    pcbRailWidth: Math.min(
+      8,
+      Math.max(1.2, finiteOr(candidate.pcbRailWidth, DEFAULT_PARAMETERS.pcbRailWidth)),
+    ),
+    pcbRailHeight: Math.min(
+      6,
+      Math.max(1, finiteOr(candidate.pcbRailHeight, DEFAULT_PARAMETERS.pcbRailHeight)),
+    ),
+    pcbStopWidth: Math.min(
+      20,
+      Math.max(0.8, finiteOr(candidate.pcbStopWidth, DEFAULT_PARAMETERS.pcbStopWidth)),
+    ),
+    pcbElasticBandWidth: Math.min(
+      8,
+      Math.max(1, finiteOr(candidate.pcbElasticBandWidth, DEFAULT_PARAMETERS.pcbElasticBandWidth)),
+    ),
+    pcbRailAxis: isPcbRailAxis(candidate.pcbRailAxis)
+      ? candidate.pcbRailAxis
+      : DEFAULT_PARAMETERS.pcbRailAxis,
+    pcbInsertionSide: isPcbInsertionSide(candidate.pcbInsertionSide)
+      ? candidate.pcbInsertionSide
+      : DEFAULT_PARAMETERS.pcbInsertionSide,
+    lidFace: isEnclosureFace(candidate.lidFace)
+      ? candidate.lidFace
+      : DEFAULT_PARAMETERS.lidFace,
     closureScrewHeadRecessEnabled:
       candidate.closureScrewHeadRecessEnabled === true,
     closureScrewHeadRecessDepth: Math.max(
@@ -539,9 +649,10 @@ export function normalizeDesignerParameters(value: unknown): DesignerParameters 
   ]) {
     delete normalized[key];
   }
+  const synchronized = synchronizePcbRailDirection(normalized);
   return constrainSurfacePlacements(
-    normalized,
-    deriveEnclosureDimensions(normalized),
+    synchronized,
+    deriveEnclosureDimensions(synchronized),
   );
 }
 
@@ -591,6 +702,28 @@ export function validateDesign(
       detail: "增大圆角可改善壁厚连续性和打印质量",
       part: "base",
     });
+  }
+
+  if (parameters.pcbMountingType !== "screw") {
+    const railClearance = parameters.pcbRailWidth + 0.4;
+    if (parameters.boardClearance < railClearance) {
+      issues.push({
+        id: "pcb-rail-clearance",
+        level: "error",
+        title: "PCB 滑槽侵入壳体间隙",
+        detail: `滑槽固定需要板边间隙至少 ${railClearance.toFixed(1)} mm，当前为 ${parameters.boardClearance.toFixed(1)} mm`,
+        part: "pcb",
+      });
+    }
+    if (parameters.standoffHeight < 1.2) {
+      issues.push({
+        id: "pcb-rail-floor-gap",
+        level: "warning",
+        title: "PCB 滑槽底部空间偏小",
+        detail: "滑槽需要 PCB 基准高度至少 1.2 mm 才能形成下托边和装配余量",
+        part: "pcb",
+      });
+    }
   }
 
   if (
@@ -996,6 +1129,29 @@ export function validateDesign(
             rotation: 0 as const,
           }]
         : [];
+  if (referencePlacements.length === 0 && parameters.parametricPcbEnabled) {
+    const boardBottom =
+      parameters.bottomThickness +
+      parameters.standoffHeight +
+      parameters.pcbElevation;
+    const boardTop = boardBottom + parameters.pcbThickness + parameters.componentHeight;
+    if (
+      Math.abs(parameters.pcbOffsetX) + parameters.pcbLength / 2 >
+        dimensions.insideLength / 2 ||
+      Math.abs(parameters.pcbOffsetZ) + parameters.pcbWidth / 2 >
+        dimensions.insideWidth / 2 ||
+      boardBottom < parameters.bottomThickness - 0.01 ||
+      boardTop > parameters.baseHeight
+    ) {
+      issues.push({
+        id: "pcb-parametric-outside",
+        level: "error",
+        title: "参数 PCB 超出壳体内部",
+        detail: "调整 PCB X/Y/Z 位置、板边间隙、主体高度或元件高度",
+        part: "pcb",
+      });
+    }
+  }
   for (const placement of referencePlacements) {
     const reference = placement.reference;
     if (reference.unsupportedOutlineElements > 0) {
@@ -1065,18 +1221,55 @@ export function validateDesign(
         part: "battery",
       });
     }
-    if (
-      Math.abs(compartment.offsetX) + width / 2 > dimensions.insideLength / 2 ||
-      Math.abs(compartment.offsetZ) + depth / 2 > dimensions.insideWidth / 2 ||
+    const compartmentHeight = Math.max(compartment.height, preset.cellHeight + 0.2);
+    const sideMounted =
+      compartment.face === "front" ||
+      compartment.face === "back" ||
+      compartment.face === "left" ||
+      compartment.face === "right";
+    const surfaceWidth =
+      compartment.face === "left" || compartment.face === "right"
+        ? dimensions.insideWidth
+        : dimensions.insideLength;
+    const surfaceHeight =
+      compartment.face === "top" || compartment.face === "bottom"
+        ? dimensions.insideWidth
+        : Math.max(2, parameters.baseHeight - parameters.bottomThickness);
+    const outsideFootprint =
+      Math.abs(compartment.offsetX) + width / 2 > surfaceWidth / 2 ||
+      Math.abs(compartment.offsetZ) + depth / 2 > surfaceHeight / 2;
+    const bottomHeightCollision =
+      compartment.face === "bottom" &&
+      parameters.bottomThickness + compartmentHeight > parameters.baseHeight;
+    const componentTop =
       parameters.bottomThickness +
-        Math.max(compartment.height, preset.cellHeight + 0.2) >
-        parameters.baseHeight
+      parameters.standoffHeight +
+      parameters.pcbElevation +
+      parameters.pcbThickness +
+      parameters.componentHeight;
+    const lidHeightCollision =
+      compartment.face === "top" &&
+      compartmentHeight + 0.5 > parameters.baseHeight - componentTop;
+    const sideIntrusionCollision =
+      sideMounted &&
+      compartmentHeight + 0.5 >
+        (compartment.face === "front" || compartment.face === "back"
+          ? dimensions.insideWidth
+          : dimensions.insideLength);
+    if (
+      outsideFootprint ||
+      bottomHeightCollision ||
+      lidHeightCollision ||
+      sideIntrusionCollision
     ) {
       issues.push({
         id: `battery-outside-${compartment.id}`,
         level: "error",
         title: "电池仓超出壳体内部",
-        detail: "调整电池仓偏移、旋转、槽位数量或增大壳体尺寸",
+        detail:
+          compartment.face === "top" && lidHeightCollision
+            ? "顶部电池仓会向下侵入 PCB 或元件高度，增大壳体高度或降低 PCB/元件包络"
+            : "调整电池仓偏移、旋转、槽位数量或增大壳体尺寸",
         part: "battery",
       });
     }
@@ -1114,6 +1307,14 @@ export function clampParameter(
     baseHeight: [8, 120],
     cornerRadius: [0.5, 30],
     standoffHeight: [0, 30],
+    pcbOffsetX: [-500, 500],
+    pcbOffsetZ: [-500, 500],
+    pcbElevation: [-30, 300],
+    pcbRailClearance: [0.1, 2],
+    pcbRailWidth: [1.2, 8],
+    pcbRailHeight: [1, 6],
+    pcbStopWidth: [0.8, 20],
+    pcbElasticBandWidth: [1, 8],
     lidThickness: [0.8, 8],
     closureScrewHeadRecessDepth: [0.1, 7.6],
     ventRows: [1, 12],

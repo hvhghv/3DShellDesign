@@ -74,9 +74,9 @@ workerScope.addEventListener("message", (event) => {
             meshes.push({
               name:
                 part === "base"
-                  ? "下壳"
+                  ? "壳体主体"
                   : part === "lid"
-                    ? "顶盖"
+                    ? "可拆面"
                     : `可更换面板 ${request.parameters.panelPlacements.findIndex((item) => item.id === panelId) + 1}`,
               materialName: material.name,
               color: material.color,

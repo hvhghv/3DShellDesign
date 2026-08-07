@@ -47,4 +47,26 @@ describe("battery compartments", () => {
     expect(placement.cellCount).toBe(1);
     expect(placement.preset).toBe("lipo");
   });
+
+  it("keeps placement, entry and retention options while resizing presets", () => {
+    const placement = applyBatteryPreset(
+      {
+        ...createBatteryCompartment("battery-1", "aa"),
+        face: "top",
+        retentionType: "elastic",
+        insertionSide: "left",
+      },
+      "18650",
+      1,
+    );
+
+    expect(placement).toEqual(
+      expect.objectContaining({
+        preset: "18650",
+        face: "top",
+        retentionType: "elastic",
+        insertionSide: "left",
+      }),
+    );
+  });
 });

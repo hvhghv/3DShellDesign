@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import * as THREE from "three";
 import { DEFAULT_PARAMETERS } from "../domain/enclosure";
-import type { MagnetSupportType, SelectablePart } from "../domain/model";
+import type { MagnetSupportType, SelectablePart, StepPreview } from "../domain/model";
+import { PARAMETRIC_PCB_FEATURE_ID } from "../domain/pcbMounting";
 import { buildPreviewModel, disposePreviewModel } from "./buildPreviewModel";
 
 function renderedParts(focusedPart: SelectablePart | null): Set<SelectablePart> {
@@ -20,6 +21,24 @@ function renderedParts(focusedPart: SelectablePart | null): Set<SelectablePart> 
   );
   disposePreviewModel(model);
   return parts;
+}
+
+function getObjectMaterial(object: THREE.Object3D | undefined): THREE.Material {
+  expect(object).toBeDefined();
+  if (!(object instanceof THREE.Mesh || object instanceof THREE.LineSegments)) {
+    throw new Error("Expected a mesh or line object");
+  }
+  const renderable = object as THREE.Mesh | THREE.LineSegments;
+  return Array.isArray(renderable.material)
+    ? renderable.material[0]
+    : renderable.material;
+}
+
+function expectTransparentMaterial(object: THREE.Object3D | undefined): void {
+  const material = getObjectMaterial(object);
+  expect(material.transparent).toBe(true);
+  expect(material.opacity).toBe(0.24);
+  expect(material.depthWrite).toBe(false);
 }
 
 describe("preview focus mode", () => {
@@ -154,6 +173,82 @@ describe("surface placement preview", () => {
     disposePreviewModel(model);
   });
 
+  it("treats a side face as the removable lid face", () => {
+    const panel = {
+      ...DEFAULT_PARAMETERS.panelPlacements[0],
+      face: "front" as const,
+    };
+    const model = buildPreviewModel(
+      {
+        ...DEFAULT_PARAMETERS,
+        lidFace: "front",
+        panelPlacements: [panel],
+      },
+      "lid",
+      false,
+      null,
+    );
+
+    const lidFace = model.getObjectByName("lid-front-face");
+    expect(lidFace?.userData.partId).toBe("lid");
+    expect(lidFace?.userData.enclosureFace).toBe("front");
+    expect(model.getObjectByName("base-top-face")?.userData.partId).toBe("base");
+    expect(model.getObjectByName("panel-opening-panel-1")).toBeDefined();
+    expect(
+      model.children.filter((child) => child.name === "closure-screw-head"),
+    ).toHaveLength(4);
+    expect(
+      model.getObjectByName("panel-1-mounting-tab-1")?.userData.partId,
+    ).toBe("base");
+    disposePreviewModel(model);
+  });
+
+  it("keeps panel-bound devices stable when their face becomes removable", () => {
+    const panel = {
+      ...DEFAULT_PARAMETERS.panelPlacements[0],
+      face: "front" as const,
+    };
+    const connector = {
+      ...DEFAULT_PARAMETERS.connectorPlacements[0],
+      surface: "panel" as const,
+      panelId: panel.id,
+      offsetU: 4,
+      offsetV: -2,
+    };
+    const build = (lidFace: "front" | "back") =>
+      buildPreviewModel(
+        {
+          ...DEFAULT_PARAMETERS,
+          lidFace,
+          panelPlacements: [panel],
+          connectorPlacements: [connector],
+        },
+        "connector",
+        true,
+        null,
+      );
+
+    const fixedFaceModel = build("back");
+    const removableFaceModel = build("front");
+    expect(
+      removableFaceModel.getObjectByName("panel-transform-panel-1")?.position.z,
+    ).toBeCloseTo(
+      fixedFaceModel.getObjectByName("panel-transform-panel-1")?.position.z ?? 0,
+    );
+    expect(
+      removableFaceModel.getObjectByName("connector-transform-connector-1")?.position.z,
+    ).toBeCloseTo(
+      fixedFaceModel.getObjectByName("connector-transform-connector-1")?.position.z ??
+        0,
+    );
+    expect(
+      removableFaceModel.getObjectByName("panel-1-mounting-tab-1")?.userData.partId,
+    ).toBe("base");
+
+    disposePreviewModel(fixedFaceModel);
+    disposePreviewModel(removableFaceModel);
+  });
+
   it("keeps an exploded bottom panel above the work plane", () => {
     const panel = {
       ...DEFAULT_PARAMETERS.panelPlacements[0],
@@ -257,6 +352,362 @@ describe("surface placement preview", () => {
     disposePreviewModel(model);
   });
 
+  it("applies transparent inspection mode to any object id", () => {
+    const connector = DEFAULT_PARAMETERS.connectorPlacements[0];
+    const panel = DEFAULT_PARAMETERS.panelPlacements[0];
+    const model = buildPreviewModel(
+      DEFAULT_PARAMETERS,
+      "project",
+      false,
+      null,
+      null,
+      null,
+      null,
+      {},
+      {},
+      false,
+      [],
+      [],
+      ["base", panel.id, connector.id],
+    );
+
+    expectTransparentMaterial(model.getObjectByName("base-bottom-face"));
+    expect((model.getObjectByName("base-bottom-face") as THREE.Mesh).castShadow).toBe(
+      false,
+    );
+    expect(
+      (model.getObjectByName("base-bottom-face") as THREE.Mesh).receiveShadow,
+    ).toBe(false);
+    expectTransparentMaterial(model.getObjectByName(panel.id));
+    expectTransparentMaterial(model.getObjectByName(connector.id));
+
+    const lidMesh = model.children.find(
+      (child) => child instanceof THREE.Mesh && child.userData.partId === "lid",
+    );
+    expect(getObjectMaterial(lidMesh).opacity).toBe(1);
+    disposePreviewModel(model);
+  });
+
+  it("renders the parametric PCB as a movable and hideable feature", () => {
+    const model = buildPreviewModel(
+      {
+        ...DEFAULT_PARAMETERS,
+        pcbOffsetX: 8,
+        pcbElevation: 3,
+        pcbOffsetZ: -6,
+      },
+      "pcb",
+      false,
+      null,
+      null,
+      null,
+      "pcb-main",
+      {},
+      {},
+      false,
+      [],
+      ["pcb-main"],
+    );
+
+    const pcbGroup = model.getObjectByName("pcb-transform-pcb-main");
+    expect(pcbGroup?.position.x).toBe(8);
+    expect(pcbGroup?.position.y).toBe(
+      DEFAULT_PARAMETERS.bottomThickness + DEFAULT_PARAMETERS.standoffHeight + 3,
+    );
+    expect(pcbGroup?.position.z).toBe(-6);
+    expect(pcbGroup?.visible).toBe(false);
+    expect(
+      pcbGroup?.children.some((child) => child instanceof THREE.Mesh),
+    ).toBe(true);
+    expect(
+      model.children.some(
+        (child) => child instanceof THREE.Mesh && child.userData.partId === "pcb",
+      ),
+    ).toBe(false);
+    disposePreviewModel(model);
+  });
+
+  it("keeps the legacy primary STEP PCB preview when pcbPreviews is unavailable", () => {
+    const reference = {
+      format: "step" as const,
+      sourceName: "board.step",
+      version: null,
+      thickness: 1.6,
+      bounds: { minX: -10, minY: -5, maxX: 10, maxY: 5 },
+      outlineElements: 1,
+      unsupportedOutlineElements: 0,
+      mountingHoles: [],
+      overallHeight: 3,
+      triangleCount: 1,
+    };
+    const preview: StepPreview = {
+      size: [20, 3, 10],
+      meshes: [
+        {
+          name: "board-shell",
+          color: [0.2, 0.45, 0.32],
+          positions: new Float32Array([0, 0, 0, 10, 0, 0, 0, 1.6, 10]),
+          normals: null,
+          indices: new Uint32Array([0, 1, 2]),
+        },
+      ],
+    };
+    const model = buildPreviewModel(
+      {
+        ...DEFAULT_PARAMETERS,
+        pcbReferences: [
+          {
+            id: "pcb-step",
+            reference,
+            offsetX: 0,
+            offsetZ: 0,
+            elevation: 0,
+            rotation: 0,
+          },
+        ],
+      },
+      "pcb",
+      false,
+      reference,
+      preview,
+      null,
+      "pcb-step",
+      {},
+    );
+
+    const pcbGroup = model.getObjectByName("pcb-transform-pcb-step");
+    const previewMesh = pcbGroup?.children.find(
+      (child) => child instanceof THREE.Mesh,
+    ) as THREE.Mesh | undefined;
+    expect(previewMesh).toBeDefined();
+    expect(previewMesh?.geometry.getAttribute("position").count).toBe(3);
+    disposePreviewModel(model);
+  });
+
+  it("can hide only the PCB body while preserving mounting structures", () => {
+    const bodyHiddenModel = buildPreviewModel(
+      DEFAULT_PARAMETERS,
+      "pcb",
+      false,
+      null,
+      null,
+      null,
+      PARAMETRIC_PCB_FEATURE_ID,
+      {},
+      {},
+      false,
+      [],
+      [],
+      [],
+      [PARAMETRIC_PCB_FEATURE_ID],
+    );
+
+    const pcbGroup = bodyHiddenModel.getObjectByName(
+      `pcb-transform-${PARAMETRIC_PCB_FEATURE_ID}`,
+    );
+    const standoff = bodyHiddenModel.getObjectByName(
+      `${PARAMETRIC_PCB_FEATURE_ID}-pcb-standoff-1`,
+    );
+    expect(pcbGroup?.visible).toBe(false);
+    expect(standoff).toBeDefined();
+    expect(standoff?.visible).toBe(true);
+    expect(standoff?.parent?.visible).toBe(true);
+    disposePreviewModel(bodyHiddenModel);
+
+    const fullHiddenModel = buildPreviewModel(
+      DEFAULT_PARAMETERS,
+      "pcb",
+      false,
+      null,
+      null,
+      null,
+      PARAMETRIC_PCB_FEATURE_ID,
+      {},
+      {},
+      false,
+      [],
+      [PARAMETRIC_PCB_FEATURE_ID],
+    );
+    const hiddenStandoff = fullHiddenModel.getObjectByName(
+      `${PARAMETRIC_PCB_FEATURE_ID}-pcb-standoff-1`,
+    );
+    expect(
+      fullHiddenModel.getObjectByName(`pcb-transform-${PARAMETRIC_PCB_FEATURE_ID}`)
+        ?.visible,
+    ).toBe(false);
+    expect(hiddenStandoff).toBeDefined();
+    expect(hiddenStandoff?.parent?.visible).toBe(false);
+    disposePreviewModel(fullHiddenModel);
+  });
+
+  it("omits the parametric PCB preview when it is disabled", () => {
+    const model = buildPreviewModel(
+      {
+        ...DEFAULT_PARAMETERS,
+        parametricPcbEnabled: false,
+        pcbReferences: [],
+      },
+      "project",
+      false,
+      null,
+    );
+
+    expect(
+      model.getObjectByName(`pcb-transform-${PARAMETRIC_PCB_FEATURE_ID}`),
+    ).toBeUndefined();
+    expect(
+      model.getObjectByName(`${PARAMETRIC_PCB_FEATURE_ID}-pcb-standoff-1`),
+    ).toBeUndefined();
+    disposePreviewModel(model);
+  });
+
+  it("keeps PCB rail mounts visible when only the PCB body is hidden", () => {
+    const parameters = {
+      ...DEFAULT_PARAMETERS,
+      pcbMountingType: "rail-elastic" as const,
+    };
+    const bodyHiddenModel = buildPreviewModel(
+      parameters,
+      "pcb",
+      false,
+      null,
+      null,
+      null,
+      PARAMETRIC_PCB_FEATURE_ID,
+      {},
+      {},
+      false,
+      [],
+      [],
+      [],
+      [PARAMETRIC_PCB_FEATURE_ID],
+    );
+
+    expect(
+      bodyHiddenModel.getObjectByName(`pcb-transform-${PARAMETRIC_PCB_FEATURE_ID}`)
+        ?.visible,
+    ).toBe(false);
+    const rail = bodyHiddenModel.getObjectByName(
+      `${PARAMETRIC_PCB_FEATURE_ID}-pcb-rail-left-lower-ledge`,
+    );
+    expect(rail).toBeDefined();
+    expect(
+      bodyHiddenModel.getObjectByName(
+        `${PARAMETRIC_PCB_FEATURE_ID}-pcb-rail-left-wall`,
+      ),
+    ).toBeUndefined();
+    bodyHiddenModel.updateMatrixWorld(true);
+    const railBounds = new THREE.Box3().setFromObject(rail!);
+    expect(Math.max(Math.abs(railBounds.min.x), Math.abs(railBounds.max.x))).toBeGreaterThanOrEqual(
+      parameters.pcbLength / 2 + parameters.boardClearance - 0.05,
+    );
+    expect(rail?.parent?.visible).toBe(true);
+    disposePreviewModel(bodyHiddenModel);
+
+    const fullHiddenModel = buildPreviewModel(
+      parameters,
+      "pcb",
+      false,
+      null,
+      null,
+      null,
+      PARAMETRIC_PCB_FEATURE_ID,
+      {},
+      {},
+      false,
+      [],
+      [PARAMETRIC_PCB_FEATURE_ID],
+    );
+    const hiddenRail = fullHiddenModel.getObjectByName(
+      `${PARAMETRIC_PCB_FEATURE_ID}-pcb-rail-left-lower-ledge`,
+    );
+    expect(hiddenRail).toBeDefined();
+    expect(hiddenRail?.parent?.visible).toBe(false);
+    disposePreviewModel(fullHiddenModel);
+  });
+
+  it("routes PCB elastic bands as lengthwise loops over and under the board", () => {
+    const parameters = {
+      ...DEFAULT_PARAMETERS,
+      pcbMountingType: "rail-elastic" as const,
+      pcbRailAxis: "z" as const,
+      pcbInsertionSide: "right" as const,
+    };
+    const model = buildPreviewModel(parameters, "pcb", false, null);
+    const railGroup = model.getObjectByName(
+      `pcb-mount-transform-${PARAMETRIC_PCB_FEATURE_ID}`,
+    );
+    const firstLoop = railGroup?.getObjectByName(
+      `${PARAMETRIC_PCB_FEATURE_ID}-pcb-elastic-band-loop-1`,
+    );
+    const secondLoop = railGroup?.getObjectByName(
+      `${PARAMETRIC_PCB_FEATURE_ID}-pcb-elastic-band-loop-2`,
+    );
+    const firstAnchor = railGroup?.getObjectByName(
+      `${PARAMETRIC_PCB_FEATURE_ID}-pcb-elastic-anchor-1`,
+    );
+    const boardBottom = parameters.bottomThickness + parameters.standoffHeight;
+    const boardTop = boardBottom + parameters.pcbThickness;
+
+    expect(firstLoop).toBeDefined();
+    expect(secondLoop).toBeDefined();
+    expect(firstAnchor).toBeDefined();
+    model.updateMatrixWorld(true);
+    const loopBounds = new THREE.Box3().setFromObject(firstLoop!);
+    expect(loopBounds.max.z).toBeGreaterThan(parameters.pcbWidth / 2);
+    expect(loopBounds.min.z).toBeLessThan(
+      -parameters.pcbWidth / 2 + parameters.pcbStopWidth + 4,
+    );
+    expect(loopBounds.max.y).toBeGreaterThan(boardTop);
+    expect(loopBounds.min.y).toBeLessThan(boardBottom);
+    expect(firstAnchor?.position.x).toBeLessThan(0);
+    disposePreviewModel(model);
+  });
+
+  it("rotates PCB rail loops when the rail axis is X", () => {
+    const parameters = {
+      ...DEFAULT_PARAMETERS,
+      pcbMountingType: "rail-elastic" as const,
+      pcbRailAxis: "x" as const,
+      pcbInsertionSide: "right" as const,
+    };
+    const model = buildPreviewModel(parameters, "pcb", false, null);
+    const loop = model.getObjectByName(
+      `${PARAMETRIC_PCB_FEATURE_ID}-pcb-elastic-band-loop-1`,
+    );
+    expect(loop).toBeDefined();
+    model.updateMatrixWorld(true);
+    const loopBounds = new THREE.Box3().setFromObject(loop!);
+    expect(loopBounds.max.x).toBeGreaterThan(parameters.pcbLength / 2);
+    expect(loopBounds.min.x).toBeLessThan(
+      -parameters.pcbLength / 2 + parameters.pcbStopWidth + 4,
+    );
+    disposePreviewModel(model);
+  });
+
+  it("opens PCB rail mounts toward the lateral removable face", () => {
+    const frontModel = buildPreviewModel(
+      {
+        ...DEFAULT_PARAMETERS,
+        lidFace: "front",
+        pcbMountingType: "rail-elastic" as const,
+        pcbRailAxis: "x" as const,
+        pcbInsertionSide: "left" as const,
+      },
+      "pcb",
+      false,
+      null,
+    );
+    const frontStop = frontModel.getObjectByName(
+      `${PARAMETRIC_PCB_FEATURE_ID}-pcb-rail-closed-stop`,
+    );
+    expect(frontStop).toBeDefined();
+    frontModel.updateMatrixWorld(true);
+    const frontStopBounds = new THREE.Box3().setFromObject(frontStop!);
+    expect(frontStopBounds.max.z).toBeLessThan(0);
+    disposePreviewModel(frontModel);
+  });
+
   it("moves an inset panel into its shell recess", () => {
     const panel = {
       ...DEFAULT_PARAMETERS.panelPlacements[0],
@@ -336,6 +787,9 @@ describe("surface placement preview", () => {
           {
             id: "battery-1",
             preset: "aa",
+            face: "bottom",
+            retentionType: "open",
+            insertionSide: "right",
             cellCount: 2,
             width: 54.9,
             depth: 34.4,
@@ -369,6 +823,93 @@ describe("surface placement preview", () => {
     ) as THREE.Mesh | undefined;
     expect((lidMesh?.material as THREE.MeshStandardMaterial).opacity).toBe(0.24);
     expect((lidMesh?.material as THREE.MeshStandardMaterial).depthWrite).toBe(false);
+    disposePreviewModel(model);
+  });
+
+  it("renders top-mounted elastic battery trays and PCB rail mounts", () => {
+    const model = buildPreviewModel(
+      {
+        ...DEFAULT_PARAMETERS,
+        boardClearance: 5,
+        pcbMountingType: "rail-elastic",
+        pcbInsertionSide: "left",
+        batteryCompartments: [
+          {
+            id: "battery-lid",
+            preset: "aa",
+            face: "top",
+            retentionType: "elastic",
+            insertionSide: "left",
+            cellCount: 2,
+            width: 54.9,
+            depth: 34.4,
+            height: 10.59,
+            wallThickness: 1.6,
+            clearance: 0.6,
+            offsetX: 0,
+            offsetZ: 0,
+            rotation: 0,
+          },
+        ],
+      },
+      "battery",
+      false,
+      null,
+      null,
+      null,
+      "battery-lid",
+    );
+
+    expect(model.getObjectByName("battery-transform-battery-lid")?.position.y).toBe(
+      DEFAULT_PARAMETERS.baseHeight - 10.59 / 2,
+    );
+    expect(model.getObjectByName("battery-lid-entry-guide-1-negative")).toBeDefined();
+    expect(model.getObjectByName("battery-lid-end-stop-1-positive")).toBeDefined();
+    expect(model.getObjectByName("battery-lid-elastic-band")).toBeDefined();
+    expect(model.getObjectByName("pcb-main-pcb-rail-left-wall")).toBeUndefined();
+    expect(model.getObjectByName("pcb-main-pcb-rail-left-lower-ledge")).toBeDefined();
+    expect(model.getObjectByName("pcb-main-pcb-rail-left-top-lip")).toBeDefined();
+    expect(model.getObjectByName("pcb-main-pcb-elastic-band-loop-1")).toBeDefined();
+    expect(model.getObjectByName("pcb-main-pcb-elastic-band-loop-2")).toBeDefined();
+    disposePreviewModel(model);
+  });
+
+  it("mounts battery trays on side faces", () => {
+    const battery = {
+      id: "battery-front",
+      preset: "aa" as const,
+      face: "front" as const,
+      retentionType: "clip" as const,
+      insertionSide: "right" as const,
+      cellCount: 2,
+      width: 54.9,
+      depth: 20,
+      height: 10.59,
+      wallThickness: 1.6,
+      clearance: 0.6,
+      offsetX: 5,
+      offsetZ: 2,
+      rotation: 0 as const,
+    };
+    const model = buildPreviewModel(
+      { ...DEFAULT_PARAMETERS, batteryCompartments: [battery] },
+      "battery",
+      false,
+      null,
+      null,
+      null,
+      battery.id,
+    );
+
+    const batteryGroup = model.getObjectByName("battery-transform-battery-front");
+    expect(batteryGroup?.position.x).toBe(5);
+    expect(batteryGroup?.position.y).toBe(DEFAULT_PARAMETERS.baseHeight / 2 + 2);
+    expect(batteryGroup?.position.z).toBeCloseTo(
+      (DEFAULT_PARAMETERS.pcbWidth + DEFAULT_PARAMETERS.boardClearance * 2) / 2 -
+        battery.height / 2,
+      3,
+    );
+    expect(model.getObjectByName("battery-front-retention-clip-left")).toBeDefined();
     disposePreviewModel(model);
   });
 
@@ -441,6 +982,67 @@ describe("surface placement preview", () => {
     expect(connectorKeepout?.parent).toBe(firstGroup);
     expect(connectorKeepout).toBeInstanceOf(THREE.LineSegments);
     expect(connectorKeepout).not.toBeInstanceOf(THREE.Mesh);
+    disposePreviewModel(model);
+  });
+
+  it("renders LCDWIKI display devices with a visible screen window", () => {
+    const model = buildPreviewModel(
+      {
+        ...DEFAULT_PARAMETERS,
+        connectorPlacements: [
+          {
+            id: "display-1",
+            definitionId: "lcdwiki-msp2807",
+            surface: "top",
+            panelId: null,
+            offsetU: 0,
+            offsetV: 0,
+            rotation: 0,
+            cutoutWidth: 46.2,
+            cutoutHeight: 67.2,
+            displayMountingType: "screw",
+          },
+        ],
+      },
+      "connector",
+      false,
+      null,
+      null,
+      null,
+      "display-1",
+    );
+
+    const group = model.getObjectByName("connector-transform-display-1");
+    expect(group).toBeDefined();
+    expect(group?.getObjectByName("display-1-opening")).toBeInstanceOf(
+      THREE.LineSegments,
+    );
+    const displayPcb = group?.getObjectByName("display-1-display-pcb");
+    const lcdPanel = group?.getObjectByName("display-1-display-lcd-panel");
+    const activeArea = group?.getObjectByName("display-1-display-active-area");
+    const headerPin = group?.getObjectByName("display-1-display-header-pin-1");
+    const mountHole = group?.getObjectByName("display-1-display-mount-hole-1");
+    const displayScrew = group?.getObjectByName("display-1-display-screw-1");
+    const displayScrewBoss = group?.getObjectByName(
+      "display-1-display-screw-boss-1",
+    );
+    const touchTail = group?.getObjectByName("display-1-display-touch-tail");
+    expect(displayPcb).toBeInstanceOf(THREE.Mesh);
+    expect(lcdPanel).toBeInstanceOf(THREE.Mesh);
+    expect(activeArea).toBeInstanceOf(THREE.Mesh);
+    expect(headerPin).toBeInstanceOf(THREE.Mesh);
+    expect(mountHole).toBeInstanceOf(THREE.Mesh);
+    expect(displayScrew).toBeInstanceOf(THREE.Mesh);
+    expect(displayScrewBoss).toBeInstanceOf(THREE.Mesh);
+    expect(touchTail).toBeInstanceOf(THREE.Mesh);
+    expect(displayPcb?.userData.featureKind).toBe("connector");
+    expect(lcdPanel?.parent).toBe(group);
+    expect((headerPin as THREE.Object3D).position.y).toBeLessThan(
+      (activeArea as THREE.Object3D).position.y,
+    );
+    expect((mountHole as THREE.Object3D).position.y).toBeLessThan(
+      (activeArea as THREE.Object3D).position.y,
+    );
     disposePreviewModel(model);
   });
 

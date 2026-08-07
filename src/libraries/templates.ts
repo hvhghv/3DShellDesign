@@ -10,8 +10,8 @@ export interface EnclosureTemplateDefinition {
 export const ENCLOSURE_TEMPLATES: EnclosureTemplateDefinition[] = [
   {
     id: "rounded-split",
-    name: "圆角上下分体壳",
-    description: "通用 PCB 上下壳，支持全部顶盖固定方式。",
+    name: "圆角主体 + 可拆面",
+    description: "通用 PCB 外壳，支持可拆面固定与六面器件布置。",
     parameterOverrides: {
       pcbLength: 100,
       pcbWidth: 70,
@@ -21,7 +21,7 @@ export const ENCLOSURE_TEMPLATES: EnclosureTemplateDefinition[] = [
   },
   {
     id: "single-board-base",
-    name: "单板底座与薄顶盖",
+    name: "单板主体与薄可拆面",
     description: "适合开发板保护和快速打印。",
     parameterOverrides: {
       pcbLength: 70,
@@ -44,7 +44,7 @@ export const ENCLOSURE_TEMPLATES: EnclosureTemplateDefinition[] = [
   {
     id: "wall-mount",
     name: "壁挂式外壳",
-    description: "底壳带外伸安装耳和墙面固定孔。",
+    description: "壳体主体带外伸安装耳和墙面固定孔。",
     parameterOverrides: {
       pcbLength: 90,
       pcbWidth: 60,

@@ -134,9 +134,13 @@ async function chooseDevice(
   name: string,
   surface?: string,
 ): Promise<void> {
-  await page.getByRole("button", { name: `添加${kind}` }).click();
+  await page
+    .getByRole("button", {
+      name: kind === "接口" ? "添加接口或器件" : `添加${kind}`,
+    })
+    .click();
   const picker = page.getByRole("dialog", {
-    name: kind === "接口" ? "添加接口器件选择器" : "添加天线选择器",
+    name: kind === "接口" ? "添加接口/器件选择器" : "添加天线选择器",
   });
   await expect(picker).toBeVisible();
   if (surface) {
@@ -803,9 +807,9 @@ test("device pickers create only the selected connector and antenna @smoke", asy
   const tree = page.locator(".tree-nav");
   await expect(tree.locator(".tree-item").filter({ hasText: "USB Type-C 母座" })).toHaveCount(1);
 
-  await page.getByRole("button", { name: "添加接口" }).click();
+  await page.getByRole("button", { name: "添加接口或器件" }).click();
   const connectorPicker = page.getByRole("dialog", {
-    name: "添加接口器件选择器",
+    name: "添加接口/器件选择器",
   });
   await expect(connectorPicker).toBeVisible();
   const compactFpcPicker = connectorPicker.locator(".device-picker-fpc-group");
@@ -819,11 +823,11 @@ test("device pickers create only the selected connector and antenna @smoke", asy
   await captureVisualCheckpoint(page, testInfo, "compact-fpc-picker.png");
   await page.keyboard.press("Escape");
   await expect(connectorPicker).toHaveCount(0);
-  await page.getByRole("button", { name: "添加接口" }).click();
+  await page.getByRole("button", { name: "添加接口或器件" }).click();
   await expect(connectorPicker).toBeVisible();
   await expect(tree.locator(".tree-item").filter({ hasText: "USB Type-C 母座" })).toHaveCount(1);
   await connectorPicker
-    .getByRole("searchbox", { name: "搜索添加接口器件" })
+    .getByRole("searchbox", { name: "搜索添加接口/器件" })
     .fill("1.0 mm 40P FPC");
   await connectorPicker
     .locator(".device-picker-item")
@@ -836,9 +840,11 @@ test("device pickers create only the selected connector and antenna @smoke", asy
     "fpc-40p-10",
   );
 
-  await page.getByRole("button", { name: "添加接口" }).click();
+  await page.getByRole("button", { name: "添加接口或器件" }).click();
   await expect(connectorPicker).toBeVisible();
-  await connectorPicker.getByRole("searchbox", { name: "搜索添加接口器件" }).fill("1.25");
+  await connectorPicker
+    .getByRole("searchbox", { name: "搜索添加接口/器件" })
+    .fill("1.25");
   await expect(connectorPicker.locator(".device-picker-item")).toHaveCount(3);
   await expect(connectorPicker.getByText("1.25 mm 2P 线对板端子", { exact: true })).toBeVisible();
   await expect(connectorPicker.getByText("1.25 mm 4P 线对板端子", { exact: true })).toBeVisible();
@@ -858,6 +864,33 @@ test("device pickers create only the selected connector and antenna @smoke", asy
   await expect(page.getByRole("combobox", { name: "接口 3 器件" })).toHaveValue(
     "terminal-125-4p",
   );
+
+  await page.getByRole("button", { name: "添加接口或器件" }).click();
+  await expect(connectorPicker).toBeVisible();
+  await expect(connectorPicker.getByText("显示屏")).toBeVisible();
+  await expect(
+    connectorPicker
+      .locator(".device-picker-group")
+      .filter({ hasText: "显示屏" })
+      .locator(".device-picker-item"),
+  ).toHaveCount(7);
+  await connectorPicker
+    .getByRole("searchbox", { name: "搜索添加接口/器件" })
+    .fill("MSP4021");
+  await connectorPicker
+    .locator(".device-picker-item")
+    .filter({ hasText: "LCDWIKI 4.0寸 SPI 屏 MSP4021" })
+    .click();
+  await expect(connectorPicker).toHaveCount(0);
+  await expect(
+    tree.locator(".tree-item").filter({ hasText: "LCDWIKI 4.0寸 SPI 屏 MSP4021" }),
+  ).toBeVisible();
+  await expect(page.getByRole("combobox", { name: "接口 4 器件" })).toHaveValue(
+    "lcdwiki-msp4021",
+  );
+  await expect(
+    page.getByRole("complementary", { name: "接口检查器" }),
+  ).toContainText("屏幕规格：320x480 · 电阻触摸");
 
   await page.getByRole("button", { name: "添加天线" }).click();
   const antennaPicker = page.getByRole("dialog", { name: "添加天线选择器" });

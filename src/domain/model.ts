@@ -16,6 +16,13 @@ export type PanelMountingType = "screw" | "magnet" | "snap" | "slide";
 export type EnclosureFace = "top" | "bottom" | "front" | "back" | "left" | "right";
 export type ConnectorSurface = EnclosureFace | "panel";
 export type PlacementRotation = 0 | 90 | 180 | 270;
+export type BatteryMountFace = EnclosureFace;
+export type BatteryRetentionType = "open" | "elastic" | "clip";
+export type BatteryInsertionSide = "left" | "right";
+export type PcbMountingType = "screw" | "rail-screw" | "rail-elastic";
+export type PcbRailAxis = "x" | "z";
+export type PcbInsertionSide = "left" | "right";
+export type DisplayMountingType = "none" | "screw";
 
 export interface ConnectorPlacement {
   id: string;
@@ -27,6 +34,7 @@ export interface ConnectorPlacement {
   rotation: PlacementRotation;
   cutoutWidth: number;
   cutoutHeight: number;
+  displayMountingType?: DisplayMountingType;
 }
 
 export interface AntennaPlacement {
@@ -83,6 +91,9 @@ export type BatteryPreset = "aaa" | "aa" | "18650" | "lipo" | "custom";
 export interface BatteryCompartmentPlacement {
   id: string;
   preset: BatteryPreset;
+  face: BatteryMountFace;
+  retentionType: BatteryRetentionType;
+  insertionSide: BatteryInsertionSide;
   cellCount: number;
   width: number;
   depth: number;
@@ -109,6 +120,7 @@ export type SelectablePart =
 
 export interface DesignerParameters {
   enclosureTemplateId: string;
+  parametricPcbEnabled: boolean;
   pcbLength: number;
   pcbWidth: number;
   pcbThickness: number;
@@ -119,6 +131,18 @@ export interface DesignerParameters {
   baseHeight: number;
   cornerRadius: number;
   standoffHeight: number;
+  pcbOffsetX: number;
+  pcbOffsetZ: number;
+  pcbElevation: number;
+  pcbMountingType: PcbMountingType;
+  pcbRailClearance: number;
+  pcbRailWidth: number;
+  pcbRailHeight: number;
+  pcbStopWidth: number;
+  pcbElasticBandWidth: number;
+  pcbRailAxis: PcbRailAxis;
+  pcbInsertionSide: PcbInsertionSide;
+  lidFace: EnclosureFace;
   lidThickness: number;
   closureType: ClosureType;
   magnetSupportType: MagnetSupportType;

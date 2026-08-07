@@ -1,4 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import type {
+  CSSProperties,
+  KeyboardEvent as ReactKeyboardEvent,
+  PointerEvent as ReactPointerEvent,
+} from "react";
 import { CircleAlert, CircleCheck, Ruler, Save } from "lucide-react";
 import { AssemblyTree } from "./components/AssemblyTree";
 import { Inspector } from "./components/Inspector";
@@ -15,6 +20,100 @@ import {
   isProjectSnapshot,
   useDesignerStore,
 } from "./store/designerStore";
+
+type ResizablePane = "assembly" | "inspector";
+
+interface PaneWidths {
+  assembly: number;
+  inspector: number;
+}
+
+const PANE_WIDTH_STORAGE_KEY = "3dshelldesigner:pane-widths";
+const DEFAULT_PANE_WIDTHS: PaneWidths = {
+  assembly: 224,
+  inspector: 320,
+};
+const PANE_WIDTH_LIMITS = {
+  assembly: { min: 170, max: 460 },
+  inspector: { min: 260, max: 560 },
+} as const;
+const MIN_VIEWPORT_WIDTH = 320;
+
+function clampNumber(value: number, min: number, max: number): number {
+  const safeMax = Math.max(min, max);
+  return Math.min(safeMax, Math.max(min, value));
+}
+
+function fitPaneWidthsToWorkbench(
+  widths: PaneWidths,
+  workbenchWidth: number | null,
+): PaneWidths {
+  let assembly = clampNumber(
+    widths.assembly,
+    PANE_WIDTH_LIMITS.assembly.min,
+    PANE_WIDTH_LIMITS.assembly.max,
+  );
+  let inspector = clampNumber(
+    widths.inspector,
+    PANE_WIDTH_LIMITS.inspector.min,
+    PANE_WIDTH_LIMITS.inspector.max,
+  );
+
+  if (workbenchWidth && workbenchWidth > 0) {
+    const availableForPanes = workbenchWidth - MIN_VIEWPORT_WIDTH - 16;
+    const minimumPanes =
+      PANE_WIDTH_LIMITS.assembly.min + PANE_WIDTH_LIMITS.inspector.min;
+    const maxPaneTotal = Math.max(minimumPanes, availableForPanes);
+    const paneTotal = assembly + inspector;
+
+    if (paneTotal > maxPaneTotal) {
+      const overflow = paneTotal - maxPaneTotal;
+      const assemblyFlex = assembly - PANE_WIDTH_LIMITS.assembly.min;
+      const inspectorFlex = inspector - PANE_WIDTH_LIMITS.inspector.min;
+      const totalFlex = assemblyFlex + inspectorFlex;
+      if (totalFlex > 0) {
+        assembly -= overflow * (assemblyFlex / totalFlex);
+        inspector -= overflow * (inspectorFlex / totalFlex);
+      }
+    }
+  }
+
+  return {
+    assembly: Math.round(
+      clampNumber(
+        assembly,
+        PANE_WIDTH_LIMITS.assembly.min,
+        PANE_WIDTH_LIMITS.assembly.max,
+      ),
+    ),
+    inspector: Math.round(
+      clampNumber(
+        inspector,
+        PANE_WIDTH_LIMITS.inspector.min,
+        PANE_WIDTH_LIMITS.inspector.max,
+      ),
+    ),
+  };
+}
+
+function loadPaneWidths(): PaneWidths {
+  try {
+    const raw = window.localStorage.getItem(PANE_WIDTH_STORAGE_KEY);
+    if (!raw) return DEFAULT_PANE_WIDTHS;
+    const parsed: unknown = JSON.parse(raw);
+    if (
+      parsed &&
+      typeof parsed === "object" &&
+      typeof (parsed as Partial<PaneWidths>).assembly === "number" &&
+      typeof (parsed as Partial<PaneWidths>).inspector === "number"
+    ) {
+      return fitPaneWidthsToWorkbench(parsed as PaneWidths, null);
+    }
+  } catch {
+    // Ignore corrupted local layout preferences.
+  }
+  return DEFAULT_PANE_WIDTHS;
+}
 
 function downloadJson(filename: string, value: unknown): void {
   const blob = new Blob([JSON.stringify(value, null, 2)], {
@@ -39,6 +138,10 @@ function isEditingText(target: EventTarget | null): boolean {
 
 export default function App() {
   const [mobileAssemblyOpen, setMobileAssemblyOpen] = useState(false);
+  const [paneWidths, setPaneWidths] = useState<PaneWidths>(() => loadPaneWidths());
+  const [resizingPane, setResizingPane] = useState<ResizablePane | null>(null);
+  const [workbenchWidth, setWorkbenchWidth] = useState<number | null>(null);
+  const workbenchRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const pcbInputRef = useRef<HTMLInputElement>(null);
   const manufacturingInputRef = useRef<HTMLInputElement>(null);
@@ -82,6 +185,35 @@ export default function App() {
   useEffect(() => {
     void restoreCachedProject();
   }, [restoreCachedProject]);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(
+        PANE_WIDTH_STORAGE_KEY,
+        JSON.stringify(paneWidths),
+      );
+    } catch {
+      // Layout preferences are optional and should not block the editor.
+    }
+  }, [paneWidths]);
+
+  useEffect(() => {
+    const workbench = workbenchRef.current;
+    if (!workbench) return undefined;
+    const observer = new ResizeObserver(([entry]) => {
+      const width = entry?.contentRect.width ?? workbench.clientWidth;
+      setWorkbenchWidth(width);
+      setPaneWidths((current) => {
+        const fitted = fitPaneWidthsToWorkbench(current, width);
+        return fitted.assembly === current.assembly &&
+          fitted.inspector === current.inspector
+          ? current
+          : fitted;
+      });
+    });
+    observer.observe(workbench);
+    return () => observer.disconnect();
+  }, []);
 
   useEffect(() => {
     const handleEditingShortcuts = (event: KeyboardEvent) => {
@@ -180,6 +312,116 @@ export default function App() {
     downloadJson("3dshelldesigner-project.json", snapshot);
   };
 
+  const resizePane = (pane: ResizablePane, clientX: number, startX: number, startWidths: PaneWidths) => {
+    const currentWorkbenchWidth = workbenchWidth ?? window.innerWidth;
+    setPaneWidths(() => {
+      const next: PaneWidths = { ...startWidths };
+      if (pane === "assembly") {
+        const maxWidth = Math.min(
+          PANE_WIDTH_LIMITS.assembly.max,
+          currentWorkbenchWidth -
+            MIN_VIEWPORT_WIDTH -
+            startWidths.inspector -
+            16,
+        );
+        next.assembly = clampNumber(
+          startWidths.assembly + clientX - startX,
+          PANE_WIDTH_LIMITS.assembly.min,
+          maxWidth,
+        );
+      } else {
+        const maxWidth = Math.min(
+          PANE_WIDTH_LIMITS.inspector.max,
+          currentWorkbenchWidth -
+            MIN_VIEWPORT_WIDTH -
+            startWidths.assembly -
+            16,
+        );
+        next.inspector = clampNumber(
+          startWidths.inspector - (clientX - startX),
+          PANE_WIDTH_LIMITS.inspector.min,
+          maxWidth,
+        );
+      }
+      return fitPaneWidthsToWorkbench(next, currentWorkbenchWidth);
+    });
+  };
+
+  const beginPaneResize =
+    (pane: ResizablePane) =>
+    (event: ReactPointerEvent<HTMLButtonElement>) => {
+      if (event.button !== 0) return;
+      event.preventDefault();
+      const startX = event.clientX;
+      const startWidths = paneWidths;
+      setResizingPane(pane);
+
+      const handlePointerMove = (moveEvent: PointerEvent) => {
+        resizePane(pane, moveEvent.clientX, startX, startWidths);
+      };
+      const handlePointerUp = () => {
+        setResizingPane(null);
+        window.removeEventListener("pointermove", handlePointerMove);
+        window.removeEventListener("pointerup", handlePointerUp);
+        window.removeEventListener("pointercancel", handlePointerUp);
+      };
+
+      window.addEventListener("pointermove", handlePointerMove);
+      window.addEventListener("pointerup", handlePointerUp);
+      window.addEventListener("pointercancel", handlePointerUp);
+    };
+
+  const nudgePaneWidth = (pane: ResizablePane, delta: number) => {
+    const currentWorkbenchWidth = workbenchWidth ?? window.innerWidth;
+    setPaneWidths((current) => {
+      const next: PaneWidths =
+        pane === "assembly"
+          ? { ...current, assembly: current.assembly + delta }
+          : { ...current, inspector: current.inspector + delta };
+      return fitPaneWidthsToWorkbench(next, currentWorkbenchWidth);
+    });
+  };
+
+  const resetPaneWidth = (pane: ResizablePane) => {
+    const currentWorkbenchWidth = workbenchWidth ?? window.innerWidth;
+    setPaneWidths((current) =>
+      fitPaneWidthsToWorkbench(
+        pane === "assembly"
+          ? { ...current, assembly: DEFAULT_PANE_WIDTHS.assembly }
+          : { ...current, inspector: DEFAULT_PANE_WIDTHS.inspector },
+        currentWorkbenchWidth,
+      ),
+    );
+  };
+
+  const handlePaneResizeKeyDown =
+    (pane: ResizablePane) =>
+    (event: ReactKeyboardEvent<HTMLButtonElement>) => {
+      if (event.key === "ArrowLeft") {
+        nudgePaneWidth(pane, pane === "assembly" ? -16 : 16);
+        event.preventDefault();
+      } else if (event.key === "ArrowRight") {
+        nudgePaneWidth(pane, pane === "assembly" ? 16 : -16);
+        event.preventDefault();
+      } else if (event.key === "Home") {
+        nudgePaneWidth(
+          pane,
+          pane === "assembly"
+            ? PANE_WIDTH_LIMITS.assembly.min - paneWidths.assembly
+            : PANE_WIDTH_LIMITS.inspector.min - paneWidths.inspector,
+        );
+        event.preventDefault();
+      } else if (event.key === "End") {
+        nudgePaneWidth(
+          pane,
+          pane === "assembly"
+            ? PANE_WIDTH_LIMITS.assembly.max - paneWidths.assembly
+            : PANE_WIDTH_LIMITS.inspector.max - paneWidths.inspector,
+        );
+        event.preventDefault();
+      }
+    };
+
   const importProject = async (file: File | undefined) => {
     if (!file) return;
     try {
@@ -263,6 +505,11 @@ export default function App() {
     }
   };
 
+  const workbenchStyle = {
+    "--assembly-pane-width": `${paneWidths.assembly}px`,
+    "--inspector-pane-width": `${paneWidths.inspector}px`,
+  } as CSSProperties;
+
   return (
     <div className="app-shell">
       <Toolbar
@@ -307,8 +554,25 @@ export default function App() {
         onChange={(event) => void importStep(event.currentTarget.files)}
       />
 
-      <div className={`workbench ${mobileAssemblyOpen ? "is-assembly-open" : ""}`}>
-        <AssemblyTree onRequestClose={() => setMobileAssemblyOpen(false)} />
+      <div
+        ref={workbenchRef}
+        className={`workbench ${mobileAssemblyOpen ? "is-assembly-open" : ""} ${resizingPane ? "is-pane-resizing" : ""}`}
+        style={workbenchStyle}
+      >
+        <AssemblyTree
+          onRequestClose={() => setMobileAssemblyOpen(false)}
+          onImportPcb={() => pcbInputRef.current?.click()}
+        />
+        <button
+          className={`pane-resizer pane-resizer-left ${resizingPane === "assembly" ? "is-active" : ""}`}
+          type="button"
+          aria-label="调整左栏宽度"
+          aria-orientation="vertical"
+          title="拖动调整左栏宽度，双击恢复默认"
+          onPointerDown={beginPaneResize("assembly")}
+          onDoubleClick={() => resetPaneWidth("assembly")}
+          onKeyDown={handlePaneResizeKeyDown("assembly")}
+        />
         <main className="viewport-panel">
           <Viewport />
           <div className="viewport-metrics" aria-label="外壳尺寸">
@@ -321,6 +585,16 @@ export default function App() {
             <span className="axis-x">X</span>
           </div>
         </main>
+        <button
+          className={`pane-resizer pane-resizer-right ${resizingPane === "inspector" ? "is-active" : ""}`}
+          type="button"
+          aria-label="调整右栏宽度"
+          aria-orientation="vertical"
+          title="拖动调整右栏宽度，双击恢复默认"
+          onPointerDown={beginPaneResize("inspector")}
+          onDoubleClick={() => resetPaneWidth("inspector")}
+          onKeyDown={handlePaneResizeKeyDown("inspector")}
+        />
         <Inspector />
         {mobileAssemblyOpen ? (
           <button

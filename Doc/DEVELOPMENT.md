@@ -460,7 +460,7 @@ interface ComponentDefinition {
 5. 上传 `dist/` 为 GitHub Pages artifact。
 6. 构建与烟测通过后，使用 GitHub 官方 Pages Action 完成部署。
 
-完整浏览器与制造回归位于 `.github/workflows/regression.yml`，每天北京时间 02:00 或由 `workflow_dispatch` 手动触发。21 项测试按测试粒度拆到两个单 worker 分片，失败时立即取消另一分片；该工作流不阻塞 Pages 发布。
+完整浏览器与制造回归位于 `.github/workflows/regression.yml`，固定在每天北京时间 02:00 由 GitHub 定时触发；定时触发时会先检查最近 24 小时 `main` 是否有提交，没有提交则跳过重型浏览器分片。`workflow_dispatch` 手动触发始终执行完整回归。该工作流不阻塞 Pages 发布。
 
 部署约束：
 

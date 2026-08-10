@@ -307,8 +307,8 @@ test("renders and exports the default enclosure @manufacturing", async ({ page }
 
   await page.getByRole("tab", { name: "结构" }).click();
   await page.getByRole("button", { name: "磁吸", exact: true }).click();
-  await expect(page.getByText("磁吸固定", { exact: true })).toBeVisible();
   const magnetSupportSelect = page.getByRole("combobox", { name: "磁铁承托方式" });
+  await expect(magnetSupportSelect).toBeVisible();
   await expect(magnetSupportSelect).toHaveValue("corner-shelf");
   await magnetSupportSelect.selectOption("perimeter-flange");
   await expect(

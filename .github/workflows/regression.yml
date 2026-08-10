@@ -13,8 +13,42 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  preflight:
+    name: Check whether regression is needed
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    outputs:
+      should_run: ${{ steps.commit-window.outputs.should_run }}
+      commit_count: ${{ steps.commit-window.outputs.commit_count }}
+    steps:
+      - name: Check out repository history
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Detect commits since previous daily slot
+        id: commit-window
+        shell: bash
+        run: |
+          if [[ "${{ github.event_name }}" != "schedule" ]]; then
+            echo "should_run=true" >> "$GITHUB_OUTPUT"
+            echo "commit_count=manual" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          commit_count="$(git rev-list --count --since='24 hours ago' HEAD)"
+          echo "commit_count=${commit_count}" >> "$GITHUB_OUTPUT"
+          if [[ "${commit_count}" -gt 0 ]]; then
+            echo "should_run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "should_run=false" >> "$GITHUB_OUTPUT"
+            echo "No commits in the last 24 hours; skipping full browser regression."
+          fi
+
   browser-regression:
     name: Full regression (${{ matrix.shard }}/4)
+    needs: preflight
+    if: needs.preflight.outputs.should_run == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 25
     strategy:

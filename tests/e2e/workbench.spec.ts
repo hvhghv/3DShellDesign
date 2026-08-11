@@ -1046,6 +1046,56 @@ test("hides, locks and restores individual assembly features", async ({ page }, 
   );
 });
 
+test("controls PCB full and body-only visibility from the tree", async ({ page }) => {
+  await page.addInitScript(() => {
+    window.localStorage.setItem(
+      "3dshell-designer.project.v1",
+      JSON.stringify({
+        schemaVersion: 1,
+        name: "PCB 显示测试",
+        updatedAt: "2026-08-11T00:00:00.000Z",
+        pcbReference: null,
+        parameters: {
+          parametricPcbEnabled: true,
+          pcbReferences: [],
+          pcbMountingType: "rail-elastic",
+        },
+      }),
+    );
+  });
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+
+  const pcbItem = page
+    .locator(".tree-item")
+    .filter({ hasText: "参数 PCB" })
+    .first();
+  const pcbVisibility = page.getByRole("group", { name: "PCB显示" });
+  const fullToggle = pcbVisibility.getByRole("checkbox", {
+    name: "参数 PCB全部显示",
+  });
+  const bodyToggle = pcbVisibility.getByRole("checkbox", {
+    name: "参数 PCB主体显示",
+  });
+
+  await expect(fullToggle).toBeChecked();
+  await expect(bodyToggle).toBeChecked();
+
+  await bodyToggle.uncheck();
+  await expect(pcbItem).toHaveClass(/is-pcb-body-hidden/);
+  await expect(pcbItem).not.toHaveClass(/is-feature-hidden/);
+  await expect(fullToggle).toBeChecked();
+
+  await fullToggle.uncheck();
+  await expect(pcbItem).toHaveClass(/is-feature-hidden/);
+  await expect(bodyToggle).toBeDisabled();
+
+  await fullToggle.check();
+  await expect(pcbItem).not.toHaveClass(/is-feature-hidden/);
+  await expect(pcbItem).not.toHaveClass(/is-pcb-body-hidden/);
+  await expect(bodyToggle).toBeChecked();
+});
+
 test("hides and restores battery compartments from the tree and inspector", async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto("/");

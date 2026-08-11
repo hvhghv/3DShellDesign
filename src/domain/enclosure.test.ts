@@ -46,6 +46,20 @@ describe("enclosure domain", () => {
     );
   });
 
+  it("reports unsupported spring latch material", () => {
+    const issues = validateDesign({
+      ...DEFAULT_PARAMETERS,
+      shellMaterialId: "pla",
+      closureType: "spring-latch",
+    });
+
+    expect(issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: "snap-material", level: "warning" }),
+      ]),
+    );
+  });
+
   it("accepts the default design", () => {
     const blockingIssues = validateDesign(DEFAULT_PARAMETERS).filter(
       (issue) => issue.level === "error",
@@ -375,6 +389,15 @@ describe("enclosure domain", () => {
         issue.id.startsWith("panel-snap-material"),
       ),
     ).toBeUndefined();
+  });
+
+  it("loads spring latch closures", () => {
+    const parameters = normalizeDesignerParameters({
+      ...DEFAULT_PARAMETERS,
+      closureType: "spring-latch",
+    });
+
+    expect(parameters.closureType).toBe("spring-latch");
   });
 
   it("warns when a sheet panel uses an integrated snap post", () => {

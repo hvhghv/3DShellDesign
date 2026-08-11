@@ -12,6 +12,7 @@ import {
   LockOpen,
   Magnet,
   PanelTop,
+  RotateCw,
   Trash2,
   Unplug,
   UnfoldVertical,
@@ -1628,6 +1629,10 @@ export function Inspector() {
                   <BadgeCheck size={17} />
                   <span>快拆扣</span>
                 </button>
+                <button className={parameters.closureType === "spring-latch" ? "is-active" : ""} type="button" onClick={() => setParameter("closureType", "spring-latch")}>
+                  <RotateCw size={17} />
+                  <span>弹簧卡扣</span>
+                </button>
                 <button className={parameters.closureType === "slide" ? "is-active" : ""} type="button" onClick={() => setParameter("closureType", "slide")}>
                   <ArrowRightLeft size={17} />
                   <span>滑盖</span>
@@ -1693,6 +1698,11 @@ export function Inspector() {
                     {getMagnetSupportOption(parameters.magnetSupportType).description}
                   </p>
                 </>
+              ) : null}
+              {parameters.closureType === "spring-latch" ? (
+                <p className="material-note">
+                  自动在固定点生成弹簧杯、导向柱、旋转锁舌和卡扣挡块；装配时先下压压缩弹簧，再旋转到卡扣挡块下方锁住。
+                </p>
               ) : null}
             </section>
             <section className="inspector-section">

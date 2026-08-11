@@ -60,6 +60,17 @@ describe("BOM CSV exporter", () => {
     expect(csv).toContain("快拆销轴,2,直径 2.5 mm 带拉环销");
   });
 
+  it("records spring latch closure springs", () => {
+    const csv = createBomCsv("弹簧卡扣外壳", {
+      ...DEFAULT_PARAMETERS,
+      closureType: "spring-latch",
+      removableFaces: ["top", "front"],
+    });
+
+    expect(csv).toContain("可拆面,2,PETG 韧性打印,FDM,顶部、前壁 / spring-latch");
+    expect(csv).toContain("压缩弹簧,8,外径约 5 mm，高 4-6 mm");
+  });
+
   it("records rail elastic PCB mounts and battery retention hardware", () => {
     const csv = createBomCsv("快拆仓", {
       ...DEFAULT_PARAMETERS,

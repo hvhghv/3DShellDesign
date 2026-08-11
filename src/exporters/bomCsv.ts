@@ -46,7 +46,7 @@ export function createBomCsv(
       "壳体一体打印/装配",
       parameters.pcbMountingType === "screw"
         ? `PCB 基准高度 ${parameters.standoffHeight} mm`
-        : `${PCB_RAIL_AXIS_LABELS[parameters.pcbRailAxis]}；导轨 ${parameters.pcbRailWidth} mm；滑槽余量 ${parameters.pcbRailClearance} mm；无底部支撑墙；${parameters.pcbMountingType === "rail-elastic" ? "闭口端挂点，橡皮筋沿长度上下包裹" : "滑入后螺丝锁定"}`,
+        : `${PCB_RAIL_AXIS_LABELS[parameters.pcbRailAxis]}；导轨 ${parameters.pcbRailWidth} mm；滑槽余量 ${parameters.pcbRailClearance} mm；无底部支撑墙；${parameters.pcbMountingType === "rail-elastic" ? "闭口端上下挂点，橡皮筋沿长度上下包裹" : "滑入后螺丝锁定"}`,
     ],
   ];
   parameters.panelPlacements.forEach((placement, index) => {
@@ -156,6 +156,15 @@ export function createBomCsv(
     ]);
   } else if (parameters.closureType === "hinge") {
     rows.push([projectName, "铰链销轴", 1, "直径 2.5 mm", "装配", "按打印公差校准"]);
+  } else if (parameters.closureType === "spring-latch") {
+    rows.push([
+      projectName,
+      "压缩弹簧",
+      removableFaces.length * 4,
+      "外径约 5 mm，高 4-6 mm",
+      "装配",
+      "装入弹簧杯；下压可拆面后旋转锁舌到卡扣挡块下方",
+    ]);
   } else if (parameters.closureType === "pin") {
     rows.push([projectName, "快拆销轴", 2, "直径 2.5 mm 带拉环销", "装配", "按销轴实物直径校准孔隙"]);
   }

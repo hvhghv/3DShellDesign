@@ -200,6 +200,22 @@ function cubeAt(
   return translateAndDispose(cube, x, y, z);
 }
 
+function centeredCubeAt(
+  module: ManifoldToplevel,
+  size: readonly [number, number, number],
+  x: number,
+  y: number,
+  z: number,
+): ManifoldSolid {
+  return cubeAt(
+    module,
+    size,
+    x - size[0] / 2,
+    y - size[1] / 2,
+    z - size[2] / 2,
+  );
+}
+
 function createFaceCutter(
   module: ManifoldToplevel,
   face: Exclude<EnclosureFace, "top">,
@@ -1274,6 +1290,7 @@ function applyPcbRailMountingFeatures(
           ? [-laneOffset, laneOffset]
           : [-layout.travelWidth * 0.2, layout.travelWidth * 0.2];
       for (const laneY of laneYs) {
+        const anchorOverlap = 0.1;
         addRailPart(
           cylinderAt(
             module,
@@ -1281,7 +1298,18 @@ function applyPcbRailMountingFeatures(
             anchorHeight,
             anchorX,
             laneY,
-            layout.boardTop - 0.1,
+            layout.boardTop - anchorOverlap,
+            20,
+          ),
+        );
+        addRailPart(
+          cylinderAt(
+            module,
+            anchorRadius,
+            anchorHeight,
+            anchorX,
+            laneY,
+            layout.boardBottom - anchorHeight + anchorOverlap,
             20,
           ),
         );
@@ -1567,6 +1595,73 @@ function buildBase(
     }
   }
 
+  if (parameters.closureType === "spring-latch") {
+    if (isRemovableFace("top")) {
+      for (const [x, y] of getClosurePoints(
+        dimensions.outsideLength,
+        dimensions.outsideWidth,
+        parameters.wallThickness,
+      )) {
+        const signX = x >= 0 ? 1 : -1;
+        const signY = y >= 0 ? 1 : -1;
+        base = unionAndDispose(
+          base,
+          cylinderAt(module, 4.2, 1.2, x, y, parameters.baseHeight - 1.2, 32),
+        );
+        base = unionAndDispose(
+          base,
+          cylinderAt(module, 1.1, 4.4, x, y, parameters.baseHeight - 0.1, 24),
+        );
+        base = unionAndDispose(
+          base,
+          centeredCubeAt(
+            module,
+            [10, 2.3, 2.2],
+            x - signX * 4.4,
+            y + signY * 3,
+            parameters.baseHeight - 1.35,
+          ),
+        );
+        base = unionAndDispose(
+          base,
+          centeredCubeAt(
+            module,
+            [2.2, 8, 2.2],
+            x - signX * 9.1,
+            y,
+            parameters.baseHeight - 1.35,
+          ),
+        );
+      }
+    }
+    for (const removableFace of removableFaces) {
+      if (removableFace === "top" || removableFace === "bottom") continue;
+      const [faceWidth, faceHeight] = getSolidFaceSize(
+        removableFace,
+        parameters,
+        dimensions,
+      );
+      for (const [u, v] of getClosurePoints(
+        faceWidth,
+        faceHeight,
+        parameters.wallThickness,
+      )) {
+        base = unionAndDispose(
+          base,
+          createFaceRail(
+            module,
+            removableFace,
+            u,
+            v,
+            Math.min(12, faceWidth * 0.28),
+            parameters,
+            dimensions,
+          ),
+        );
+      }
+    }
+  }
+
   if (
     parameters.standoffHeight > 0.5 &&
     parameters.pcbMountingType !== "rail-elastic"
@@ -1802,6 +1897,18 @@ function buildFlatLidFace(
           MAGNET_GEOMETRY.pocketRadius,
           MAGNET_GEOMETRY.lidPocketDepth,
         ),
+      );
+    }
+  } else if (parameters.closureType === "spring-latch") {
+    for (const [u, v] of points) {
+      const signU = u >= 0 ? 1 : -1;
+      lid = unionAndDispose(
+        lid,
+        cylinderAt(module, 3.35, 0.75, u, v, -0.75, 32),
+      );
+      lid = unionAndDispose(
+        lid,
+        centeredCubeAt(module, [11, 3, 1.4], u - signU * 4.2, v, -0.7),
       );
     }
   }
@@ -2095,6 +2202,18 @@ function buildLid(
     lid = unionAndDispose(lid, backTab);
     lid = unionAndDispose(lid, frontHook);
     lid = unionAndDispose(lid, backHook);
+  } else if (parameters.closureType === "spring-latch") {
+    for (const [x, y] of points) {
+      const signX = x >= 0 ? 1 : -1;
+      lid = unionAndDispose(
+        lid,
+        cylinderAt(module, 3.35, 0.75, x, y, -0.75, 32),
+      );
+      lid = unionAndDispose(
+        lid,
+        centeredCubeAt(module, [11, 3, 1.4], x - signX * 4.2, y, -0.7),
+      );
+    }
   } else if (parameters.closureType === "slide") {
     const stop = cubeAt(
       module,

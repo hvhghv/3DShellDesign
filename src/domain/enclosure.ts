@@ -57,6 +57,7 @@ const CLOSURE_TYPES: readonly ClosureType[] = [
   "magnet",
   "snap",
   "latch",
+  "spring-latch",
   "slide",
   "hinge",
   "pin",
@@ -745,7 +746,9 @@ export function validateDesign(
   }
 
   if (
-    (parameters.closureType === "snap" || parameters.closureType === "latch") &&
+    (parameters.closureType === "snap" ||
+      parameters.closureType === "latch" ||
+      parameters.closureType === "spring-latch") &&
     !material.supportsSnapFit
   ) {
     issues.push({

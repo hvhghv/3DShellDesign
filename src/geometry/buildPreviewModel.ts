@@ -470,6 +470,34 @@ function addCylinder(
   );
 }
 
+function createCompressionSpringGeometry(
+  coilRadius: number,
+  height: number,
+  turns: number,
+  wireRadius: number,
+): THREE.TubeGeometry {
+  const segments = Math.max(32, Math.round(turns * 32));
+  const points: THREE.Vector3[] = [];
+  for (let index = 0; index <= segments; index += 1) {
+    const progress = index / segments;
+    const angle = progress * turns * Math.PI * 2;
+    points.push(
+      new THREE.Vector3(
+        Math.cos(angle) * coilRadius,
+        (progress - 0.5) * height,
+        Math.sin(angle) * coilRadius,
+      ),
+    );
+  }
+  return new THREE.TubeGeometry(
+    new THREE.CatmullRomCurve3(points, false, "catmullrom", 0.08),
+    segments,
+    wireRadius,
+    8,
+    false,
+  );
+}
+
 function makeMaterialTransparent(material: THREE.Material): THREE.Material {
   const transparentMaterial = material.clone();
   transparentMaterial.transparent = true;
@@ -1485,7 +1513,7 @@ function addPcbRailMountingPreview(
         : [-layout.travelWidth * 0.2, layout.travelWidth * 0.2];
 
     laneZs.forEach((laneZ, index) => {
-      const anchor = addCylinder(
+      const topAnchor = addCylinder(
         group,
         anchorRadius,
         anchorHeight,
@@ -1494,7 +1522,18 @@ function addPcbRailMountingPreview(
         "base",
         20,
       );
-      anchor.name = `${envelope.id}-pcb-elastic-anchor-${index + 1}`;
+      topAnchor.name = `${envelope.id}-pcb-elastic-anchor-${index + 1}`;
+
+      const bottomAnchor = addCylinder(
+        group,
+        anchorRadius,
+        anchorHeight,
+        [anchorX, layout.boardBottom - anchorHeight / 2, laneZ],
+        railMaterial,
+        "base",
+        20,
+      );
+      bottomAnchor.name = `${envelope.id}-pcb-elastic-anchor-${index + 1}-bottom`;
 
       const bandPath = new THREE.CatmullRomCurve3(
         [
@@ -1502,8 +1541,8 @@ function addPcbRailMountingPreview(
           new THREE.Vector3(openInsideX, topY, laneZ),
           new THREE.Vector3(openWrapX, midY, laneZ),
           new THREE.Vector3(openInsideX, bottomY, laneZ),
-          new THREE.Vector3(closedWrapX, bottomY, laneZ),
-          new THREE.Vector3(anchorX, midY, laneZ),
+          new THREE.Vector3(anchorX, bottomY, laneZ),
+          new THREE.Vector3(closedWrapX, midY, laneZ),
         ],
         true,
         "catmullrom",
@@ -1764,6 +1803,102 @@ function addClosureFeatures(
     }
   }
 
+  if (parameters.closureType === "spring-latch") {
+    const shellMaterial = standardMaterial(
+      getMaterial(parameters.shellMaterialId).color,
+      selectedPart === "base",
+    );
+    const lidLatchMaterial = standardMaterial(
+      getMaterial(parameters.shellMaterialId).color,
+      selectedPart === "lid",
+      { roughness: 0.62 },
+    );
+    const catchMaterial = standardMaterial(0x26302b, selectedPart === "base", {
+      roughness: 0.84,
+    });
+    const springMaterial = standardMaterial(0xc7cfcb, selectedPart === "lid", {
+      metalness: 0.72,
+      roughness: 0.22,
+    });
+    const guideMaterial = standardMaterial(0x59615d, selectedPart === "base", {
+      metalness: 0.34,
+      roughness: 0.36,
+    });
+    for (const [pointX, pointZ] of points) {
+      const signX = pointX >= 0 ? 1 : -1;
+      const signZ = pointZ >= 0 ? 1 : -1;
+      const seat = addCylinder(
+        root,
+        4.2,
+        1.2,
+        [pointX, parameters.baseHeight - 0.6, pointZ],
+        shellMaterial,
+        "base",
+        32,
+      );
+      seat.name = "spring-latch-spring-seat";
+
+      const guide = addCylinder(
+        root,
+        1.1,
+        4.4,
+        [pointX, parameters.baseHeight + 1.4, pointZ],
+        guideMaterial,
+        "base",
+        24,
+      );
+      guide.name = "spring-latch-guide-post";
+
+      const spring = addMesh(
+        root,
+        createCompressionSpringGeometry(2.8, 4.2, 3.6, 0.22),
+        springMaterial,
+        "lid",
+        [pointX, parameters.baseHeight + 1.35, pointZ],
+        false,
+      );
+      spring.name = "spring-latch-compression-spring";
+
+      const cap = addCylinder(
+        root,
+        3.35,
+        0.75,
+        [pointX, lidY - 0.35, pointZ],
+        lidLatchMaterial,
+        "lid",
+        32,
+      );
+      cap.name = "spring-latch-lid-spring-cap";
+
+      const tab = addMesh(
+        root,
+        new THREE.BoxGeometry(11, 1.4, 3),
+        lidLatchMaterial,
+        "lid",
+        [pointX - signX * 4.2, lidY - 1.05, pointZ],
+      );
+      tab.name = "spring-latch-rotor-tab";
+
+      const catchRail = addMesh(
+        root,
+        new THREE.BoxGeometry(10, 2.3, 2.2),
+        catchMaterial,
+        "base",
+        [pointX - signX * 4.4, parameters.baseHeight - 1.35, pointZ + signZ * 3],
+      );
+      catchRail.name = "spring-latch-catch-rail";
+
+      const stop = addMesh(
+        root,
+        new THREE.BoxGeometry(2.2, 2.3, 8),
+        catchMaterial,
+        "base",
+        [pointX - signX * 9.1, parameters.baseHeight - 1.35, pointZ],
+      );
+      stop.name = "spring-latch-rotation-stop";
+    }
+  }
+
   if (parameters.closureType === "slide") {
     const railMaterial = standardMaterial(
       getMaterial(parameters.shellMaterialId).color,
@@ -2010,6 +2145,100 @@ function addGenericFaceClosureFeatures(
         lidFace,
       );
       lidMagnet.name = "lid-magnet";
+    }
+    return;
+  }
+
+  if (parameters.closureType === "spring-latch") {
+    const baseMaterial = standardMaterial(shellColor, selectedPart === "base");
+    const lidLatchMaterial = standardMaterial(shellColor, selectedPart === "lid", {
+      roughness: 0.62,
+    });
+    const springMaterial = standardMaterial(0xc7cfcb, selectedPart === "lid", {
+      metalness: 0.72,
+      roughness: 0.22,
+    });
+    const catchMaterial = standardMaterial(0x26302b, selectedPart === "base", {
+      roughness: 0.84,
+    });
+    for (const [pointU, pointV] of points) {
+      const springSeat = addMesh(
+        root,
+        createFaceCylinderGeometry(4.2, 1.2, lidFace),
+        baseMaterial,
+        "base",
+        getPreviewFacePosition(
+          lidFace,
+          pointU,
+          pointV,
+          -0.6,
+          parameters,
+          dimensions,
+          lidY,
+        ),
+        true,
+        lidFace,
+      );
+      springSeat.name = "spring-latch-side-spring-seat";
+
+      const springMarker = addMesh(
+        root,
+        createFaceCylinderGeometry(2.8, 3.6, lidFace, 24),
+        springMaterial,
+        "lid",
+        getPreviewFacePosition(
+          lidFace,
+          pointU,
+          pointV,
+          parameters.lidThickness / 2,
+          parameters,
+          dimensions,
+          lidY,
+          true,
+        ),
+        false,
+        lidFace,
+      );
+      springMarker.name = "spring-latch-side-spring-envelope";
+
+      const rotorTab = addMesh(
+        root,
+        createFaceBoxGeometry(11, 3, 1.4, lidFace),
+        lidLatchMaterial,
+        "lid",
+        getPreviewFacePosition(
+          lidFace,
+          pointU,
+          pointV,
+          parameters.lidThickness - 0.7,
+          parameters,
+          dimensions,
+          lidY,
+          true,
+        ),
+        true,
+        lidFace,
+      );
+      rotorTab.name = "spring-latch-side-rotor-tab";
+
+      const catchRail = addMesh(
+        root,
+        createFaceBoxGeometry(12, 2.2, 1.6, lidFace),
+        catchMaterial,
+        "base",
+        getPreviewFacePosition(
+          lidFace,
+          pointU,
+          pointV,
+          -1.1,
+          parameters,
+          dimensions,
+          lidY,
+        ),
+        true,
+        lidFace,
+      );
+      catchRail.name = "spring-latch-side-catch-rail";
     }
     return;
   }

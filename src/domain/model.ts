@@ -3,6 +3,7 @@ export type ClosureType =
   | "magnet"
   | "snap"
   | "latch"
+  | "spring-latch"
   | "slide"
   | "hinge"
   | "pin";

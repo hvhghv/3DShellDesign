@@ -146,6 +146,46 @@ describe("surface placement preview", () => {
     disposePreviewModel(pinModel);
   });
 
+  it("renders spring-loaded rotary latch stations", () => {
+    const springLatchModel = buildPreviewModel(
+      { ...DEFAULT_PARAMETERS, closureType: "spring-latch" },
+      "lid",
+      false,
+      null,
+    );
+    expect(
+      springLatchModel.children.filter(
+        (child) => child.name === "spring-latch-spring-seat",
+      ),
+    ).toHaveLength(4);
+    expect(
+      springLatchModel.children.filter(
+        (child) => child.name === "spring-latch-guide-post",
+      ),
+    ).toHaveLength(4);
+    expect(
+      springLatchModel.children.filter(
+        (child) => child.name === "spring-latch-compression-spring",
+      ),
+    ).toHaveLength(4);
+    expect(
+      springLatchModel.children.filter(
+        (child) => child.name === "spring-latch-rotor-tab",
+      ),
+    ).toHaveLength(4);
+    expect(
+      springLatchModel.children.filter(
+        (child) => child.name === "spring-latch-catch-rail",
+      ),
+    ).toHaveLength(4);
+    expect(
+      springLatchModel.children.filter(
+        (child) => child.name === "spring-latch-rotation-stop",
+      ),
+    ).toHaveLength(4);
+    disposePreviewModel(springLatchModel);
+  });
+
   it("places enabled lid and panel screw heads flush with their surfaces", () => {
     const panel = {
       ...DEFAULT_PARAMETERS.panelPlacements[0],
@@ -201,6 +241,33 @@ describe("surface placement preview", () => {
     expect(
       model.getObjectByName("panel-1-mounting-tab-1")?.userData.partId,
     ).toBe("base");
+    disposePreviewModel(model);
+  });
+
+  it("marks spring latch stations on side removable faces", () => {
+    const model = buildPreviewModel(
+      {
+        ...DEFAULT_PARAMETERS,
+        closureType: "spring-latch",
+        lidFace: "front",
+        removableFaces: ["front"],
+      },
+      "lid",
+      false,
+      null,
+    );
+
+    expect(
+      model.children.filter(
+        (child) => child.name === "spring-latch-side-spring-seat",
+      ),
+    ).toHaveLength(4);
+    expect(
+      model.children.filter(
+        (child) => child.name === "spring-latch-side-rotor-tab",
+      ),
+    ).toHaveLength(4);
+    expect(model.getObjectByName("spring-latch-spring-seat")).toBeUndefined();
     disposePreviewModel(model);
   });
 
@@ -763,21 +830,32 @@ describe("surface placement preview", () => {
     const firstAnchor = railGroup?.getObjectByName(
       `${PARAMETRIC_PCB_FEATURE_ID}-pcb-elastic-anchor-1`,
     );
+    const firstBottomAnchor = railGroup?.getObjectByName(
+      `${PARAMETRIC_PCB_FEATURE_ID}-pcb-elastic-anchor-1-bottom`,
+    );
     const boardBottom = parameters.bottomThickness + parameters.standoffHeight;
     const boardTop = boardBottom + parameters.pcbThickness;
 
     expect(firstLoop).toBeDefined();
     expect(secondLoop).toBeDefined();
     expect(firstAnchor).toBeDefined();
+    expect(firstBottomAnchor).toBeDefined();
     model.updateMatrixWorld(true);
     const loopBounds = new THREE.Box3().setFromObject(firstLoop!);
+    const topAnchorBounds = new THREE.Box3().setFromObject(firstAnchor!);
+    const bottomAnchorBounds = new THREE.Box3().setFromObject(firstBottomAnchor!);
     expect(loopBounds.max.z).toBeGreaterThan(parameters.pcbWidth / 2);
     expect(loopBounds.min.z).toBeLessThan(
       -parameters.pcbWidth / 2 + parameters.pcbStopWidth + 4,
     );
     expect(loopBounds.max.y).toBeGreaterThan(boardTop);
     expect(loopBounds.min.y).toBeLessThan(boardBottom);
+    expect(topAnchorBounds.min.y).toBeLessThanOrEqual(boardTop + 0.01);
+    expect(topAnchorBounds.max.y).toBeGreaterThan(boardTop);
+    expect(bottomAnchorBounds.max.y).toBeGreaterThanOrEqual(boardBottom - 0.01);
+    expect(bottomAnchorBounds.min.y).toBeLessThan(boardBottom);
     expect(firstAnchor?.position.x).toBeLessThan(0);
+    expect(firstBottomAnchor?.position.x).toBeCloseTo(firstAnchor!.position.x, 4);
     disposePreviewModel(model);
   });
 

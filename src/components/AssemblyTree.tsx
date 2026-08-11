@@ -60,6 +60,7 @@ const CLOSURE_LABELS: Record<ClosureType, string> = {
   magnet: "磁吸固定",
   snap: "卡扣固定",
   latch: "按压快拆扣",
+  "spring-latch": "弹簧旋转卡扣",
   slide: "滑盖导轨",
   hinge: "转轴翻盖",
   pin: "双侧快拆销",
@@ -589,12 +590,31 @@ export function AssemblyTree({ onRequestClose, onImportPcb }: AssemblyTreeProps)
       .join(" ")
       .toLocaleLowerCase()
       .includes(normalizedTreeQuery);
+  const filteredPcbItems =
+    parameters.pcbReferences.length === 0
+      ? parameters.parametricPcbEnabled &&
+        matchesTreeQuery("PCB", "参数 PCB")
+        ? [
+            {
+              id: PARAMETRIC_PCB_FEATURE_ID,
+              label: "参数 PCB",
+              detail: `${parameters.pcbLength} x ${parameters.pcbWidth} mm · X ${parameters.pcbOffsetX.toFixed(1)} / Y ${parameters.pcbElevation.toFixed(1)} / Z ${parameters.pcbOffsetZ.toFixed(1)} mm`,
+            },
+          ]
+        : []
+      : parameters.pcbReferences
+          .map((placement, index) => ({
+            id: placement.id,
+            label: `PCB ${index + 1}`,
+            detail: `${placement.reference.sourceName} · X ${placement.offsetX.toFixed(1)} / Y ${placement.elevation.toFixed(1)} / Z ${placement.offsetZ.toFixed(1)} mm`,
+            sourceName: placement.reference.sourceName,
+            format: placement.reference.format,
+          }))
+          .filter((item) =>
+            matchesTreeQuery("PCB", item.sourceName, item.format),
+          );
   const visibleFeatureCount =
-    (parameters.pcbReferences.length === 0 && parameters.parametricPcbEnabled
-      ? matchesTreeQuery("PCB", "参数 PCB") ? 1 : 0
-      : parameters.pcbReferences.filter((placement) =>
-          matchesTreeQuery("PCB", placement.reference.sourceName, placement.reference.format),
-        ).length) +
+    filteredPcbItems.length +
     parameters.panelPlacements.filter((panel) =>
       matchesTreeQuery(
         getPanelLabel(panel, parameters),
@@ -819,51 +839,64 @@ export function AssemblyTree({ onRequestClose, onImportPcb }: AssemblyTreeProps)
             <button type="button" onClick={onImportPcb}>导入 PCB</button>
             <button type="button" onClick={addParametricPcb}>添加参数 PCB</button>
           </div>
-        ) : parameters.pcbReferences.length === 0 ? (
-          matchesTreeQuery("PCB", "参数 PCB") ? (
-          <TreeItem
-            id="pcb"
-            featureId={PARAMETRIC_PCB_FEATURE_ID}
-            icon={<CircuitBoard size={16} />}
-            label="参数 PCB"
-            detail={`${parameters.pcbLength} x ${parameters.pcbWidth} mm · X ${parameters.pcbOffsetX.toFixed(1)} / Y ${parameters.pcbElevation.toFixed(1)} / Z ${parameters.pcbOffsetZ.toFixed(1)} mm`}
-            depth={1}
-            onOpenContextMenu={(x, y) =>
-              openFeatureContextMenu(
-                "pcb",
-                PARAMETRIC_PCB_FEATURE_ID,
-                "参数 PCB",
-                x,
-                y,
-              )
-            }
-          />
-          ) : null
-        ) : parameters.pcbReferences.filter((placement) =>
-          matchesTreeQuery("PCB", placement.reference.sourceName, placement.reference.format),
-        ).map((placement) => {
-          const index = parameters.pcbReferences.findIndex((item) => item.id === placement.id);
-          return (
-          <TreeItem
-            key={placement.id}
-            id="pcb"
-            featureId={placement.id}
-            icon={<CircuitBoard size={16} />}
-            label={`PCB ${index + 1}`}
-            detail={`${placement.reference.sourceName} · X ${placement.offsetX.toFixed(1)} / Y ${placement.elevation.toFixed(1)} / Z ${placement.offsetZ.toFixed(1)} mm`}
-            depth={1}
-            onOpenContextMenu={(x, y) =>
-              openFeatureContextMenu(
-                "pcb",
-                placement.id,
-                `PCB ${index + 1}`,
-                x,
-                y,
-              )
-            }
-          />
-          );
-        })}
+        ) : (
+          <>
+            {filteredPcbItems.map((item) => (
+              <TreeItem
+                key={item.id}
+                id="pcb"
+                featureId={item.id}
+                icon={<CircuitBoard size={16} />}
+                label={item.label}
+                detail={item.detail}
+                depth={1}
+                onOpenContextMenu={(x, y) =>
+                  openFeatureContextMenu("pcb", item.id, item.label, x, y)
+                }
+              />
+            ))}
+            {filteredPcbItems.length > 0 ? (
+              <div className="tree-feature-visibility" role="group" aria-label="PCB显示">
+                {filteredPcbItems.flatMap((item) => {
+                  const fullVisible = !hiddenFeatureIds.includes(item.id);
+                  const bodyVisible =
+                    fullVisible && !hiddenPcbBodyIds.includes(item.id);
+                  return [
+                    <label
+                      key={`${item.id}-full`}
+                      className={fullVisible ? "" : "is-hidden"}
+                      title="隐藏/显示 PCB、滑槽、螺丝柱等全部结构"
+                    >
+                      {fullVisible ? <Eye size={13} /> : <EyeOff size={13} />}
+                      <span>{item.label} 全部</span>
+                      <input
+                        type="checkbox"
+                        checked={fullVisible}
+                        onChange={() => toggleFeatureVisibility(item.id)}
+                        aria-label={`${item.label}全部显示`}
+                      />
+                    </label>,
+                    <label
+                      key={`${item.id}-body`}
+                      className={bodyVisible ? "" : "is-hidden"}
+                      title="仅隐藏/显示 PCB 板体，保留滑槽、螺丝柱等固定结构"
+                    >
+                      <CircuitBoard size={13} />
+                      <span>{item.label} 主体</span>
+                      <input
+                        type="checkbox"
+                        checked={bodyVisible}
+                        disabled={!fullVisible}
+                        onChange={() => togglePcbBodyVisibility(item.id)}
+                        aria-label={`${item.label}主体显示`}
+                      />
+                    </label>,
+                  ];
+                })}
+              </div>
+            ) : null}
+          </>
+        )}
         <TreeItem
           id="base"
           icon={<Box size={16} />}

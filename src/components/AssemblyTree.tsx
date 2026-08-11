@@ -23,7 +23,12 @@ import {
   X,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import type { ClosureType, ConnectorSurface, SelectablePart } from "../domain/model";
+import type {
+  ClosureType,
+  ConnectorSurface,
+  EnclosureFace,
+  SelectablePart,
+} from "../domain/model";
 import type { BatteryPreset } from "../domain/model";
 import {
   BATTERY_MOUNT_FACE_LABELS,
@@ -432,6 +437,7 @@ export function AssemblyTree({ onRequestClose, onImportPcb }: AssemblyTreeProps)
     y: number;
   } | null>(null);
   const parameters = useDesignerStore((state) => state.parameters);
+  const setParameter = useDesignerStore((state) => state.setParameter);
   const addPanelPlacement = useDesignerStore((state) => state.addPanelPlacement);
   const addConnectorPlacement = useDesignerStore((state) => state.addConnectorPlacement);
   const addAntennaPlacement = useDesignerStore((state) => state.addAntennaPlacement);
@@ -478,6 +484,17 @@ export function AssemblyTree({ onRequestClose, onImportPcb }: AssemblyTreeProps)
   );
   const toggleFeatureLock = useDesignerStore((state) => state.toggleFeatureLock);
   const duplicateFeature = useDesignerStore((state) => state.duplicateFeature);
+  const removableFaces = getRemovableFaces(parameters);
+  const updateRemovableFace = (face: EnclosureFace, enabled: boolean) => {
+    if (!enabled && face === parameters.lidFace) return;
+    const nextFaces = enabled
+      ? Array.from(new Set([...removableFaces, face]))
+      : removableFaces.filter((item) => item !== face);
+    setParameter(
+      "removableFaces",
+      nextFaces.length > 0 ? nextFaces : [parameters.lidFace],
+    );
+  };
 
   useEffect(() => {
     if (!contextMenu) return;
@@ -672,11 +689,34 @@ export function AssemblyTree({ onRequestClose, onImportPcb }: AssemblyTreeProps)
       PANEL_MOUNTING_LABELS[panel.mountingType],
     ),
   );
+  const filteredBatteryCompartments = parameters.batteryCompartments.filter(
+    (compartment) =>
+      matchesTreeQuery("电池仓", getBatteryPreset(compartment.preset).name),
+  );
+  const filteredConnectorPlacements = parameters.connectorPlacements.filter(
+    (placement) =>
+      matchesTreeQuery(
+        getConnectorDefinition(placement.definitionId).name,
+        getConnectorSurfaceLabel(placement, parameters),
+      ),
+  );
   const hiddenPanelIds = parameters.panelPlacements
     .filter((panel) => hiddenFeatureIds.includes(panel.id))
     .map((panel) => panel.id);
+  const hiddenBatteryCompartmentIds = parameters.batteryCompartments
+    .filter((compartment) => hiddenFeatureIds.includes(compartment.id))
+    .map((compartment) => compartment.id);
+  const hiddenConnectorIds = parameters.connectorPlacements
+    .filter((placement) => hiddenFeatureIds.includes(placement.id))
+    .map((placement) => placement.id);
   const showAllPanels = () => {
     hiddenPanelIds.forEach((id) => toggleFeatureVisibility(id));
+  };
+  const showAllBatteryCompartments = () => {
+    hiddenBatteryCompartmentIds.forEach((id) => toggleFeatureVisibility(id));
+  };
+  const showAllConnectors = () => {
+    hiddenConnectorIds.forEach((id) => toggleFeatureVisibility(id));
   };
   const contextFeatureHidden = Boolean(
     contextMenu && hiddenFeatureIds.includes(contextMenu.featureId),
@@ -839,9 +879,54 @@ export function AssemblyTree({ onRequestClose, onImportPcb }: AssemblyTreeProps)
           id="lid"
           icon={<SquareStack size={16} />}
           label={`可拆面（${formatRemovableFaces(parameters)}）`}
-          detail={`${getRemovableFaces(parameters).length} 面 / ${CLOSURE_LABELS[parameters.closureType]}`}
+          detail={`${removableFaces.length} 面 / ${CLOSURE_LABELS[parameters.closureType]}`}
           depth={1}
         />
+        <fieldset className="tree-removable-faces">
+          <legend>
+            <span><SquareStack size={14} />可拆面设置</span>
+          </legend>
+          <label className="tree-removable-primary">
+            <span>主可拆面</span>
+            <select
+              aria-label="主可拆面位置"
+              value={parameters.lidFace}
+              onChange={(event) =>
+                setParameter("lidFace", event.currentTarget.value as EnclosureFace)
+              }
+            >
+              {ENCLOSURE_FACE_OPTIONS.map((option) => (
+                <option key={option.id} value={option.id}>{option.name}</option>
+              ))}
+            </select>
+          </label>
+          <div className="tree-removable-grid" role="group" aria-label="可拆面选择">
+            {ENCLOSURE_FACE_OPTIONS.map((option) => {
+              const checked = removableFaces.includes(option.id);
+              const primary = option.id === parameters.lidFace;
+              return (
+                <label
+                  key={option.id}
+                  className={`${checked ? "is-active" : ""} ${primary ? "is-primary" : ""}`.trim()}
+                >
+                  <span>{option.name}{primary ? "（主）" : ""}</span>
+                  <input
+                    type="checkbox"
+                    checked={checked}
+                    disabled={primary}
+                    onChange={(event) =>
+                      updateRemovableFace(option.id, event.currentTarget.checked)
+                    }
+                    aria-label={`${option.name}可拆卸`}
+                  />
+                </label>
+              );
+            })}
+          </div>
+          <p>
+            主可拆面决定默认可拆面 STL；其余选中面参与预览、显示隐藏、BOM 与主体避让。
+          </p>
+        </fieldset>
         <div className="tree-transparency-controls" role="group" aria-label="对象半透明">
           <label className="tree-view-toggle">
             <span><Eye size={14} />壳体主体半透明</span>
@@ -1021,15 +1106,27 @@ export function AssemblyTree({ onRequestClose, onImportPcb }: AssemblyTreeProps)
         ))}
         <div className="tree-section-heading">
           <span>电池仓</span>
-          <button
-            type="button"
-            onClick={() => setBatteryPickerOpen((current) => !current)}
-            title="添加电池仓"
-            aria-label="添加电池仓"
-            aria-expanded={batteryPickerOpen}
-          >
-            <Plus size={15} />
-          </button>
+          <span className="tree-section-actions">
+            {hiddenBatteryCompartmentIds.length > 0 ? (
+              <button
+                type="button"
+                onClick={showAllBatteryCompartments}
+                title="显示全部电池仓"
+                aria-label="显示全部电池仓"
+              >
+                <Eye size={15} />
+              </button>
+            ) : null}
+            <button
+              type="button"
+              onClick={() => setBatteryPickerOpen((current) => !current)}
+              title="添加电池仓"
+              aria-label="添加电池仓"
+              aria-expanded={batteryPickerOpen}
+            >
+              <Plus size={15} />
+            </button>
+          </span>
         </div>
         {batteryPickerOpen ? (
           <div className="custom-component-picker" role="dialog" aria-label="添加电池仓选择器">
@@ -1048,9 +1145,29 @@ export function AssemblyTree({ onRequestClose, onImportPcb }: AssemblyTreeProps)
             ))}
           </div>
         ) : null}
-        {parameters.batteryCompartments.filter((compartment) =>
-          matchesTreeQuery("电池仓", getBatteryPreset(compartment.preset).name),
-        ).map((compartment) => {
+        {filteredBatteryCompartments.length > 0 ? (
+          <div className="tree-feature-visibility" role="group" aria-label="电池仓显示">
+            {filteredBatteryCompartments.map((compartment) => {
+              const index = parameters.batteryCompartments.findIndex(
+                (item) => item.id === compartment.id,
+              );
+              const visible = !hiddenFeatureIds.includes(compartment.id);
+              return (
+                <label key={compartment.id} className={visible ? "" : "is-hidden"}>
+                  {visible ? <Eye size={13} /> : <EyeOff size={13} />}
+                  <span>{`电池仓 ${index + 1}`}</span>
+                  <input
+                    type="checkbox"
+                    checked={visible}
+                    onChange={() => toggleFeatureVisibility(compartment.id)}
+                    aria-label={`电池仓 ${index + 1}显示`}
+                  />
+                </label>
+              );
+            })}
+          </div>
+        ) : null}
+        {filteredBatteryCompartments.map((compartment) => {
           const index = parameters.batteryCompartments.findIndex(
             (item) => item.id === compartment.id,
           );
@@ -1077,19 +1194,31 @@ export function AssemblyTree({ onRequestClose, onImportPcb }: AssemblyTreeProps)
         })}
         <div className="tree-section-heading">
           <span>接口/器件</span>
-          <button
-            type="button"
-            onClick={() =>
-              setOpenPicker((current) =>
-                current === "connector" ? null : "connector",
-              )
-            }
-            title="选择并添加接口或器件"
-            aria-label="添加接口或器件"
-            aria-expanded={openPicker === "connector"}
-          >
-            <Plus size={15} />
-          </button>
+          <span className="tree-section-actions">
+            {hiddenConnectorIds.length > 0 ? (
+              <button
+                type="button"
+                onClick={showAllConnectors}
+                title="显示全部接口/器件"
+                aria-label="显示全部接口/器件"
+              >
+                <Eye size={15} />
+              </button>
+            ) : null}
+            <button
+              type="button"
+              onClick={() =>
+                setOpenPicker((current) =>
+                  current === "connector" ? null : "connector",
+                )
+              }
+              title="选择并添加接口或器件"
+              aria-label="添加接口或器件"
+              aria-expanded={openPicker === "connector"}
+            >
+              <Plus size={15} />
+            </button>
+          </span>
         </div>
         {openPicker === "connector" ? (
           <DevicePicker
@@ -1105,12 +1234,29 @@ export function AssemblyTree({ onRequestClose, onImportPcb }: AssemblyTreeProps)
             }}
           />
         ) : null}
-        {parameters.connectorPlacements.filter((placement) =>
-          matchesTreeQuery(
-            getConnectorDefinition(placement.definitionId).name,
-            getConnectorSurfaceLabel(placement, parameters),
-          ),
-        ).map((placement) => (
+        {filteredConnectorPlacements.length > 0 ? (
+          <div className="tree-feature-visibility" role="group" aria-label="接口/器件显示">
+            {filteredConnectorPlacements.map((placement) => {
+              const index = parameters.connectorPlacements.findIndex(
+                (item) => item.id === placement.id,
+              );
+              const visible = !hiddenFeatureIds.includes(placement.id);
+              return (
+                <label key={placement.id} className={visible ? "" : "is-hidden"}>
+                  {visible ? <Eye size={13} /> : <EyeOff size={13} />}
+                  <span>{getConnectorDefinition(placement.definitionId).name}</span>
+                  <input
+                    type="checkbox"
+                    checked={visible}
+                    onChange={() => toggleFeatureVisibility(placement.id)}
+                    aria-label={`接口/器件 ${index + 1}显示`}
+                  />
+                </label>
+              );
+            })}
+          </div>
+        ) : null}
+        {filteredConnectorPlacements.map((placement) => (
           <TreeItem
             key={placement.id}
             id="connector"

@@ -34,6 +34,7 @@ import type {
   InspectorTab,
   PcbReference,
   PcbReferencePlacement,
+  PcbRailAxis,
   PanelPlacement,
   ProjectSnapshot,
   SelectablePart,
@@ -301,6 +302,157 @@ function withLegacyPcbReference(
   };
 }
 
+function clampPcbElevationOffset(value: number, standoffHeight: number): number {
+  return Math.min(300, Math.max(-standoffHeight, value));
+}
+
+function getRailAxisValue(
+  axis: PcbRailAxis,
+  movementAxis: PcbRailAxis,
+  value: number,
+  preserveTravelAxis: boolean,
+  standoffHeight: number,
+): number {
+  if (axis !== movementAxis || !preserveTravelAxis) return 0;
+  if (axis === "y") return clampPcbElevationOffset(value, standoffHeight);
+  return clampPcbPlanarOffset(value);
+}
+
+function shouldPreservePcbRailTravelAxis(
+  parameters: DesignerParameters,
+  previous: DesignerParameters | undefined,
+  rotation: number,
+  previousRotation: number,
+): boolean {
+  if (
+    !previous ||
+    parameters.pcbMountingType === "screw" ||
+    previous.pcbMountingType === "screw"
+  ) {
+    return false;
+  }
+  const direction = getPcbRailDirection(parameters, rotation);
+  const previousDirection = getPcbRailDirection(previous, previousRotation);
+  return (
+    direction.axis === previousDirection.axis &&
+    direction.insertionSide === previousDirection.insertionSide &&
+    direction.entryFace === previousDirection.entryFace
+  );
+}
+
+function constrainPcbRailPlacementAxes(
+  parameters: DesignerParameters,
+  previous?: DesignerParameters,
+): DesignerParameters {
+  if (parameters.pcbMountingType === "screw") return parameters;
+
+  const parametricMovementAxis = getPcbRailMovementAxis(parameters, 0);
+  const preserveParametricTravelAxis =
+    parametricMovementAxis !== null &&
+    shouldPreservePcbRailTravelAxis(parameters, previous, 0, 0);
+  const nextPcbOffsetX =
+    parametricMovementAxis === null
+      ? parameters.pcbOffsetX
+      : getRailAxisValue(
+          "x",
+          parametricMovementAxis,
+          parameters.pcbOffsetX,
+          preserveParametricTravelAxis,
+          parameters.standoffHeight,
+        );
+  const nextPcbElevation =
+    parametricMovementAxis === null
+      ? parameters.pcbElevation
+      : getRailAxisValue(
+          "y",
+          parametricMovementAxis,
+          parameters.pcbElevation,
+          preserveParametricTravelAxis,
+          parameters.standoffHeight,
+        );
+  const nextPcbOffsetZ =
+    parametricMovementAxis === null
+      ? parameters.pcbOffsetZ
+      : getRailAxisValue(
+          "z",
+          parametricMovementAxis,
+          parameters.pcbOffsetZ,
+          preserveParametricTravelAxis,
+          parameters.standoffHeight,
+        );
+  let changed =
+    nextPcbOffsetX !== parameters.pcbOffsetX ||
+    nextPcbElevation !== parameters.pcbElevation ||
+    nextPcbOffsetZ !== parameters.pcbOffsetZ;
+
+  const pcbReferences = parameters.pcbReferences.map((placement) => {
+    const movementAxis = getPcbRailMovementAxis(parameters, placement.rotation);
+    if (movementAxis === null) return placement;
+    const previousPlacement = previous?.pcbReferences.find(
+      (candidate) => candidate.id === placement.id,
+    );
+    const preserveTravelAxis = shouldPreservePcbRailTravelAxis(
+      parameters,
+      previous,
+      placement.rotation,
+      previousPlacement?.rotation ?? placement.rotation,
+    );
+    const offsetX = getRailAxisValue(
+      "x",
+      movementAxis,
+      placement.offsetX,
+      preserveTravelAxis,
+      parameters.standoffHeight,
+    );
+    const elevation = getRailAxisValue(
+      "y",
+      movementAxis,
+      placement.elevation,
+      preserveTravelAxis,
+      parameters.standoffHeight,
+    );
+    const offsetZ = getRailAxisValue(
+      "z",
+      movementAxis,
+      placement.offsetZ,
+      preserveTravelAxis,
+      parameters.standoffHeight,
+    );
+    if (
+      offsetX === placement.offsetX &&
+      elevation === placement.elevation &&
+      offsetZ === placement.offsetZ
+    ) {
+      return placement;
+    }
+    changed = true;
+    return { ...placement, offsetX, elevation, offsetZ };
+  });
+
+  if (!changed) return parameters;
+  return {
+    ...parameters,
+    pcbOffsetX: nextPcbOffsetX,
+    pcbElevation: nextPcbElevation,
+    pcbOffsetZ: nextPcbOffsetZ,
+    pcbReferences,
+  };
+}
+
+function normalizeLoadedParameters(
+  parameters: unknown,
+  reference: PcbReference | null | undefined,
+): DesignerParameters {
+  const normalized = withLegacyPcbReference(
+    normalizeDesignerParameters(parameters),
+    reference,
+  );
+  const synchronized = synchronizePcbRailDirection(normalized);
+  return constrainParameters(
+    constrainPcbRailPlacementAxes(synchronized),
+  );
+}
+
 function loadPersistedProject(): Pick<
   DesignerState,
   "projectName" | "parameters" | "pcbReference" | "cachedAt"
@@ -323,8 +475,8 @@ function loadPersistedProject(): Pick<
     return {
       projectName:
         typeof snapshot.name === "string" ? snapshot.name : fallback.projectName,
-      parameters: withLegacyPcbReference(
-        normalizeDesignerParameters(snapshot.parameters),
+      parameters: normalizeLoadedParameters(
+        snapshot.parameters,
         snapshot.pcbReference,
       ),
       pcbReference: snapshot.pcbReference ?? null,
@@ -407,24 +559,12 @@ function shouldRehomePcbRailPlacements(
   );
 }
 
-function rehomePcbRailPlacements(parameters: DesignerParameters): DesignerParameters {
+function rehomePcbRailPlacements(
+  parameters: DesignerParameters,
+  previous?: DesignerParameters,
+): DesignerParameters {
   if (parameters.pcbMountingType === "screw") return parameters;
-  let changed = parameters.pcbOffsetX !== 0 || parameters.pcbOffsetZ !== 0;
-  const pcbReferences = parameters.pcbReferences.map((placement) =>
-    placement.offsetX === 0 && placement.offsetZ === 0
-      ? placement
-      : (() => {
-          changed = true;
-          return { ...placement, offsetX: 0, offsetZ: 0 };
-        })(),
-  );
-  if (!changed) return parameters;
-  return {
-    ...parameters,
-    pcbOffsetX: 0,
-    pcbOffsetZ: 0,
-    pcbReferences,
-  };
+  return constrainPcbRailPlacementAxes(parameters, previous);
 }
 
 function resolvePlacementTarget(
@@ -538,7 +678,7 @@ export const useDesignerStore = create<DesignerState>((set, get) => ({
       });
       const nextParameters = constrainParameters(
         shouldRehomePcbRailPlacements(state.parameters, synchronizedParameters)
-          ? rehomePcbRailPlacements(synchronizedParameters)
+          ? rehomePcbRailPlacements(synchronizedParameters, state.parameters)
           : synchronizedParameters,
       );
       const snapshot = persistSnapshot(
@@ -1839,7 +1979,9 @@ export const useDesignerStore = create<DesignerState>((set, get) => ({
                     : railMovementAxis !== null && railMovementAxis !== "z"
                     ? placement.offsetZ
                     : clampPcbPlanarOffset(changes.offsetZ ?? placement.offsetZ),
-                  elevation: railMovementAxis !== null && railMovementAxis !== "y"
+                  elevation: rehomeForRailRotation
+                    ? 0
+                    : railMovementAxis !== null && railMovementAxis !== "y"
                     ? placement.elevation
                     : Math.min(
                         300,
@@ -1954,8 +2096,8 @@ export const useDesignerStore = create<DesignerState>((set, get) => ({
   loadProject: (snapshot) => {
     cachedPcbPreviews = {};
     cachedCustomComponentPreviews = {};
-    const parameters = withLegacyPcbReference(
-      normalizeDesignerParameters(snapshot.parameters),
+    const parameters = normalizeLoadedParameters(
+      snapshot.parameters,
       snapshot.pcbReference,
     );
     const pcbReference = parameters.pcbReferences[0]?.reference ?? null;
@@ -1994,8 +2136,8 @@ export const useDesignerStore = create<DesignerState>((set, get) => ({
         if (!Number.isFinite(cachedTime) || cachedTime < currentTime) {
           return { cacheStatus: "saved" };
         }
-        const parameters = withLegacyPcbReference(
-          normalizeDesignerParameters(cached.snapshot.parameters),
+        const parameters = normalizeLoadedParameters(
+          cached.snapshot.parameters,
           cached.snapshot.pcbReference,
         );
         cachedPcbPreviews = cached.pcbPreviews ?? {};

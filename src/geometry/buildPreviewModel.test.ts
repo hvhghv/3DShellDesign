@@ -272,6 +272,62 @@ describe("surface placement preview", () => {
     disposePreviewModel(model);
   });
 
+  it("keeps the base walls seated when the bottom is the primary removable face", () => {
+    const model = buildPreviewModel(
+      {
+        ...DEFAULT_PARAMETERS,
+        lidFace: "bottom",
+        removableFaces: ["bottom"],
+      },
+      "lid",
+      false,
+      null,
+    );
+
+    const sideWalls = model.getObjectByName("base-side-faces");
+    const bottomLid = model.getObjectByName("lid-bottom-face");
+    expect(model.getObjectByName("base-bottom-face")).toBeUndefined();
+    expect(sideWalls).toBeDefined();
+    expect(bottomLid).toBeDefined();
+
+    model.updateMatrixWorld(true);
+    const wallBounds = new THREE.Box3().setFromObject(sideWalls!);
+    const lidBounds = new THREE.Box3().setFromObject(bottomLid!);
+    expect(wallBounds.min.y).toBeCloseTo(0, 4);
+    expect(wallBounds.max.y).toBeCloseTo(DEFAULT_PARAMETERS.baseHeight, 4);
+    expect(lidBounds.min.y).toBeCloseTo(-DEFAULT_PARAMETERS.lidThickness, 4);
+    expect(lidBounds.max.y).toBeCloseTo(0, 4);
+
+    disposePreviewModel(model);
+  });
+
+  it("uses the removable bottom plane as the PCB support datum", () => {
+    const model = buildPreviewModel(
+      {
+        ...DEFAULT_PARAMETERS,
+        lidFace: "bottom",
+        removableFaces: ["bottom"],
+      },
+      "pcb",
+      false,
+      null,
+    );
+
+    const pcb = model.getObjectByName(`pcb-transform-${PARAMETRIC_PCB_FEATURE_ID}`);
+    const standoff = model.getObjectByName(
+      `${PARAMETRIC_PCB_FEATURE_ID}-pcb-standoff-1`,
+    );
+    expect(pcb?.position.y).toBeCloseTo(DEFAULT_PARAMETERS.standoffHeight, 4);
+    expect(standoff).toBeDefined();
+
+    model.updateMatrixWorld(true);
+    const standoffBounds = new THREE.Box3().setFromObject(standoff!);
+    expect(standoffBounds.min.y).toBeCloseTo(0, 4);
+    expect(standoffBounds.max.y).toBeCloseTo(DEFAULT_PARAMETERS.standoffHeight, 4);
+
+    disposePreviewModel(model);
+  });
+
   it("keeps an exploded bottom panel above the work plane", () => {
     const panel = {
       ...DEFAULT_PARAMETERS.panelPlacements[0],
@@ -373,6 +429,44 @@ describe("surface placement preview", () => {
     expect(connectorGroup?.visible).toBe(false);
     expect(connectorGroup?.children.length).toBeGreaterThan(0);
     disposePreviewModel(model);
+
+    const battery = {
+      id: "battery-hidden",
+      preset: "aa" as const,
+      face: "bottom" as const,
+      retentionType: "clip" as const,
+      insertionSide: "right" as const,
+      cellCount: 2,
+      width: 54.9,
+      depth: 20,
+      height: 10.59,
+      wallThickness: 1.6,
+      clearance: 0.6,
+      offsetX: 0,
+      offsetZ: 0,
+      rotation: 0 as const,
+    };
+    const batteryModel = buildPreviewModel(
+      { ...DEFAULT_PARAMETERS, batteryCompartments: [battery] },
+      "battery",
+      false,
+      null,
+      null,
+      null,
+      battery.id,
+      {},
+      {},
+      false,
+      [],
+      [battery.id],
+    );
+    const batteryGroup = batteryModel.getObjectByName(
+      `battery-transform-${battery.id}`,
+    );
+    expect(batteryGroup).toBeDefined();
+    expect(batteryGroup?.visible).toBe(false);
+    expect(batteryGroup?.children.length).toBeGreaterThan(0);
+    disposePreviewModel(batteryModel);
   });
 
   it("applies transparent inspection mode to any object id", () => {
@@ -684,6 +778,31 @@ describe("surface placement preview", () => {
     expect(loopBounds.max.y).toBeGreaterThan(boardTop);
     expect(loopBounds.min.y).toBeLessThan(boardBottom);
     expect(firstAnchor?.position.x).toBeLessThan(0);
+    disposePreviewModel(model);
+  });
+
+  it("keeps PCB rail guides and elastic loops inside the enclosure cavity", () => {
+    const parameters = {
+      ...DEFAULT_PARAMETERS,
+      pcbMountingType: "rail-elastic" as const,
+      pcbRailAxis: "z" as const,
+      pcbInsertionSide: "right" as const,
+      pcbRailEntryFace: "front" as const,
+    };
+    const model = buildPreviewModel(parameters, "pcb", false, null);
+    const railGroup = model.getObjectByName(
+      `pcb-mount-transform-${PARAMETRIC_PCB_FEATURE_ID}`,
+    );
+
+    expect(railGroup).toBeDefined();
+    model.updateMatrixWorld(true);
+    const railBounds = new THREE.Box3().setFromObject(railGroup!);
+    const maxInsideX = parameters.pcbLength / 2 + parameters.boardClearance;
+    const maxInsideZ = parameters.pcbWidth / 2 + parameters.boardClearance;
+    expect(railBounds.min.x).toBeGreaterThanOrEqual(-maxInsideX - 0.2);
+    expect(railBounds.max.x).toBeLessThanOrEqual(maxInsideX + 0.2);
+    expect(railBounds.min.z).toBeGreaterThanOrEqual(-maxInsideZ - 0.2);
+    expect(railBounds.max.z).toBeLessThanOrEqual(maxInsideZ + 0.2);
     disposePreviewModel(model);
   });
 

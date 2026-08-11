@@ -59,7 +59,6 @@ import {
   getPanelMaxInsetDepth,
   PLACEMENT_ROTATIONS,
 } from "../domain/placements";
-import { getRemovableFaces } from "../domain/removableFaces";
 import {
   ANTENNA_DEFINITIONS,
   CONNECTOR_DEFINITIONS,
@@ -130,10 +129,13 @@ function NumberField({
           max={max}
           step={step}
           disabled={disabled}
+          readOnly={disabled}
+          aria-disabled={disabled}
           onFocus={() => {
             editingRef.current = true;
           }}
           onChange={(event) => {
+            if (disabled) return;
             setDraftValue(event.currentTarget.value);
             const next = event.currentTarget.valueAsNumber;
             if (Number.isFinite(next)) onChange(next);
@@ -456,17 +458,12 @@ export function Inspector() {
   );
   const pcbRailMounted = parameters.pcbMountingType !== "screw";
   const parametricPcbRailMovementAxis = getPcbRailMovementAxis(parameters);
-  const removableFaces = getRemovableFaces(parameters);
-  const updateRemovableFace = (face: EnclosureFace, enabled: boolean) => {
-    if (!enabled && face === parameters.lidFace) return;
-    const nextFaces = enabled
-      ? Array.from(new Set([...removableFaces, face]))
-      : removableFaces.filter((item) => item !== face);
-    setParameter(
-      "removableFaces",
-      nextFaces.length > 0 ? nextFaces : [parameters.lidFace],
-    );
-  };
+  const parametricPcbXLocked =
+    pcbRailMounted && parametricPcbRailMovementAxis !== "x";
+  const parametricPcbYLocked =
+    pcbRailMounted && parametricPcbRailMovementAxis !== "y";
+  const parametricPcbZLocked =
+    pcbRailMounted && parametricPcbRailMovementAxis !== "z";
   const isObjectTransparent = (id: string) => transparentObjectIds.includes(id);
   const isPcbBodyHidden = (id: string) => hiddenPcbBodyIds.includes(id);
   useEffect(() => {
@@ -789,9 +786,9 @@ export function Inspector() {
                 </button>
               </span>
             </div>
-            <NumberField label="X 位置" value={parameters.pcbOffsetX} min={-500} max={500} step={1} disabled={pcbRailMounted && parametricPcbRailMovementAxis !== "x"} onChange={(value) => setParameter("pcbOffsetX", value)} />
-            <NumberField label="Y 偏移" value={parameters.pcbElevation} min={-parameters.standoffHeight} max={300} step={1} disabled={pcbRailMounted && parametricPcbRailMovementAxis !== "y"} onChange={(value) => setParameter("pcbElevation", value)} />
-            <NumberField label="Z 位置" value={parameters.pcbOffsetZ} min={-500} max={500} step={1} disabled={pcbRailMounted && parametricPcbRailMovementAxis !== "z"} onChange={(value) => setParameter("pcbOffsetZ", value)} />
+            <NumberField label="X 位置" value={parameters.pcbOffsetX} min={-500} max={500} step={1} disabled={parametricPcbXLocked} onChange={(value) => setParameter("pcbOffsetX", value)} />
+            <NumberField label="Y 偏移" value={parameters.pcbElevation} min={-parameters.standoffHeight} max={300} step={1} disabled={parametricPcbYLocked} onChange={(value) => setParameter("pcbElevation", value)} />
+            <NumberField label="Z 位置" value={parameters.pcbOffsetZ} min={-500} max={500} step={1} disabled={parametricPcbZLocked} onChange={(value) => setParameter("pcbOffsetZ", value)} />
             <p className="material-note">
               {pcbRailMounted
                 ? `当前 PCB 使用滑槽固定，入口从 ${getPcbRailEntryDescription(parameters, 0)}；只允许沿 ${parametricPcbRailMovementAxis?.toUpperCase() ?? "当前滑槽"} 轴调整位置，其他轴会由滑槽结构约束。`
@@ -935,6 +932,27 @@ export function Inspector() {
             <div className="section-heading-row">
               <h2>电池仓参数</h2>
               <span className="section-heading-actions">
+                <button
+                  className="icon-section-button is-visibility"
+                  type="button"
+                  title={
+                    selectedFeatureHidden
+                      ? "显示当前电池仓"
+                      : "隐藏当前电池仓"
+                  }
+                  aria-label={
+                    selectedFeatureHidden
+                      ? "显示当前电池仓"
+                      : "隐藏当前电池仓"
+                  }
+                  onClick={() => toggleFeatureVisibility(compartment.id)}
+                >
+                  {selectedFeatureHidden ? (
+                    <Eye size={14} />
+                  ) : (
+                    <EyeOff size={14} />
+                  )}
+                </button>
                 <button
                   className="icon-section-button is-transparency"
                   type="button"
@@ -1231,6 +1249,19 @@ export function Inspector() {
             <div className="section-heading-row">
               <h2>{definition.displaySpec ? "显示屏参数" : "接口参数"}</h2>
               <span className="section-heading-actions">
+                <button
+                  className="icon-section-button is-visibility"
+                  type="button"
+                  title={selectedFeatureHidden ? "显示当前接口" : "隐藏当前接口"}
+                  aria-label={selectedFeatureHidden ? "显示当前接口" : "隐藏当前接口"}
+                  onClick={() => toggleFeatureVisibility(placement.id)}
+                >
+                  {selectedFeatureHidden ? (
+                    <Eye size={14} />
+                  ) : (
+                    <EyeOff size={14} />
+                  )}
+                </button>
                 <button
                   className="icon-section-button is-transparency"
                   type="button"
@@ -1571,46 +1602,6 @@ export function Inspector() {
               <NumberField label="内部深度" value={parameters.baseHeight} min={8} max={120} step={1} onChange={(value) => setParameter("baseHeight", value)} />
               <NumberField label="外圆角" value={parameters.cornerRadius} min={0.5} max={30} onChange={(value) => setParameter("cornerRadius", value)} />
               <NumberField label="PCB 基准高度" value={parameters.standoffHeight} min={0} max={30} onChange={(value) => setParameter("standoffHeight", value)} />
-              <label className="select-field">
-                <span>主可拆面</span>
-                <select
-                  aria-label="主可拆面位置"
-                  value={parameters.lidFace}
-                  onChange={(event) =>
-                    setParameter("lidFace", event.currentTarget.value as EnclosureFace)
-                  }
-                >
-                  {ENCLOSURE_FACE_OPTIONS.map((option) => (
-                    <option key={option.id} value={option.id}>{option.name}</option>
-                  ))}
-                </select>
-              </label>
-              <fieldset className="face-multi-select">
-                <legend>可拆面选择</legend>
-                <div>
-                  {ENCLOSURE_FACE_OPTIONS.map((option) => {
-                    const checked = removableFaces.includes(option.id);
-                    const primary = option.id === parameters.lidFace;
-                    return (
-                      <label key={option.id} className={checked ? "is-active" : ""}>
-                        <span>{option.name}{primary ? "（主）" : ""}</span>
-                        <input
-                          type="checkbox"
-                          checked={checked}
-                          disabled={primary}
-                          onChange={(event) =>
-                            updateRemovableFace(option.id, event.currentTarget.checked)
-                          }
-                          aria-label={`${option.name}可拆卸`}
-                        />
-                      </label>
-                    );
-                  })}
-                </div>
-              </fieldset>
-              <p className="material-note">
-                主可拆面用于兼容旧项目与默认可拆面 STL；滑槽入口可在 PCB 固定方式里独立选择，其余可拆面会参与预览、显示隐藏、BOM 与主体避让。
-              </p>
               <NumberField label="可拆面厚度" value={parameters.lidThickness} min={0.8} max={8} onChange={(value) => setParameter("lidThickness", value)} />
             </section>
           </>

@@ -49,6 +49,7 @@ import { getBatteryCompartmentLayout } from "../domain/batteries";
 import { getPcbMountingEnvelopes } from "../domain/pcbMounting";
 import {
   getEffectivePcbRailLayout,
+  getPcbRailCavityReach,
   getPcbRailDirection,
 } from "../domain/pcbRailDirection";
 import {
@@ -475,6 +476,12 @@ function getSolidFaceSize(
   return [dimensions.outsideWidth, parameters.baseHeight];
 }
 
+function getSolidInteriorBottomZ(parameters: DesignerParameters): number {
+  return getRemovableFaces(parameters).includes("bottom")
+    ? 0
+    : parameters.bottomThickness;
+}
+
 function createLocalLidCutout(
   module: ManifoldToplevel,
   u: number,
@@ -559,6 +566,7 @@ function addMagnetSupports(
   parameters: DesignerParameters,
   outsideLength: number,
   outsideWidth: number,
+  interiorBottomZ: number,
 ): ManifoldSolid {
   const geometry = MAGNET_GEOMETRY;
   const points = getClosurePoints(
@@ -594,7 +602,7 @@ function addMagnetSupports(
     for (const [x, y] of points) {
       let support: ManifoldSolid;
       if (parameters.magnetSupportType === "floor-column") {
-        const columnBottom = Math.max(0, parameters.bottomThickness - 0.2);
+        const columnBottom = Math.max(0, interiorBottomZ - 0.2);
         support = cylinderAt(
           module,
           geometry.floorColumnRadius,
@@ -1199,7 +1207,7 @@ function applyPcbRailMountingFeatures(
       );
     };
 
-    const faceReach = Math.max(parameters.boardClearance, parameters.pcbRailWidth);
+    const faceReach = getPcbRailCavityReach(parameters);
     const railLength = layout.railLength + faceReach;
     const railCenterX =
       layout.openSideSign * (layout.stopWidth / 2 + faceReach / 2);
@@ -1380,19 +1388,13 @@ function buildBase(
   const removableFaceSet = new Set<EnclosureFace>(removableFaces);
   const isRemovableFace = (face: EnclosureFace) => removableFaceSet.has(face);
   const fastener = getFastenerDefinition(parameters.closureFastenerId);
-  const wallHeight = parameters.baseHeight - parameters.bottomThickness;
+  const interiorBottomZ = getSolidInteriorBottomZ(parameters);
+  const wallHeight = parameters.baseHeight - interiorBottomZ;
   if (wallHeight <= 0.5) {
     throw new Error("主体高度必须大于底面厚度");
   }
   const innerRadius = Math.max(0.5, parameters.cornerRadius - parameters.wallThickness);
-  let base = extrudePlate(
-    module,
-    dimensions.outsideLength,
-    dimensions.outsideWidth,
-    parameters.cornerRadius,
-    parameters.bottomThickness,
-  );
-  const wall = extrudeRing(
+  let base = extrudeRing(
     module,
     dimensions.outsideLength,
     dimensions.outsideWidth,
@@ -1401,9 +1403,20 @@ function buildBase(
     parameters.cornerRadius,
     innerRadius,
     wallHeight,
-    parameters.bottomThickness,
+    interiorBottomZ,
   );
-  base = unionAndDispose(base, wall);
+  if (!isRemovableFace("bottom")) {
+    base = unionAndDispose(
+      extrudePlate(
+        module,
+        dimensions.outsideLength,
+        dimensions.outsideWidth,
+        parameters.cornerRadius,
+        parameters.bottomThickness,
+      ),
+      base,
+    );
+  }
   if (!isRemovableFace("top")) {
     base = unionAndDispose(
       base,
@@ -1421,20 +1434,6 @@ function buildBase(
   for (const removableFace of removableFaces) {
     if (removableFace === "top") continue;
     if (removableFace === "bottom") {
-      base = subtractAndDispose(
-        base,
-        createFaceCutter(
-          module,
-          "bottom",
-          0,
-          0,
-          dimensions.insideLength,
-          dimensions.insideWidth,
-          innerRadius,
-          parameters,
-          dimensions,
-        ),
-      );
       continue;
     }
     const openingWidth =
@@ -1443,7 +1442,7 @@ function buildBase(
         : dimensions.insideLength;
     const openingHeight = Math.max(
       2,
-      parameters.baseHeight - parameters.bottomThickness - parameters.wallThickness,
+      parameters.baseHeight - interiorBottomZ - parameters.wallThickness,
     );
     base = subtractAndDispose(
       base,
@@ -1451,7 +1450,7 @@ function buildBase(
         module,
         removableFace,
         0,
-        parameters.bottomThickness / 2,
+        interiorBottomZ / 2,
         openingWidth,
         openingHeight,
         Math.min(innerRadius, openingWidth / 2, openingHeight / 2),
@@ -1461,19 +1460,21 @@ function buildBase(
     );
   }
   base = applyVentPattern(module, base, parameters);
-  base = applyBatteryCompartments(
-    module,
-    base,
-    parameters,
-    "bottom",
-    parameters.bottomThickness,
-  );
+  if (!isRemovableFace("bottom")) {
+    base = applyBatteryCompartments(
+      module,
+      base,
+      parameters,
+      "bottom",
+      parameters.bottomThickness,
+    );
+  }
   for (const face of ["front", "back", "left", "right"] as const) {
     base = applyBatteryCompartments(module, base, parameters, face, 0);
   }
   base = applyPcbRailMountingFeatures(module, base, parameters, pcbReference);
 
-  if (parameters.enclosureTemplateId === "wall-mount") {
+  if (parameters.enclosureTemplateId === "wall-mount" && !isRemovableFace("bottom")) {
     for (const x of [
       -dimensions.outsideLength / 2 - 6,
       dimensions.outsideLength / 2 + 6,
@@ -1578,7 +1579,7 @@ function buildBase(
         base,
         hole.x,
         hole.y,
-        parameters.bottomThickness,
+        interiorBottomZ,
         bossHeight,
         Math.max(3.2, hole.diameter / 2 + 1.4),
         Math.max(0.8, hole.diameter / 2 - 0.25),
@@ -1589,7 +1590,7 @@ function buildBase(
   if (parameters.closureType === "screw") {
     const bossHeight = Math.max(
       5,
-      parameters.baseHeight - parameters.bottomThickness - 2,
+      parameters.baseHeight - interiorBottomZ - 2,
     );
     for (const [x, y] of getClosurePoints(
       dimensions.outsideLength,
@@ -1603,7 +1604,7 @@ function buildBase(
               base,
               x,
               y,
-              parameters.bottomThickness,
+              interiorBottomZ,
               bossHeight,
               fastener.bossDiameter / 2,
               fastener.recessDiameter / 2,
@@ -1613,7 +1614,7 @@ function buildBase(
               base,
               x,
               y,
-              parameters.bottomThickness,
+              interiorBottomZ,
               bossHeight,
               fastener.bossDiameter / 2,
             );
@@ -1628,7 +1629,7 @@ function buildBase(
           fastener.recessDepth,
           x,
           y,
-          parameters.bottomThickness + bossHeight - fastener.recessDepth,
+          interiorBottomZ + bossHeight - fastener.recessDepth,
           fastener.baseRecess === "hex-nut" ? 6 : 32,
         );
         base = subtractAndDispose(base, recess);
@@ -1643,6 +1644,7 @@ function buildBase(
       parameters,
       dimensions.outsideLength,
       dimensions.outsideWidth,
+      interiorBottomZ,
     );
   }
 

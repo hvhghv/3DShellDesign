@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { DEFAULT_PARAMETERS } from "../domain/enclosure";
 import { PARAMETRIC_PCB_FEATURE_ID } from "../domain/pcbMounting";
 import { useDesignerStore } from "./designerStore";
-import type { PcbReference } from "../domain/model";
+import type { PcbReference, ProjectSnapshot } from "../domain/model";
 
 const originalState = useDesignerStore.getState();
 
@@ -512,6 +512,67 @@ describe("designer store", () => {
     expect(frontEntryParameters.pcbReferences[0]).toEqual(
       expect.objectContaining({
         offsetX: 0,
+        offsetZ: 0,
+      }),
+    );
+  });
+
+  it("re-homes stale constrained PCB rail axes when loading old projects", () => {
+    const reference: PcbReference = {
+      format: "kicad_pcb",
+      sourceName: "stale-rail-board.kicad_pcb",
+      version: "20240108",
+      thickness: 1.6,
+      bounds: { minX: 0, minY: 0, maxX: 70, maxY: 45 },
+      outlineElements: 4,
+      unsupportedOutlineElements: 0,
+      mountingHoles: [],
+    };
+    const snapshot: ProjectSnapshot = {
+      schemaVersion: 1,
+      name: "旧滑槽项目",
+      updatedAt: "2026-08-10T00:00:00.000Z",
+      pcbReference: null,
+      parameters: {
+        ...DEFAULT_PARAMETERS,
+        pcbMountingType: "rail-elastic",
+        pcbRailAxis: "z",
+        pcbInsertionSide: "right",
+        pcbRailEntryFace: "front",
+        pcbOffsetX: 149.5,
+        pcbElevation: 34.5,
+        pcbOffsetZ: 10,
+        pcbReferences: [
+          {
+            id: "pcb-stale-rail",
+            reference,
+            offsetX: -42,
+            offsetZ: 18,
+            elevation: 12,
+            rotation: 0,
+          },
+        ],
+      },
+    };
+
+    useDesignerStore.getState().loadProject(snapshot);
+
+    const parameters = useDesignerStore.getState().parameters;
+    expect(parameters).toEqual(
+      expect.objectContaining({
+        pcbMountingType: "rail-elastic",
+        pcbRailAxis: "z",
+        pcbInsertionSide: "right",
+        pcbRailEntryFace: "front",
+        pcbOffsetX: 0,
+        pcbElevation: 0,
+        pcbOffsetZ: 0,
+      }),
+    );
+    expect(parameters.pcbReferences[0]).toEqual(
+      expect.objectContaining({
+        offsetX: 0,
+        elevation: 0,
         offsetZ: 0,
       }),
     );

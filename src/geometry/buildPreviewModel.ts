@@ -27,6 +27,7 @@ import {
 } from "../domain/pcbMounting";
 import {
   getEffectivePcbRailLayout,
+  getPcbRailCavityReach,
   getPcbRailDirection,
 } from "../domain/pcbRailDirection";
 import {
@@ -294,6 +295,12 @@ function getPreviewFaceSize(
     return [dimensions.outsideLength, parameters.baseHeight];
   }
   return [dimensions.outsideWidth, parameters.baseHeight];
+}
+
+function getPreviewInteriorBottomY(parameters: DesignerParameters): number {
+  return getRemovableFaces(parameters).includes("bottom")
+    ? 0
+    : parameters.bottomThickness;
 }
 
 function getFaceHoleV(face: EnclosureFace, offsetV: number): number {
@@ -622,8 +629,9 @@ function getInteriorFaceMountTransform(
     };
   }
   if (face === "bottom") {
+    const bottomY = getPreviewInteriorBottomY(parameters);
     return {
-      position: [offsetU, parameters.bottomThickness + depth / 2, offsetV],
+      position: [offsetU, bottomY + depth / 2, offsetV],
       rotation: [0, 0, 0],
     };
   }
@@ -1341,7 +1349,7 @@ function addPcbRailMountingPreview(
   const bandMaterial = standardMaterial(0x171a18, selected, {
     roughness: 0.72,
   });
-  const faceReach = Math.max(parameters.boardClearance, parameters.pcbRailWidth);
+  const faceReach = getPcbRailCavityReach(parameters);
   const railLength = layout.railLength + faceReach;
   const railCenterX =
     layout.openSideSign * (layout.stopWidth / 2 + faceReach / 2);
@@ -1427,7 +1435,9 @@ function addPcbRailMountingPreview(
         [
           layout.openSideSign * (layout.travelLength / 2 - 2),
           topLipY + layout.lipThickness / 2 + 0.45,
-          sideSign * (layout.travelWidth / 2 + parameters.pcbRailWidth / 2),
+          sideSign *
+            (layout.travelWidth / 2 +
+              Math.min(parameters.pcbRailWidth / 2, faceReach / 2)),
         ],
         screwMaterial,
         "base",
@@ -1449,10 +1459,16 @@ function addPcbRailMountingPreview(
     const openInsideX =
       layout.openSideX -
       layout.openSideSign * Math.max(1.2, parameters.pcbElasticBandWidth / 2);
+    const openWrapReach = Math.max(
+      0,
+      Math.min(
+        Math.max(0.4, parameters.pcbRailClearance + bandRadius),
+        faceReach - bandRadius * 1.2,
+      ),
+    );
     const openWrapX =
       layout.openSideX +
-      layout.openSideSign *
-        Math.max(1.2, parameters.pcbRailClearance + bandRadius * 1.8);
+      layout.openSideSign * openWrapReach;
     const closedWrapX =
       anchorX -
       layout.openSideSign * Math.max(1.2, anchorRadius + bandRadius);
@@ -1523,6 +1539,7 @@ function addClosureFeatures(
   if (parameters.closureType === "screw") {
     const fastener = getFastenerDefinition(parameters.closureFastenerId);
     const headRecessDepth = getClosureScrewHeadRecessDepth(parameters);
+    const bottomY = getPreviewInteriorBottomY(parameters);
     const bossMaterial = standardMaterial(
       getMaterial(parameters.shellMaterialId).color,
       selectedPart === "base",
@@ -1532,12 +1549,12 @@ function addClosureFeatures(
       roughness: 0.28,
     });
     for (const [pointX, pointZ] of points) {
-      const bossHeight = Math.max(5, parameters.baseHeight - parameters.bottomThickness - 2);
+      const bossHeight = Math.max(5, parameters.baseHeight - bottomY - 2);
       addCylinder(
         root,
         fastener.bossDiameter / 2,
         bossHeight,
-        [pointX, parameters.bottomThickness + bossHeight / 2, pointZ],
+        [pointX, bottomY + bossHeight / 2, pointZ],
         bossMaterial,
         "base",
       );
@@ -1563,6 +1580,7 @@ function addClosureFeatures(
 
   if (parameters.closureType === "magnet") {
     const geometry = MAGNET_GEOMETRY;
+    const bottomY = getPreviewInteriorBottomY(parameters);
     const supportMaterial = standardMaterial(
       getMaterial(parameters.shellMaterialId).color,
       selectedPart === "base",
@@ -1601,12 +1619,12 @@ function addClosureFeatures(
 
     for (const [pointX, pointZ] of points) {
       if (parameters.magnetSupportType === "floor-column") {
-        const height = parameters.baseHeight - parameters.bottomThickness;
+        const height = parameters.baseHeight - bottomY;
         const support = addCylinder(
           root,
           geometry.floorColumnRadius,
           height,
-          [pointX, parameters.bottomThickness + height / 2, pointZ],
+          [pointX, bottomY + height / 2, pointZ],
           supportMaterial,
           "base",
         );
@@ -2060,7 +2078,8 @@ export function buildPreviewModel(
   const removableFaces = getRemovableFaces(parameters);
   const removableFaceSet = new Set<EnclosureFace>(removableFaces);
   const isFaceRemovable = (face: EnclosureFace) => removableFaceSet.has(face);
-  const wallHeight = parameters.baseHeight - parameters.bottomThickness;
+  const interiorBottomY = getPreviewInteriorBottomY(parameters);
+  const wallHeight = parameters.baseHeight - interiorBottomY;
   const explodedGap = exploded ? 24 : 0;
   const lidY = parameters.baseHeight + explodedGap;
   const innerRadius = Math.max(0.5, parameters.cornerRadius - parameters.wallThickness);
@@ -2103,7 +2122,7 @@ export function buildPreviewModel(
     ),
     shellMaterial,
     "base",
-    [0, parameters.bottomThickness + wallHeight / 2, 0],
+    [0, interiorBottomY + wallHeight / 2, 0],
   );
   shellWalls.name = "base-side-faces";
 
@@ -2599,7 +2618,7 @@ export function buildPreviewModel(
 
   const standoffMaterial = standardMaterial(shellProfile.color, selectedPart === "base");
   const holeMaterial = standardMaterial(0x1d2522, selectedPart === "pcb");
-  const boardBottom = parameters.bottomThickness + parameters.standoffHeight;
+  const boardBottom = interiorBottomY + parameters.standoffHeight;
   for (const envelope of getPcbMountingEnvelopes(parameters, pcbReference)) {
     addPcbRailMountingPreview(
       root,
@@ -2689,7 +2708,7 @@ export function buildPreviewModel(
             standoffHeight,
             [
               placement.offsetX + local.x,
-              parameters.bottomThickness + standoffHeight / 2,
+              interiorBottomY + standoffHeight / 2,
               placement.offsetZ + local.z,
             ],
             standoffMaterial,
@@ -2780,7 +2799,7 @@ export function buildPreviewModel(
           supportHeight,
           [
             parameters.pcbOffsetX + x,
-            parameters.bottomThickness + supportHeight / 2,
+            interiorBottomY + supportHeight / 2,
             parameters.pcbOffsetZ + z,
           ],
           standoffMaterial,

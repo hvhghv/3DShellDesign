@@ -204,6 +204,12 @@ export function getPcbRailEntryDescription(
   return `${ENTRY_FACE_LABELS[direction.entryFace]}（${sideLabel}）`;
 }
 
+export function getPcbRailCavityReach(
+  parameters: Pick<DesignerParameters, "boardClearance">,
+): number {
+  return Math.max(0, parameters.boardClearance);
+}
+
 export function getEffectivePcbRailLayout(
   parameters: DesignerParameters,
   envelope: PcbMountingEnvelope,

@@ -261,6 +261,41 @@ test("independently hides and restores enclosure faces", async ({ page }, testIn
   await expect(bottomToggle).toBeChecked();
 });
 
+test("configures primary and extra removable faces from the left sidebar", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+
+  const tree = page.locator(".tree-nav");
+  const primaryFaceSelect = tree.getByRole("combobox", {
+    name: "主可拆面位置",
+  });
+  await expect(primaryFaceSelect).toBeVisible();
+  await expect(
+    page.locator(".inspector-panel").getByRole("combobox", {
+      name: "主可拆面位置",
+    }),
+  ).toHaveCount(0);
+
+  await primaryFaceSelect.selectOption("bottom");
+  const bottomRemovable = tree.getByRole("checkbox", { name: "底板可拆卸" });
+  const frontRemovable = tree.getByRole("checkbox", { name: "前壁可拆卸" });
+  await expect(bottomRemovable).toBeChecked();
+  await expect(bottomRemovable).toBeDisabled();
+  await frontRemovable.check();
+  await expect(frontRemovable).toBeChecked();
+  await expect(
+    tree.getByRole("button", { name: /可拆面（底板、前壁）/ }),
+  ).toBeVisible();
+
+  await selectBasePart(page);
+  await page.getByRole("tab", { name: "尺寸" }).click();
+  await expect(
+    page.locator(".inspector-panel").getByRole("combobox", {
+      name: "主可拆面位置",
+    }),
+  ).toHaveCount(0);
+});
+
 test("renders and exports the default enclosure @manufacturing", async ({ page }, testInfo) => {
   test.setTimeout(420_000);
   const pageErrors: string[] = [];
@@ -1009,7 +1044,75 @@ test("hides, locks and restores individual assembly features", async ({ page }, 
     "data-selected-feature-readonly",
     "false",
   );
+});
 
+test("hides and restores battery compartments from the tree and inspector", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+
+  await page.getByRole("button", { name: "添加电池仓" }).click();
+  const batteryPicker = page.getByRole("dialog", { name: "添加电池仓选择器" });
+  await batteryPicker.getByRole("button", { name: "AA 电池仓", exact: true }).click();
+
+  const batteryItem = page
+    .locator(".tree-item")
+    .filter({ hasText: "电池仓 1" })
+    .first();
+  const batteryVisibility = page.getByRole("group", { name: "电池仓显示" });
+  const batteryToggle = batteryVisibility.getByRole("checkbox", {
+    name: "电池仓 1显示",
+  });
+  await expect(batteryToggle).toBeChecked();
+
+  const batteryInspector = page.getByRole("complementary", {
+    name: "电池仓检查器",
+  });
+  await batteryInspector.getByRole("button", { name: "隐藏当前电池仓" }).click();
+  await expect(batteryToggle).not.toBeChecked();
+  await expect(batteryItem).toHaveClass(/is-feature-hidden/);
+  await expect(page.locator(".feature-state-banner")).toContainText("对象已隐藏");
+
+  await page.getByRole("button", { name: "显示全部电池仓" }).click();
+  await expect(batteryToggle).toBeChecked();
+  await expect(batteryItem).not.toHaveClass(/is-feature-hidden/);
+
+  await batteryToggle.uncheck();
+  await expect(batteryItem).toHaveClass(/is-feature-hidden/);
+  await batteryToggle.check();
+  await expect(batteryItem).not.toHaveClass(/is-feature-hidden/);
+});
+
+test("hides and restores interface devices from the tree and inspector", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+
+  const connectorItem = page
+    .locator(".tree-item")
+    .filter({ hasText: "USB Type-C 母座" })
+    .first();
+  await connectorItem.click();
+  const connectorVisibility = page.getByRole("group", { name: "接口/器件显示" });
+  const connectorToggle = connectorVisibility.getByRole("checkbox", {
+    name: "接口/器件 1显示",
+  });
+  await expect(connectorToggle).toBeChecked();
+
+  const connectorInspector = page.getByRole("complementary", {
+    name: "接口检查器",
+  });
+  await connectorInspector.getByRole("button", { name: "隐藏当前接口" }).click();
+  await expect(connectorToggle).not.toBeChecked();
+  await expect(connectorItem).toHaveClass(/is-feature-hidden/);
+  await expect(page.locator(".feature-state-banner")).toContainText("对象已隐藏");
+
+  await page.getByRole("button", { name: "显示全部接口/器件" }).click();
+  await expect(connectorToggle).toBeChecked();
+  await expect(connectorItem).not.toHaveClass(/is-feature-hidden/);
+
+  await connectorToggle.uncheck();
+  await expect(connectorItem).toHaveClass(/is-feature-hidden/);
+  await connectorToggle.check();
+  await expect(connectorItem).not.toHaveClass(/is-feature-hidden/);
 });
 
 test("panel editor clamps placement and supports context deletion", async ({ page }, testInfo) => {
@@ -1465,6 +1568,51 @@ test("project parameters survive an immediate page reload @smoke", async ({ page
   await expect(page.getByRole("combobox", { name: "面板所在面" })).toHaveValue(
     "right",
   );
+});
+
+test("stale cached rail PCB positions are re-homed before editing @smoke", async ({ page }) => {
+  await page.addInitScript(() => {
+    window.localStorage.setItem(
+      "3dshell-designer.project.v1",
+      JSON.stringify({
+        schemaVersion: 1,
+        name: "旧滑槽项目",
+        updatedAt: "2026-08-10T00:00:00.000Z",
+        pcbReference: null,
+        parameters: {
+          parametricPcbEnabled: true,
+          pcbMountingType: "rail-elastic",
+          pcbRailAxis: "z",
+          pcbInsertionSide: "right",
+          pcbRailEntryFace: "front",
+          pcbOffsetX: 149.5,
+          pcbElevation: 34.5,
+          pcbOffsetZ: 10,
+          pcbReferences: [],
+        },
+      }),
+    );
+  });
+
+  await page.goto("/");
+  await page
+    .locator(".tree-nav .tree-item")
+    .filter({ hasText: "参数 PCB" })
+    .first()
+    .click();
+
+  const pcbInspector = page.getByRole("complementary", {
+    name: "参数 PCB 检查器",
+  });
+  await expect(pcbInspector.getByRole("heading", { name: "PCB 位置" })).toBeVisible();
+  await expect(pcbInspector.getByLabel("PCB 固定结构")).toHaveValue("rail-elastic");
+  await expect(pcbInspector.getByLabel("X 位置")).toHaveValue("0");
+  await expect(pcbInspector.getByLabel("Y 偏移")).toHaveValue("0");
+  await expect(pcbInspector.getByLabel("Z 位置")).toHaveValue("0");
+  await expect(pcbInspector.getByLabel("X 位置")).toBeDisabled();
+  await expect(pcbInspector.getByLabel("Y 偏移")).toBeDisabled();
+  await expect(pcbInspector.getByLabel("Z 位置")).toBeEnabled();
+  await expect(pcbInspector.getByText(/只允许沿 Z 轴调整位置/)).toBeVisible();
 });
 
 test("connector and antenna editors stay contextual and support instances", async ({ page }, testInfo) => {

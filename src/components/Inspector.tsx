@@ -601,7 +601,7 @@ export function Inspector() {
             <NumberField label="橡皮筋宽度" value={parameters.pcbElasticBandWidth} min={1} max={8} step={0.5} onChange={(value) => setParameter("pcbElasticBandWidth", value)} />
           ) : null}
           <p className="material-note">
-            两侧导轨会从所选入口方向引出，只形成下托边和上压边，不再生成底部支撑墙；橡皮筋模式会在闭口端生成挂点，让橡皮筋沿 PCB 长度方向从上下两面绕过，防止 PCB 顺着滑槽弹出。
+            两侧导轨会从所选入口方向引出，形成下托边、上压边和外侧背筋组成的 C 型槽，不再生成底部支撑墙；橡皮筋模式会在闭口端生成挂点，让橡皮筋沿 PCB 长度方向从上下两面绕过，防止 PCB 顺着滑槽弹出。
           </p>
         </>
       ) : (

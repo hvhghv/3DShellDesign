@@ -402,11 +402,12 @@ function addMesh(
   position: [number, number, number],
   showEdges = true,
   enclosureFace?: EnclosureFace,
+  shadows = true,
 ): THREE.Mesh {
   const mesh = new THREE.Mesh(geometry, material);
   mesh.position.set(...position);
-  mesh.castShadow = true;
-  mesh.receiveShadow = true;
+  mesh.castShadow = shadows;
+  mesh.receiveShadow = shadows;
   mesh.userData.partId = partId;
   if (enclosureFace) mesh.userData.enclosureFace = enclosureFace;
   group.add(mesh);
@@ -613,7 +614,16 @@ function addCustomComponentPreview(
         component.depth / sourceDepth,
       );
       geometry.translate(0, -component.height / 2, 0);
-      addMesh(group, geometry, material.clone(), "custom", [0, 0, 0]);
+      addMesh(
+        group,
+        geometry,
+        material.clone(),
+        "custom",
+        [0, 0, 0],
+        false,
+        undefined,
+        false,
+      );
     }
     material.dispose();
   } else {
@@ -1381,14 +1391,31 @@ function addPcbRailMountingPreview(
   const railLength = layout.railLength + faceReach;
   const railCenterX =
     layout.openSideSign * (layout.stopWidth / 2 + faceReach / 2);
-  const lowerLedgeY = layout.boardBottom - layout.ledgeThickness / 2;
+  const slotClearance = Math.max(
+    0.035,
+    Math.min(parameters.pcbRailClearance * 0.2, 0.08),
+  );
+  const ledgeCaptureOverlap = Math.min(
+    layout.travelWidth / 2,
+    Math.max(layout.ledgeOverlap, parameters.pcbRailWidth * 0.85),
+  );
+  const lipCaptureOverlap = Math.min(
+    layout.travelWidth / 2,
+    Math.max(layout.lipOverlap, parameters.pcbRailWidth * 0.78),
+  );
+  const lowerLedgeY = layout.boardBottom - layout.ledgeThickness / 2 + 0.04;
   const topLipY =
-    layout.boardTop + parameters.pcbRailClearance + layout.lipThickness / 2;
-  const stopBottomY = layout.boardBottom - layout.ledgeThickness;
-  const stopTopY =
-    layout.boardTop + parameters.pcbRailClearance + layout.lipThickness;
+    layout.boardTop + slotClearance + layout.lipThickness / 2;
+  const stopBottomY = lowerLedgeY - layout.ledgeThickness / 2;
+  const stopTopY = topLipY + layout.lipThickness / 2;
   const stopHeight = stopTopY - stopBottomY;
   const stopCenterY = (stopTopY + stopBottomY) / 2;
+  const sideWebHeight = stopHeight;
+  const sideWebCenterY = stopCenterY;
+  const sideWebDepth = Math.max(
+    0.8,
+    faceReach > 0.12 ? faceReach - Math.min(slotClearance, 0.08) : faceReach,
+  );
   const closedEdgeX = -layout.openSideSign * (layout.travelLength / 2);
   const stopLength = layout.stopWidth + faceReach;
   const stopCenterX =
@@ -1398,10 +1425,10 @@ function addPcbRailMountingPreview(
     ["left", -1],
     ["right", 1],
   ] as const) {
-    const ledgeDepth = faceReach + layout.ledgeOverlap;
+    const ledgeDepth = faceReach + ledgeCaptureOverlap;
     const ledgeCenterZ =
       sideSign *
-      (layout.travelWidth / 2 + faceReach / 2 - layout.ledgeOverlap / 2);
+      (layout.travelWidth / 2 + faceReach / 2 - ledgeCaptureOverlap / 2);
     const ledge = addMesh(
       group,
       new THREE.BoxGeometry(
@@ -1419,10 +1446,10 @@ function addPcbRailMountingPreview(
     );
     ledge.name = `${envelope.id}-pcb-rail-${name}-lower-ledge`;
 
-    const lipDepth = faceReach + layout.lipOverlap;
+    const lipDepth = faceReach + lipCaptureOverlap;
     const lipCenterZ =
       sideSign *
-      (layout.travelWidth / 2 + faceReach / 2 - layout.lipOverlap / 2);
+      (layout.travelWidth / 2 + faceReach / 2 - lipCaptureOverlap / 2);
     const lip = addMesh(
       group,
       new THREE.BoxGeometry(
@@ -1439,6 +1466,17 @@ function addPcbRailMountingPreview(
       ],
     );
     lip.name = `${envelope.id}-pcb-rail-${name}-top-lip`;
+
+    const sideWebCenterZ =
+      sideSign * (layout.travelWidth / 2 + faceReach - sideWebDepth / 2);
+    const sideWeb = addMesh(
+      group,
+      new THREE.BoxGeometry(railLength, sideWebHeight, sideWebDepth),
+      railMaterial,
+      "base",
+      [railCenterX, sideWebCenterY, sideWebCenterZ],
+    );
+    sideWeb.name = `${envelope.id}-pcb-rail-${name}-side-web`;
   }
 
   const stop = addMesh(
@@ -1480,6 +1518,13 @@ function addPcbRailMountingPreview(
     );
     const anchorRadius = Math.max(0.9, parameters.pcbRailWidth * 0.3);
     const anchorHeight = Math.max(2.8, parameters.pcbElasticBandWidth + 1);
+    const retainerGap = Math.max(0.08, Math.min(0.18, bandRadius * 0.2));
+    const retainerRadius =
+      anchorRadius + Math.max(0.75, bandRadius * 1.15);
+    const retainerHeight = Math.max(
+      0.8,
+      Math.min(anchorHeight * 0.36, bandRadius * 1.55),
+    );
     const anchorX =
       closedEdgeX +
       layout.openSideSign *
@@ -1503,6 +1548,14 @@ function addPcbRailMountingPreview(
     const topY = layout.boardTop + bandRadius + 0.08;
     const bottomY = layout.boardBottom - bandRadius - 0.08;
     const midY = (topY + bottomY) / 2;
+    const bottomRetainerCenterY = Math.max(
+      layout.boardBottom - anchorHeight + retainerHeight / 2,
+      bottomY - bandRadius - retainerGap - retainerHeight / 2,
+    );
+    const topRetainerCenterY = Math.min(
+      layout.boardTop + anchorHeight - retainerHeight / 2,
+      topY + bandRadius + retainerGap + retainerHeight / 2,
+    );
     const laneOffset = Math.max(
       parameters.pcbElasticBandWidth * 1.8,
       Math.min(layout.travelWidth * 0.28, layout.travelWidth / 2 - 8),
@@ -1524,6 +1577,17 @@ function addPcbRailMountingPreview(
       );
       topAnchor.name = `${envelope.id}-pcb-elastic-anchor-${index + 1}`;
 
+      const topRetainer = addCylinder(
+        group,
+        retainerRadius,
+        retainerHeight,
+        [anchorX, topRetainerCenterY, laneZ],
+        railMaterial,
+        "base",
+        24,
+      );
+      topRetainer.name = `${envelope.id}-pcb-elastic-anchor-${index + 1}-top-retainer`;
+
       const bottomAnchor = addCylinder(
         group,
         anchorRadius,
@@ -1534,6 +1598,17 @@ function addPcbRailMountingPreview(
         20,
       );
       bottomAnchor.name = `${envelope.id}-pcb-elastic-anchor-${index + 1}-bottom`;
+
+      const bottomRetainer = addCylinder(
+        group,
+        retainerRadius,
+        retainerHeight,
+        [anchorX, bottomRetainerCenterY, laneZ],
+        railMaterial,
+        "base",
+        24,
+      );
+      bottomRetainer.name = `${envelope.id}-pcb-elastic-anchor-${index + 1}-bottom-retainer`;
 
       const bandPath = new THREE.CatmullRomCurve3(
         [
@@ -2903,6 +2978,9 @@ export function buildPreviewModel(
             }),
             "pcb",
             [0, 0, 0],
+            false,
+            undefined,
+            false,
           );
         }
       } else {
@@ -2993,6 +3071,9 @@ export function buildPreviewModel(
           }),
           "pcb",
           [0, 0, 0],
+          false,
+          undefined,
+          false,
         );
       }
     } else {

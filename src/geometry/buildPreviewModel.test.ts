@@ -665,6 +665,11 @@ describe("surface placement preview", () => {
     ) as THREE.Mesh | undefined;
     expect(previewMesh).toBeDefined();
     expect(previewMesh?.geometry.getAttribute("position").count).toBe(3);
+    expect(previewMesh?.castShadow).toBe(false);
+    expect(previewMesh?.receiveShadow).toBe(false);
+    expect(
+      pcbGroup?.children.some((child) => child instanceof THREE.LineSegments),
+    ).toBe(false);
     disposePreviewModel(model);
   });
 
@@ -749,6 +754,9 @@ describe("surface placement preview", () => {
     const parameters = {
       ...DEFAULT_PARAMETERS,
       pcbMountingType: "rail-elastic" as const,
+      pcbRailAxis: "x" as const,
+      pcbInsertionSide: "right" as const,
+      pcbRailEntryFace: "right" as const,
     };
     const bodyHiddenModel = buildPreviewModel(
       parameters,
@@ -780,6 +788,11 @@ describe("surface placement preview", () => {
         `${PARAMETRIC_PCB_FEATURE_ID}-pcb-rail-left-wall`,
       ),
     ).toBeUndefined();
+    expect(
+      bodyHiddenModel.getObjectByName(
+        `${PARAMETRIC_PCB_FEATURE_ID}-pcb-rail-left-side-web`,
+      ),
+    ).toBeDefined();
     bodyHiddenModel.updateMatrixWorld(true);
     const railBounds = new THREE.Box3().setFromObject(rail!);
     expect(Math.max(Math.abs(railBounds.min.x), Math.abs(railBounds.max.x))).toBeGreaterThanOrEqual(
@@ -810,6 +823,88 @@ describe("surface placement preview", () => {
     disposePreviewModel(fullHiddenModel);
   });
 
+  it("forms C-channel PCB rails that bracket the board edge", () => {
+    const parameters = {
+      ...DEFAULT_PARAMETERS,
+      pcbMountingType: "rail-elastic" as const,
+      pcbRailAxis: "x" as const,
+      pcbInsertionSide: "right" as const,
+      pcbRailEntryFace: "right" as const,
+    };
+    const model = buildPreviewModel(parameters, "pcb", false, null);
+    const lowerLedge = model.getObjectByName(
+      `${PARAMETRIC_PCB_FEATURE_ID}-pcb-rail-left-lower-ledge`,
+    );
+    const topLip = model.getObjectByName(
+      `${PARAMETRIC_PCB_FEATURE_ID}-pcb-rail-left-top-lip`,
+    );
+    const sideWeb = model.getObjectByName(
+      `${PARAMETRIC_PCB_FEATURE_ID}-pcb-rail-left-side-web`,
+    );
+    const boardBottom = parameters.bottomThickness + parameters.standoffHeight;
+    const boardTop = boardBottom + parameters.pcbThickness;
+
+    expect(lowerLedge).toBeDefined();
+    expect(topLip).toBeDefined();
+    expect(sideWeb).toBeDefined();
+    model.updateMatrixWorld(true);
+    const lowerBounds = new THREE.Box3().setFromObject(lowerLedge!);
+    const topBounds = new THREE.Box3().setFromObject(topLip!);
+    const webBounds = new THREE.Box3().setFromObject(sideWeb!);
+
+    expect(lowerBounds.min.y).toBeLessThan(boardBottom);
+    expect(lowerBounds.max.y).toBeGreaterThan(boardBottom);
+    expect(topBounds.min.y).toBeLessThanOrEqual(boardTop + 0.09);
+    expect(topBounds.max.y).toBeGreaterThan(boardTop);
+    expect(webBounds.min.y).toBeLessThan(boardBottom);
+    expect(webBounds.max.y).toBeGreaterThan(boardTop);
+    expect(lowerBounds.min.z).toBeLessThanOrEqual(-parameters.pcbWidth / 2);
+    expect(lowerBounds.max.z).toBeGreaterThanOrEqual(-parameters.pcbWidth / 2);
+    expect(topBounds.min.z).toBeLessThanOrEqual(-parameters.pcbWidth / 2);
+    expect(topBounds.max.z).toBeGreaterThanOrEqual(-parameters.pcbWidth / 2);
+    expect(webBounds.min.z).toBeLessThanOrEqual(-parameters.pcbWidth / 2);
+    expect(webBounds.max.z).toBeGreaterThanOrEqual(-parameters.pcbWidth / 2 - 0.1);
+    expect(webBounds.max.z).toBeLessThanOrEqual(-parameters.pcbWidth / 2 + 0.05);
+    disposePreviewModel(model);
+  });
+
+  it("aligns PCB rail slots to the board when the bottom face is removable", () => {
+    const parameters = {
+      ...DEFAULT_PARAMETERS,
+      lidFace: "bottom" as const,
+      removableFaces: ["bottom" as const],
+      pcbMountingType: "rail-elastic" as const,
+      pcbRailAxis: "x" as const,
+      pcbInsertionSide: "right" as const,
+      pcbRailEntryFace: "right" as const,
+    };
+    const model = buildPreviewModel(parameters, "pcb", false, null);
+    const board = model.getObjectByName(
+      `pcb-transform-${PARAMETRIC_PCB_FEATURE_ID}`,
+    );
+    const lowerLedge = model.getObjectByName(
+      `${PARAMETRIC_PCB_FEATURE_ID}-pcb-rail-left-lower-ledge`,
+    );
+    const topLip = model.getObjectByName(
+      `${PARAMETRIC_PCB_FEATURE_ID}-pcb-rail-left-top-lip`,
+    );
+
+    expect(board).toBeDefined();
+    expect(lowerLedge).toBeDefined();
+    expect(topLip).toBeDefined();
+    model.updateMatrixWorld(true);
+    const boardBounds = new THREE.Box3().setFromObject(board!);
+    const lowerBounds = new THREE.Box3().setFromObject(lowerLedge!);
+    const topBounds = new THREE.Box3().setFromObject(topLip!);
+
+    expect(boardBounds.min.y).toBeCloseTo(parameters.standoffHeight, 4);
+    expect(lowerBounds.min.y).toBeLessThan(boardBounds.min.y);
+    expect(lowerBounds.max.y).toBeGreaterThan(boardBounds.min.y);
+    expect(topBounds.min.y).toBeLessThanOrEqual(boardBounds.max.y + 0.09);
+    expect(topBounds.max.y).toBeGreaterThan(boardBounds.max.y);
+    disposePreviewModel(model);
+  });
+
   it("routes PCB elastic bands as lengthwise loops over and under the board", () => {
     const parameters = {
       ...DEFAULT_PARAMETERS,
@@ -833,17 +928,35 @@ describe("surface placement preview", () => {
     const firstBottomAnchor = railGroup?.getObjectByName(
       `${PARAMETRIC_PCB_FEATURE_ID}-pcb-elastic-anchor-1-bottom`,
     );
+    const firstTopRetainer = railGroup?.getObjectByName(
+      `${PARAMETRIC_PCB_FEATURE_ID}-pcb-elastic-anchor-1-top-retainer`,
+    );
+    const firstBottomRetainer = railGroup?.getObjectByName(
+      `${PARAMETRIC_PCB_FEATURE_ID}-pcb-elastic-anchor-1-bottom-retainer`,
+    );
     const boardBottom = parameters.bottomThickness + parameters.standoffHeight;
     const boardTop = boardBottom + parameters.pcbThickness;
+    const bandRadius = Math.max(
+      0.35,
+      Math.min(0.9, parameters.pcbElasticBandWidth * 0.22),
+    );
+    const bottomBandCenterY = boardBottom - bandRadius - 0.08;
+    const topBandCenterY = boardTop + bandRadius + 0.08;
 
     expect(firstLoop).toBeDefined();
     expect(secondLoop).toBeDefined();
     expect(firstAnchor).toBeDefined();
     expect(firstBottomAnchor).toBeDefined();
+    expect(firstTopRetainer).toBeDefined();
+    expect(firstBottomRetainer).toBeDefined();
     model.updateMatrixWorld(true);
     const loopBounds = new THREE.Box3().setFromObject(firstLoop!);
     const topAnchorBounds = new THREE.Box3().setFromObject(firstAnchor!);
     const bottomAnchorBounds = new THREE.Box3().setFromObject(firstBottomAnchor!);
+    const topRetainerBounds = new THREE.Box3().setFromObject(firstTopRetainer!);
+    const bottomRetainerBounds = new THREE.Box3().setFromObject(
+      firstBottomRetainer!,
+    );
     expect(loopBounds.max.z).toBeGreaterThan(parameters.pcbWidth / 2);
     expect(loopBounds.min.z).toBeLessThan(
       -parameters.pcbWidth / 2 + parameters.pcbStopWidth + 4,
@@ -854,6 +967,14 @@ describe("surface placement preview", () => {
     expect(topAnchorBounds.max.y).toBeGreaterThan(boardTop);
     expect(bottomAnchorBounds.max.y).toBeGreaterThanOrEqual(boardBottom - 0.01);
     expect(bottomAnchorBounds.min.y).toBeLessThan(boardBottom);
+    expect(topRetainerBounds.min.y).toBeGreaterThan(topBandCenterY);
+    expect(bottomRetainerBounds.max.y).toBeLessThan(bottomBandCenterY);
+    expect(topRetainerBounds.max.x - topRetainerBounds.min.x).toBeGreaterThan(
+      topAnchorBounds.max.x - topAnchorBounds.min.x,
+    );
+    expect(
+      bottomRetainerBounds.max.x - bottomRetainerBounds.min.x,
+    ).toBeGreaterThan(bottomAnchorBounds.max.x - bottomAnchorBounds.min.x);
     expect(firstAnchor?.position.x).toBeLessThan(0);
     expect(firstBottomAnchor?.position.x).toBeCloseTo(firstAnchor!.position.x, 4);
     disposePreviewModel(model);

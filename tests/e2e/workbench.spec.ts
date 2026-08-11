@@ -70,6 +70,57 @@ async function readScreenshotPixels(page: Page, canvas: Locator) {
   }, dataUrl);
 }
 
+async function readTallTransformGuideCoverage(page: Page, canvas: Locator) {
+  const screenshot = await canvas.screenshot({ type: "png" });
+  const dataUrl = `data:image/png;base64,${screenshot.toString("base64")}`;
+
+  return page.evaluate(async (source) => {
+    const image = new Image();
+    image.src = source;
+    await image.decode();
+    const sampleCanvas = document.createElement("canvas");
+    sampleCanvas.width = image.naturalWidth;
+    sampleCanvas.height = image.naturalHeight;
+    const context = sampleCanvas.getContext("2d", { willReadFrequently: true });
+    if (!context) throw new Error("2D canvas is unavailable");
+    context.drawImage(image, 0, 0);
+    const { data, width, height } = context.getImageData(
+      0,
+      0,
+      sampleCanvas.width,
+      sampleCanvas.height,
+    );
+    const columnCounts = new Uint16Array(width);
+
+    for (let y = 0; y < height; y += 1) {
+      for (let x = 0; x < width; x += 1) {
+        const offset = (y * width + x) * 4;
+        const red = data[offset];
+        const green = data[offset + 1];
+        const blue = data[offset + 2];
+        const isRedGuide = red > 175 && red > green * 1.35 && red > blue * 1.35;
+        const isGreenGuide =
+          green > 165 && green > red * 1.45 && green > blue * 1.35;
+        const isYellowGuide =
+          red > 175 && green > 165 && blue < 125 && Math.abs(red - green) < 85;
+        if (isRedGuide || isGreenGuide || isYellowGuide) {
+          columnCounts[x] += 1;
+        }
+      }
+    }
+
+    let maxColumnPixels = 0;
+    for (let x = 0; x < width; x += 1) {
+      maxColumnPixels = Math.max(maxColumnPixels, columnCounts[x]);
+    }
+
+    return {
+      maxColumnPixels,
+      coverage: maxColumnPixels / height,
+    };
+  }, dataUrl);
+}
+
 function readStlDimensions(stl: Uint8Array): {
   triangleCount: number;
   dimensions: [number, number, number];
@@ -225,6 +276,41 @@ test("camera orbit reaches the enclosure underside @smoke", async ({ page }, tes
   ).toBeGreaterThan(Math.PI / 2 + 0.1);
   await expect(viewport).toHaveAttribute("data-camera-below-work-plane", "true");
   await captureVisualCheckpoint(page, testInfo, "underside-orbit.png");
+});
+
+test("viewport rendering idles after the scene settles", async ({ page }) => {
+  await page.addInitScript(() => {
+    const countedWindow = window as Window & {
+      __getRafCallbackCount?: () => number;
+    };
+    const originalRequestAnimationFrame =
+      window.requestAnimationFrame.bind(window);
+    let callbackCount = 0;
+    window.requestAnimationFrame = (callback: FrameRequestCallback) =>
+      originalRequestAnimationFrame((time) => {
+        callbackCount += 1;
+        callback(time);
+      });
+    countedWindow.__getRafCallbackCount = () => callbackCount;
+  });
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+  await expect(page.locator(".viewport-canvas canvas")).toBeVisible();
+  await page.waitForTimeout(900);
+  const before = await page.evaluate(() => {
+    const countedWindow = window as Window & {
+      __getRafCallbackCount?: () => number;
+    };
+    return countedWindow.__getRafCallbackCount?.() ?? 0;
+  });
+  await page.waitForTimeout(900);
+  const after = await page.evaluate(() => {
+    const countedWindow = window as Window & {
+      __getRafCallbackCount?: () => number;
+    };
+    return countedWindow.__getRafCallbackCount?.() ?? 0;
+  });
+  expect(after - before).toBeLessThan(8);
 });
 
 test("independently hides and restores enclosure faces", async ({ page }, testInfo) => {
@@ -1836,6 +1922,8 @@ test("3D transform handles edit the selected panel", async ({ page }, testInfo) 
   await page.mouse.move(canvasBox!.x + 505, canvasBox!.y + 290);
   await page.mouse.down();
   await page.mouse.move(canvasBox!.x + 530, canvasBox!.y + 295, { steps: 12 });
+  const guideCoverage = await readTallTransformGuideCoverage(page, canvas);
+  expect(guideCoverage.coverage).toBeLessThan(0.16);
   await page.mouse.up();
   await expect(horizontalOffset).not.toHaveValue("0");
   const movedOffset = await horizontalOffset.inputValue();

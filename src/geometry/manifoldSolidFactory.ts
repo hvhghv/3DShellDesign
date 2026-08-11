@@ -1227,39 +1227,62 @@ function applyPcbRailMountingFeatures(
     const railLength = layout.railLength + faceReach;
     const railCenterX =
       layout.openSideSign * (layout.stopWidth / 2 + faceReach / 2);
-    const lowerLedgeZ = layout.boardBottom - layout.ledgeThickness / 2;
+    const slotClearance = Math.max(
+      0.035,
+      Math.min(parameters.pcbRailClearance * 0.2, 0.08),
+    );
+    const ledgeCaptureOverlap = Math.min(
+      layout.travelWidth / 2,
+      Math.max(layout.ledgeOverlap, parameters.pcbRailWidth * 0.85),
+    );
+    const lipCaptureOverlap = Math.min(
+      layout.travelWidth / 2,
+      Math.max(layout.lipOverlap, parameters.pcbRailWidth * 0.78),
+    );
+    const lowerLedgeZ = layout.boardBottom - layout.ledgeThickness / 2 + 0.04;
     const topLipZ =
-      layout.boardTop + parameters.pcbRailClearance + layout.lipThickness / 2;
-    const stopBottomZ = layout.boardBottom - layout.ledgeThickness;
-    const stopTopZ =
-      layout.boardTop + parameters.pcbRailClearance + layout.lipThickness;
+      layout.boardTop + slotClearance + layout.lipThickness / 2;
+    const stopBottomZ = lowerLedgeZ - layout.ledgeThickness / 2;
+    const stopTopZ = topLipZ + layout.lipThickness / 2;
     const stopHeight = stopTopZ - stopBottomZ;
     const stopCenterZ = (stopTopZ + stopBottomZ) / 2;
+    const sideWebDepth = Math.max(
+      0.8,
+      faceReach > 0.12 ? faceReach - Math.min(slotClearance, 0.08) : faceReach,
+    );
     const closedEdgeX = -layout.openSideSign * (layout.travelLength / 2);
     const stopLength = layout.stopWidth + faceReach;
     const stopCenterX =
       closedEdgeX + layout.openSideSign * (layout.stopWidth / 2 - faceReach / 2);
 
     for (const sideSign of [-1, 1] as const) {
-      const ledgeDepth = faceReach + layout.ledgeOverlap;
+      const ledgeDepth = faceReach + ledgeCaptureOverlap;
       const ledgeCenterY =
         sideSign *
-        (layout.travelWidth / 2 + faceReach / 2 - layout.ledgeOverlap / 2);
+        (layout.travelWidth / 2 + faceReach / 2 - ledgeCaptureOverlap / 2);
       addCenteredBox(
         [railLength, ledgeDepth, layout.ledgeThickness],
         railCenterX,
         ledgeCenterY,
         lowerLedgeZ,
       );
-      const lipDepth = faceReach + layout.lipOverlap;
+      const lipDepth = faceReach + lipCaptureOverlap;
       const lipCenterY =
         sideSign *
-        (layout.travelWidth / 2 + faceReach / 2 - layout.lipOverlap / 2);
+        (layout.travelWidth / 2 + faceReach / 2 - lipCaptureOverlap / 2);
       addCenteredBox(
         [railLength, lipDepth, layout.lipThickness],
         railCenterX,
         lipCenterY,
         topLipZ,
+      );
+      const sideWebCenterY =
+        sideSign * (layout.travelWidth / 2 + faceReach - sideWebDepth / 2);
+      addCenteredBox(
+        [railLength, sideWebDepth, stopHeight],
+        railCenterX,
+        sideWebCenterY,
+        stopCenterZ,
       );
     }
 
@@ -1275,12 +1298,33 @@ function applyPcbRailMountingFeatures(
     );
 
     if (parameters.pcbMountingType === "rail-elastic") {
+      const bandRadius = Math.max(
+        0.35,
+        Math.min(0.9, parameters.pcbElasticBandWidth * 0.22),
+      );
       const anchorRadius = Math.max(0.9, parameters.pcbRailWidth * 0.3);
       const anchorHeight = Math.max(2.8, parameters.pcbElasticBandWidth + 1);
+      const retainerGap = Math.max(0.08, Math.min(0.18, bandRadius * 0.2));
+      const retainerRadius =
+        anchorRadius + Math.max(0.75, bandRadius * 1.15);
+      const retainerHeight = Math.max(
+        0.8,
+        Math.min(anchorHeight * 0.36, bandRadius * 1.55),
+      );
       const anchorX =
         closedEdgeX +
         layout.openSideSign *
           Math.max(parameters.pcbStopWidth * 0.65, anchorRadius + 1.6);
+      const topZ = layout.boardTop + bandRadius + 0.08;
+      const bottomZ = layout.boardBottom - bandRadius - 0.08;
+      const bottomRetainerCenterZ = Math.max(
+        layout.boardBottom - anchorHeight + retainerHeight / 2,
+        bottomZ - bandRadius - retainerGap - retainerHeight / 2,
+      );
+      const topRetainerCenterZ = Math.min(
+        layout.boardTop + anchorHeight - retainerHeight / 2,
+        topZ + bandRadius + retainerGap + retainerHeight / 2,
+      );
       const laneOffset = Math.max(
         parameters.pcbElasticBandWidth * 1.8,
         Math.min(layout.travelWidth * 0.28, layout.travelWidth / 2 - 8),
@@ -1305,12 +1349,34 @@ function applyPcbRailMountingFeatures(
         addRailPart(
           cylinderAt(
             module,
+            retainerRadius,
+            retainerHeight,
+            anchorX,
+            laneY,
+            topRetainerCenterZ - retainerHeight / 2,
+            24,
+          ),
+        );
+        addRailPart(
+          cylinderAt(
+            module,
             anchorRadius,
             anchorHeight,
             anchorX,
             laneY,
             layout.boardBottom - anchorHeight + anchorOverlap,
             20,
+          ),
+        );
+        addRailPart(
+          cylinderAt(
+            module,
+            retainerRadius,
+            retainerHeight,
+            anchorX,
+            laneY,
+            bottomRetainerCenterZ - retainerHeight / 2,
+            24,
           ),
         );
       }

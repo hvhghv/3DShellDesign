@@ -187,15 +187,18 @@ export default function App() {
   }, [restoreCachedProject]);
 
   useEffect(() => {
-    try {
-      window.localStorage.setItem(
-        PANE_WIDTH_STORAGE_KEY,
-        JSON.stringify(paneWidths),
-      );
-    } catch {
-      // Layout preferences are optional and should not block the editor.
-    }
-  }, [paneWidths]);
+    const timeout = window.setTimeout(() => {
+      try {
+        window.localStorage.setItem(
+          PANE_WIDTH_STORAGE_KEY,
+          JSON.stringify(paneWidths),
+        );
+      } catch {
+        // Layout preferences are optional and should not block the editor.
+      }
+    }, resizingPane ? 220 : 0);
+    return () => window.clearTimeout(timeout);
+  }, [paneWidths, resizingPane]);
 
   useEffect(() => {
     const workbench = workbenchRef.current;

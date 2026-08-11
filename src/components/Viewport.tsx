@@ -22,6 +22,9 @@ type EditableViewportPart =
   | "custom"
   | "battery";
 
+const MAX_RENDER_PIXEL_RATIO = 1.5;
+const SHADOW_MAP_SIZE = 1024;
+
 function isEditableViewportPart(part: SelectablePart): part is EditableViewportPart {
   return (
     part === "pcb" ||
@@ -240,6 +243,50 @@ function canUseAxisConstraint(
   return face ? isAxisAvailableOnFace(face, axis) : true;
 }
 
+function objectContains(root: THREE.Object3D, candidate: THREE.Object3D): boolean {
+  let current: THREE.Object3D | null = candidate;
+  while (current) {
+    if (current === root) return true;
+    current = current.parent;
+  }
+  return false;
+}
+
+function hideTransformHelperGuideLines(helper: THREE.Object3D): void {
+  helper.traverse((object) => {
+    const taggedObject = object as THREE.Object3D & { tag?: string };
+    const renderable = object as THREE.Object3D & {
+      material?: THREE.Material | THREE.Material[];
+    };
+    const materials = Array.isArray(renderable.material)
+      ? renderable.material
+      : renderable.material
+        ? [renderable.material]
+        : [];
+
+    if (taggedObject.tag === "helper") {
+      object.visible = false;
+      object.renderOrder = 0;
+      for (const material of materials) {
+        material.visible = false;
+        material.needsUpdate = true;
+      }
+      return;
+    }
+
+    object.renderOrder = 8;
+    for (const material of materials) {
+      if (!material.visible) continue;
+      material.depthTest = true;
+      material.depthWrite = false;
+      if ("premultipliedAlpha" in material) {
+        material.premultipliedAlpha = true;
+      }
+      material.needsUpdate = true;
+    }
+  });
+}
+
 function commitFeatureTransform(object: THREE.Object3D): void {
   const state = useDesignerStore.getState();
   const featureId = object.userData.featureId as string | undefined;
@@ -408,6 +455,9 @@ export function Viewport() {
   const attachedFeatureRef = useRef<THREE.Object3D | null>(null);
   const modelRef = useRef<THREE.Group | null>(null);
   const gridRef = useRef<THREE.GridHelper | null>(null);
+  const requestViewportRenderRef = useRef<((frames?: number) => void) | null>(
+    null,
+  );
   const didInitialFit = useRef(false);
   const previousFocus = useRef<SelectablePart | null>(null);
   const parameters = useDesignerStore((state) => state.parameters);
@@ -542,7 +592,9 @@ export function Viewport() {
     renderer.toneMappingExposure = 1.04;
     renderer.shadowMap.enabled = true;
     renderer.shadowMap.type = THREE.PCFShadowMap;
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.setPixelRatio(
+      Math.min(window.devicePixelRatio, MAX_RENDER_PIXEL_RATIO),
+    );
     renderer.domElement.setAttribute("aria-label", "3D 外壳设计视口");
     host.appendChild(renderer.domElement);
 
@@ -561,17 +613,47 @@ export function Viewport() {
     transformControls.setScaleSnap(0.05);
     transformControls.setSize(0.82);
     const transformHelper = transformControls.getHelper();
+    hideTransformHelperGuideLines(transformHelper);
     scene.add(transformHelper);
+    let animationFrame = 0;
+    let renderFrameBudget = 0;
+    const render = () => {
+      animationFrame = 0;
+      if (controls.update()) {
+        renderFrameBudget = Math.max(renderFrameBudget, 3);
+      }
+      renderer.render(scene, camera);
+      if (renderFrameBudget > 0) {
+        renderFrameBudget -= 1;
+        if (animationFrame === 0) {
+          animationFrame = window.requestAnimationFrame(render);
+        }
+      }
+    };
+    const requestRender = (frames = 1) => {
+      renderFrameBudget = Math.max(renderFrameBudget, frames);
+      if (animationFrame === 0) {
+        animationFrame = window.requestAnimationFrame(render);
+      }
+    };
+    requestViewportRenderRef.current = requestRender;
+
     let transformWasDragging = false;
     const onDraggingChanged = (event: { value: unknown }) => {
       const dragging = Boolean(event.value);
       controls.enabled = !dragging;
-      if (dragging) transformWasDragging = true;
-      else if (transformWasDragging && attachedFeatureRef.current) {
+      if (dragging) {
+        transformWasDragging = true;
+        requestRender(90);
+      } else if (transformWasDragging && attachedFeatureRef.current) {
         commitFeatureTransform(attachedFeatureRef.current);
+        requestRender(8);
       }
     };
+    const requestTransformRender = () => requestRender(3);
     transformControls.addEventListener("dragging-changed", onDraggingChanged);
+    transformControls.addEventListener("change", requestTransformRender);
+    transformControls.addEventListener("objectChange", requestTransformRender);
 
     const hemisphere = new THREE.HemisphereLight(0xffffff, 0x9ca79f, 2.2);
     scene.add(hemisphere);
@@ -579,7 +661,7 @@ export function Viewport() {
     const keyLight = new THREE.DirectionalLight(0xffffff, 3.2);
     keyLight.position.set(120, 180, 90);
     keyLight.castShadow = true;
-    keyLight.shadow.mapSize.set(2048, 2048);
+    keyLight.shadow.mapSize.set(SHADOW_MAP_SIZE, SHADOW_MAP_SIZE);
     keyLight.shadow.camera.left = -180;
     keyLight.shadow.camera.right = 180;
     keyLight.shadow.camera.top = 180;
@@ -618,6 +700,7 @@ export function Viewport() {
       host.dataset.cameraBelowWorkPlane = String(belowWorkPlane);
       ground.visible = !belowWorkPlane;
       grid.visible = Boolean(grid.userData.requestedVisible) && !belowWorkPlane;
+      requestRender(8);
     };
     controls.addEventListener("change", updateCameraState);
     updateCameraState();
@@ -628,6 +711,7 @@ export function Viewport() {
       renderer.setSize(width, height, false);
       camera.aspect = width / height;
       camera.updateProjectionMatrix();
+      requestRender(2);
     };
     const resizeObserver = new ResizeObserver(resize);
     resizeObserver.observe(host);
@@ -683,13 +767,7 @@ export function Viewport() {
     renderer.domElement.addEventListener("pointerdown", onPointerDown);
     renderer.domElement.addEventListener("pointerup", onPointerUp);
 
-    let animationFrame = 0;
-    const render = () => {
-      controls.update();
-      renderer.render(scene, camera);
-      animationFrame = window.requestAnimationFrame(render);
-    };
-    render();
+    requestRender(3);
 
     sceneRef.current = scene;
     cameraRef.current = camera;
@@ -705,6 +783,8 @@ export function Viewport() {
       controls.removeEventListener("change", updateCameraState);
       controls.dispose();
       transformControls.removeEventListener("dragging-changed", onDraggingChanged);
+      transformControls.removeEventListener("change", requestTransformRender);
+      transformControls.removeEventListener("objectChange", requestTransformRender);
       transformControls.detach();
       scene.remove(transformHelper);
       transformControls.dispose();
@@ -723,6 +803,7 @@ export function Viewport() {
       controlsRef.current = null;
       transformControlsRef.current = null;
       attachedFeatureRef.current = null;
+      requestViewportRenderRef.current = null;
       gridRef.current = null;
     };
   }, [setSelectedFeature, setSelectedPart]);
@@ -732,6 +813,15 @@ export function Viewport() {
     if (!scene) return;
 
     if (modelRef.current) {
+      const transformControls = transformControlsRef.current;
+      if (
+        transformControls &&
+        attachedFeatureRef.current &&
+        objectContains(modelRef.current, attachedFeatureRef.current)
+      ) {
+        transformControls.detach();
+        attachedFeatureRef.current = null;
+      }
       scene.remove(modelRef.current);
       disposePreviewModel(modelRef.current);
     }
@@ -810,9 +900,19 @@ export function Viewport() {
       didInitialFit.current = true;
     }
     previousFocus.current = focusedPart;
+    requestViewportRenderRef.current?.(8);
 
     return () => {
       if (modelRef.current === model) {
+        const transformControls = transformControlsRef.current;
+        if (
+          transformControls &&
+          attachedFeatureRef.current &&
+          objectContains(model, attachedFeatureRef.current)
+        ) {
+          transformControls.detach();
+          attachedFeatureRef.current = null;
+        }
         scene.remove(model);
         disposePreviewModel(model);
         modelRef.current = null;
@@ -847,12 +947,14 @@ export function Viewport() {
     const belowWorkPlane =
       hostRef.current?.dataset.cameraBelowWorkPlane === "true";
     gridRef.current.visible = showGrid && !belowWorkPlane;
+    requestViewportRenderRef.current?.(2);
   }, [showGrid]);
 
   useEffect(() => {
     if (cameraResetToken === 0) return;
     if (cameraRef.current && controlsRef.current && modelRef.current) {
       fitCamera(cameraRef.current, controlsRef.current, modelRef.current);
+      requestViewportRenderRef.current?.(8);
     }
   }, [cameraResetToken]);
 

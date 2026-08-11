@@ -225,8 +225,10 @@ export function getEffectivePcbRailLayout(
   const lipThickness = Math.max(0.7, Math.min(2.2, parameters.pcbRailHeight * 0.38));
   const ledgeOverlap = Math.max(0.8, Math.min(2.6, parameters.pcbRailWidth * 0.55));
   const lipOverlap = Math.max(0.8, Math.min(2.4, parameters.pcbRailWidth * 0.5));
-  const boardBottom =
-    parameters.bottomThickness + parameters.standoffHeight + envelope.elevation;
+  const interiorBottom = parameters.removableFaces.includes("bottom")
+    ? 0
+    : parameters.bottomThickness;
+  const boardBottom = interiorBottom + parameters.standoffHeight + envelope.elevation;
   const boardTop = boardBottom + envelope.thickness;
   const openSideSign = direction.insertionSide === "right" ? 1 : -1;
   const closedSideSign = -openSideSign;

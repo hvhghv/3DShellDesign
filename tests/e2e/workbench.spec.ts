@@ -1984,7 +1984,11 @@ test("narrow workbench stays framed and keeps the 3D canvas visible", async ({ p
     .toBeGreaterThanOrEqual(-1);
   const assemblyBox = await assemblyPanel.boundingBox();
   expect(assemblyBox).not.toBeNull();
-  expect(assemblyBox!.x).toBeGreaterThanOrEqual(0);
+  expect(assemblyBox!.x).toBeGreaterThanOrEqual(-1);
+  const viewportWidth = await page.evaluate(() => window.innerWidth);
+  expect(assemblyBox!.x + assemblyBox!.width).toBeLessThanOrEqual(
+    viewportWidth + 1,
+  );
   await captureVisualCheckpoint(page, testInfo, "narrow-assembly-drawer.png");
   await page.locator(".mobile-panel-close").click();
 

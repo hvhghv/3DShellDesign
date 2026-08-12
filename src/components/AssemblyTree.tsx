@@ -437,6 +437,7 @@ export function AssemblyTree({ onRequestClose, onImportPcb }: AssemblyTreeProps)
     x: number;
     y: number;
   } | null>(null);
+  const ignoreNextTreeScrollRef = useRef(false);
   const parameters = useDesignerStore((state) => state.parameters);
   const setParameter = useDesignerStore((state) => state.setParameter);
   const addPanelPlacement = useDesignerStore((state) => state.addPanelPlacement);
@@ -499,18 +500,33 @@ export function AssemblyTree({ onRequestClose, onImportPcb }: AssemblyTreeProps)
 
   useEffect(() => {
     if (!contextMenu) return;
-    const close = () => setContextMenu(null);
+    const close = () => {
+      ignoreNextTreeScrollRef.current = false;
+      setContextMenu(null);
+    };
+    const closeOnScroll = (event: Event) => {
+      const target = event.target;
+      if (
+        target instanceof Element &&
+        target.closest(".tree-nav") &&
+        ignoreNextTreeScrollRef.current
+      ) {
+        ignoreNextTreeScrollRef.current = false;
+        return;
+      }
+      close();
+    };
     const closeOnEscape = (event: KeyboardEvent) => {
       if (event.key === "Escape") close();
     };
     window.addEventListener("click", close);
     window.addEventListener("resize", close);
-    window.addEventListener("scroll", close, true);
+    window.addEventListener("scroll", closeOnScroll, true);
     window.addEventListener("keydown", closeOnEscape);
     return () => {
       window.removeEventListener("click", close);
       window.removeEventListener("resize", close);
-      window.removeEventListener("scroll", close, true);
+      window.removeEventListener("scroll", closeOnScroll, true);
       window.removeEventListener("keydown", closeOnEscape);
     };
   }, [contextMenu]);
@@ -522,6 +538,7 @@ export function AssemblyTree({ onRequestClose, onImportPcb }: AssemblyTreeProps)
     x: number,
     y: number,
   ) => {
+    ignoreNextTreeScrollRef.current = true;
     setContextMenu({
       part,
       featureId,

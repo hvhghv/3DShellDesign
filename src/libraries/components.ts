@@ -236,6 +236,8 @@ function createFpcDefinition(
 ): ConnectorDefinition {
   const pitchLabel = family.pitch.toFixed(1);
   const width = family.pitch * (positions - 1) + family.housingExtra;
+  const openingWidth = width + 1.2;
+  const openingHeight = family.height + 1.2;
   return {
     id: `fpc-${positions}p-${family.id}`,
     name: `${pitchLabel} mm ${positions}P FPC 端子`,
@@ -249,22 +251,22 @@ function createFpcDefinition(
     },
     panelCutout: {
       shape: "rounded-rectangle",
-      width: width + 1.5,
-      height: family.height + 1.8,
-      cornerRadius: 0.8,
+      width: openingWidth,
+      height: openingHeight,
+      cornerRadius: Math.min(0.8, Math.min(openingWidth, openingHeight) / 4),
     },
     boardAlignment: { heightAboveBoardCenter: family.height / 2 + 0.4 },
     keepoutVolumes: [
       {
         role: "wiring",
-        width: width + 4.5,
-        height: family.height + 5.8,
-        depth: 35,
+        width: width + 6,
+        height: family.height + 5,
+        depth: 30,
       },
     ],
     toleranceRules: {
       xyClearance: 0.3,
-      description: `${pitchLabel} mm ${positions}P FPC 软排线穿出包络，不代替锁扣操作校核`,
+      description: `${pitchLabel} mm ${positions}P FPC 仅表示器件包络与排线出口`,
     },
     metadata: {
       bomName: `${pitchLabel} mm ${positions}-pin FPC connector`,

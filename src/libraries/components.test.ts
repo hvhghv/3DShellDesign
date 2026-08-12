@@ -78,7 +78,8 @@ describe("component library", () => {
         );
       }
     }
-    expect(getConnectorDefinition("fpc-20p-05").panelCutout.width).toBe(15);
+    expect(getConnectorDefinition("fpc-20p-05").panelCutout.width).toBe(14.7);
+    expect(getConnectorDefinition("fpc-20p-05").panelCutout.height).toBeCloseTo(3.4);
   });
 
   it("provides LCDWIKI SPI display modules from the download archive", () => {

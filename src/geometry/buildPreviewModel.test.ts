@@ -1329,6 +1329,55 @@ describe("surface placement preview", () => {
     disposePreviewModel(model);
   });
 
+  it("renders FPC connectors with a dedicated low-overlap preview", () => {
+    const model = buildPreviewModel(
+      {
+        ...DEFAULT_PARAMETERS,
+        connectorPlacements: [
+          {
+            ...DEFAULT_PARAMETERS.connectorPlacements[0],
+            id: "fpc-1",
+            definitionId: "fpc-20p-05",
+            surface: "front",
+            panelId: null,
+            offsetU: 0,
+            offsetV: -3,
+            rotation: 0,
+          },
+        ],
+      },
+      "connector",
+      false,
+      null,
+      null,
+      null,
+      "fpc-1",
+    );
+
+    const group = model.getObjectByName("connector-transform-fpc-1");
+    expect(group).toBeDefined();
+    expect(group?.getObjectByName("fpc-1")).toBeInstanceOf(THREE.Mesh);
+    expect(group?.getObjectByName("fpc-1-latch")).toBeInstanceOf(THREE.Mesh);
+    expect(group?.getObjectByName("fpc-1-slot")).toBeInstanceOf(
+      THREE.LineSegments,
+    );
+    expect(group?.getObjectByName("fpc-1-opening")).toBeInstanceOf(
+      THREE.LineSegments,
+    );
+    expect(group?.getObjectByName("fpc-1-keepout")).toBeInstanceOf(
+      THREE.LineSegments,
+    );
+    expect(
+      group?.children.some(
+        (child) =>
+          child instanceof THREE.LineSegments &&
+          child.name === "" &&
+          child.userData.partId === "connector",
+      ),
+    ).toBe(false);
+    disposePreviewModel(model);
+  });
+
   it("renders LCDWIKI display devices with a visible screen window", () => {
     const model = buildPreviewModel(
       {

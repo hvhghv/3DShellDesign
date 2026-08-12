@@ -453,6 +453,165 @@ function addPreviewOutline(
   return outline;
 }
 
+function isFpcConnectorDefinition(connector: ConnectorDefinition): boolean {
+  return connector.category === "fpc";
+}
+
+function addFpcConnectorPreview(
+  group: THREE.Group,
+  connector: ConnectorDefinition,
+  featureId: string,
+  face: EnclosureFace,
+  connectorSelected: boolean,
+  quarterTurn: boolean,
+  surfaceOutset: number,
+  surfaceU: number,
+  surfaceV: number,
+  origin: readonly [number, number, number],
+  parameters: DesignerParameters,
+  dimensions: EnclosureDimensions,
+  lidY: number,
+  followRemovableFace: boolean,
+): void {
+  const bodyMaterial = standardMaterial(connector.visualGeometry.color, connectorSelected, {
+    metalness: 0.46,
+    roughness: 0.38,
+  });
+  const bodyWidth = quarterTurn
+    ? connector.visualGeometry.height
+    : connector.visualGeometry.width;
+  const bodyHeight = quarterTurn
+    ? connector.visualGeometry.width
+    : connector.visualGeometry.height;
+  const bodyGeometry = createFaceBoxGeometry(
+    bodyWidth,
+    bodyHeight,
+    connector.visualGeometry.depth,
+    face,
+  );
+  const bodyPosition = relativePosition(
+    getPreviewFacePosition(
+      face,
+      surfaceU,
+      surfaceV,
+      surfaceOutset - connector.visualGeometry.depth / 2 + 0.45,
+      parameters,
+      dimensions,
+      lidY,
+      followRemovableFace,
+    ),
+    origin,
+  );
+  const body = addMesh(
+    group,
+    bodyGeometry,
+    bodyMaterial,
+    "connector",
+    bodyPosition,
+    false,
+  );
+  body.name = featureId;
+  body.userData.featureId = featureId;
+
+  const latchWidth = Math.max(2.2, Math.min(bodyWidth - 2, bodyWidth * 0.35));
+  const latchHeight = Math.max(0.9, Math.min(bodyHeight - 0.4, bodyHeight * 0.42));
+  const latchGeometry = createFaceBoxGeometry(
+    latchWidth,
+    latchHeight,
+    Math.max(0.8, connector.visualGeometry.depth * 0.26),
+    face,
+  );
+  const latch = addMesh(
+    group,
+    latchGeometry,
+    standardMaterial(0xb8ac92, connectorSelected, {
+      metalness: 0.3,
+      roughness: 0.46,
+    }),
+    "connector",
+    relativePosition(
+      getPreviewFacePosition(
+        face,
+        surfaceU,
+        surfaceV,
+        surfaceOutset + connector.visualGeometry.depth * 0.1,
+        parameters,
+        dimensions,
+        lidY,
+        followRemovableFace,
+      ),
+      origin,
+    ),
+    false,
+  );
+  latch.name = `${featureId}-latch`;
+  latch.userData.featureId = featureId;
+
+  const slotOffset = connector.visualGeometry.depth * 0.16;
+  const slotGeometry = createFacePlaneGeometry(
+    Math.max(1.4, bodyWidth - 1.4),
+    Math.max(0.6, bodyHeight - 0.35),
+    face,
+  );
+  const slot = addPreviewOutline(
+    group,
+    slotGeometry,
+    connectorSelected ? 0x176b45 : 0x54635b,
+    connectorSelected ? 0.82 : 0.5,
+    "connector",
+    relativePosition(
+      getPreviewFacePosition(
+        face,
+        surfaceU,
+        surfaceV,
+        surfaceOutset + slotOffset,
+        parameters,
+        dimensions,
+        lidY,
+        followRemovableFace,
+      ),
+      origin,
+    ),
+  );
+  slot.name = `${featureId}-slot`;
+  slot.userData.featureId = featureId;
+  slot.userData.featureKind = "connector";
+
+  if (connectorSelected) {
+    const keepout = connector.keepoutVolumes[0];
+    if (keepout) {
+      const keepoutPosition = relativePosition(
+        getPreviewFacePosition(
+          face,
+          surfaceU,
+          surfaceV,
+          surfaceOutset + keepout.depth / 2,
+          parameters,
+          dimensions,
+          lidY,
+          followRemovableFace,
+        ),
+        origin,
+      );
+      const keepoutOutline = addPreviewOutline(
+        group,
+        createFaceBoxGeometry(
+          quarterTurn ? keepout.height : keepout.width,
+          quarterTurn ? keepout.width : keepout.height,
+          keepout.depth,
+          face,
+        ),
+        0xd39a2f,
+        0.7,
+        "connector",
+        keepoutPosition,
+      );
+      keepoutOutline.name = `${featureId}-keepout`;
+      keepoutOutline.renderOrder = 5;
+    }
+  }
+}
+
 function addCylinder(
   group: THREE.Group,
   radius: number,
@@ -3212,6 +3371,23 @@ export function buildPreviewModel(
         placement.surface !== "panel" && isFaceRemovable(face),
         placement.displayMountingType,
         connectorSelected,
+      );
+    } else if (isFpcConnectorDefinition(connector)) {
+      addFpcConnectorPreview(
+        connectorGroup,
+        connector,
+        placement.id,
+        face,
+        connectorSelected,
+        quarterTurn,
+        surfaceOutset,
+        surfaceU,
+        surfaceV,
+        connectorPosition,
+        parameters,
+        dimensions,
+        lidY,
+        placement.surface !== "panel" && isFaceRemovable(face),
       );
     } else {
       const portMaterial = standardMaterial(

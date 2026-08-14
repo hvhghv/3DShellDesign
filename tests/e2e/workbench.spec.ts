@@ -1008,12 +1008,25 @@ test("device pickers create only the selected connector and antenna @smoke", asy
   await page.getByRole("button", { name: "添加接口或器件" }).click();
   await expect(connectorPicker).toBeVisible();
   await expect(connectorPicker.getByText("显示屏")).toBeVisible();
+  const displayGroup = connectorPicker
+    .locator(".device-picker-group")
+    .filter({ hasText: "显示屏" });
+  await expect(displayGroup.locator("h3")).toContainText("项");
+  await expect(displayGroup.locator(".device-picker-item").first()).toBeVisible();
+  await connectorPicker
+    .getByRole("searchbox", { name: "搜索添加接口/器件" })
+    .fill("0.91寸 OLED");
+  await expect(connectorPicker.locator(".device-picker-item")).toHaveCount(2);
   await expect(
-    connectorPicker
-      .locator(".device-picker-group")
-      .filter({ hasText: "显示屏" })
-      .locator(".device-picker-item"),
-  ).toHaveCount(7);
+    connectorPicker.getByText("0.91寸 OLED 显示模块 128×32 4Pin", {
+      exact: true,
+    }),
+  ).toBeVisible();
+  await expect(
+    connectorPicker.getByText("0.91寸 OLED 裸屏 128×32 焊接 14Pin", {
+      exact: true,
+    }),
+  ).toBeVisible();
   await connectorPicker
     .getByRole("searchbox", { name: "搜索添加接口/器件" })
     .fill("MSP4021");
@@ -1032,8 +1045,8 @@ test("device pickers create only the selected connector and antenna @smoke", asy
     name: "接口检查器",
   });
   await expect(displayInspector).toContainText("显示屏参数");
-  await expect(displayInspector).toContainText("4.0寸 SPI 屏");
-  await expect(displayInspector).toContainText("320x480 · 电阻触摸");
+  await expect(displayInspector).toContainText("4.0寸 TFT");
+  await expect(displayInspector).toContainText("320x480 · SPI · 电阻触摸");
   await expect(displayInspector).toContainText("固定方式");
 
   await page.getByRole("button", { name: "添加天线" }).click();

@@ -61,6 +61,7 @@ import {
   getAntennaDefinition,
   getConnectorDefinition,
   getFastenerDefinition,
+  hasThroughPanelCutout,
 } from "../libraries/components";
 
 const EDGE_COLOR = 0x333936;
@@ -1282,6 +1283,156 @@ function addLcdwikiDisplayPreview(
 
   const frontSurfaceOffset = surfaceOutset + 0.5;
   const totalDepth = connector.visualGeometry.depth;
+  const displayPackageStyle = spec.packageStyle ?? "pcb-module";
+  const displayOffsetU = spec.displayOffsetU ?? 0;
+  const displayOffsetV = spec.displayOffsetV ?? 0;
+  const displayActiveColor =
+    spec.activeColor ?? (spec.panelKind === "oled" ? "#f0d34a" : "#1f6f91");
+
+  if (
+    displayPackageStyle === "bare-oled" ||
+    displayPackageStyle === "oled-module"
+  ) {
+    const panelWidth = spec.panelWidth ?? spec.pcbWidth;
+    const panelHeight = spec.panelHeight ?? spec.pcbHeight;
+    const glassDepth = Math.max(0.45, Math.min(1.2, totalDepth));
+    const glassCenterOffset = frontSurfaceOffset - glassDepth / 2;
+
+    if (displayPackageStyle === "oled-module") {
+      const pcbThickness = Math.max(0.8, Math.min(1.25, totalDepth - 0.55));
+      const pcbCenterOffset =
+        frontSurfaceOffset - totalDepth + pcbThickness / 2;
+      const pcbFrontOffset = pcbCenterOffset + pcbThickness / 2 + 0.04;
+      addDisplayMesh(
+        "display-pcb",
+        faceBox(spec.pcbWidth, spec.pcbHeight, pcbThickness),
+        standardMaterial(0x155c78, selected, {
+          metalness: 0.06,
+          roughness: 0.55,
+        }),
+        0,
+        0,
+        pcbCenterOffset,
+      );
+      addDisplayMesh(
+        "display-oled-glass",
+        faceBox(panelWidth, panelHeight, glassDepth),
+        standardMaterial(0x111716, selected, {
+          metalness: 0.18,
+          roughness: 0.26,
+        }),
+        displayOffsetU,
+        displayOffsetV,
+        glassCenterOffset,
+      );
+
+      const padPitch = Math.min(2.15, (spec.pcbHeight - 2.4) / Math.max(1, spec.headerPins - 1));
+      const padStripU = -spec.pcbWidth / 2 + 5.1;
+      const padStartV = -padPitch * (spec.headerPins - 1) / 2;
+      for (let index = 0; index < spec.headerPins; index += 1) {
+        addDisplayMesh(
+          `display-side-pad-${index + 1}`,
+          faceBox(1.35, 0.86, 0.14),
+          standardMaterial(0xd7b24a, selected, {
+            metalness: 0.74,
+            roughness: 0.24,
+          }),
+          padStripU,
+          padStartV + index * padPitch,
+          pcbFrontOffset + 0.08,
+          false,
+        );
+      }
+    } else {
+      addDisplayMesh(
+        "display-oled-glass",
+        faceBox(panelWidth, panelHeight, glassDepth),
+        standardMaterial(0x101615, selected, {
+          metalness: 0.16,
+          roughness: 0.24,
+        }),
+        0,
+        0,
+        glassCenterOffset,
+      );
+
+      const tailLength = spec.fpcTailLength ?? 10;
+      const tailWidth = spec.fpcWidth ?? Math.min(9, panelHeight);
+      const tailCenterU = -panelWidth / 2 - tailLength / 2 + 0.25;
+      const tailCenterV = displayOffsetV;
+      addDisplayMesh(
+        "display-flex-tail",
+        faceBox(tailLength, tailWidth, 0.14),
+        standardMaterial(0xc38a2f, selected, {
+          metalness: 0.22,
+          roughness: 0.42,
+        }),
+        tailCenterU,
+        tailCenterV,
+        frontSurfaceOffset - 0.04,
+      );
+      addDisplayMesh(
+        "display-flex-stiffener",
+        faceBox(1.7, tailWidth + 0.3, 0.18),
+        standardMaterial(0xe7d57d, selected, {
+          metalness: 0.34,
+          roughness: 0.36,
+        }),
+        tailCenterU - tailLength / 2 + 0.85,
+        tailCenterV,
+        frontSurfaceOffset + 0.03,
+      );
+
+      const padPitch = Math.min(
+        0.65,
+        (tailWidth - 1.2) / Math.max(1, spec.headerPins - 1),
+      );
+      const padHeight = Math.max(0.24, Math.min(0.38, padPitch * 0.62));
+      const padStartV = -padPitch * (spec.headerPins - 1) / 2;
+      const padU = tailCenterU - tailLength / 2 + 0.72;
+      for (let index = 0; index < spec.headerPins; index += 1) {
+        addDisplayMesh(
+          `display-flex-pad-${index + 1}`,
+          faceBox(0.76, padHeight, 0.08),
+          standardMaterial(0xf0d878, selected, {
+            metalness: 0.72,
+            roughness: 0.22,
+          }),
+          padU,
+          padStartV + index * padPitch,
+          frontSurfaceOffset + 0.08,
+          false,
+        );
+      }
+    }
+
+    addDisplayMesh(
+      "display-active-area",
+      facePlane(spec.activeAreaWidth, spec.activeAreaHeight),
+      standardMaterial(displayActiveColor, selected, {
+        metalness: 0.04,
+        roughness: 0.16,
+        transparent: true,
+        opacity: 0.9,
+        depthWrite: false,
+      }),
+      displayOffsetU,
+      displayOffsetV,
+      frontSurfaceOffset + 0.1,
+      false,
+    ).renderOrder = 8;
+    addDisplayOutline(
+      "display-window-outline",
+      facePlane(spec.windowWidth, spec.windowHeight),
+      0xf0d34a,
+      0.72,
+      displayOffsetU,
+      displayOffsetV,
+      frontSurfaceOffset + 0.12,
+    );
+    return;
+  }
+
   const pcbThickness = 1.6;
   const pcbCenterOffset =
     frontSurfaceOffset - totalDepth + pcbThickness / 2;
@@ -1352,7 +1503,7 @@ function addLcdwikiDisplayPreview(
   addDisplayMesh(
     "display-active-area",
     facePlane(spec.activeAreaWidth, spec.activeAreaHeight),
-    standardMaterial(0x1f6f91, selected, {
+    standardMaterial(displayActiveColor, selected, {
       metalness: 0.04,
       roughness: 0.16,
       transparent: true,
@@ -3330,11 +3481,14 @@ export function buildPreviewModel(
     const connectorSelected =
       selectedPart === "connector" &&
       (selectedFeatureId === null || selectedFeatureId === placement.id);
+    const throughPanelCutout = hasThroughPanelCutout(connector);
     const connectorPosition = getPreviewFacePosition(
       face,
       surfaceU,
       surfaceV,
-      surfaceOutset - connector.visualGeometry.depth / 2 + 0.5,
+      throughPanelCutout
+        ? surfaceOutset - connector.visualGeometry.depth / 2 + 0.5
+        : surfaceOutset + connector.visualGeometry.depth / 2 + 0.08,
       parameters,
       dimensions,
       lidY,
@@ -3394,8 +3548,18 @@ export function buildPreviewModel(
         connector.visualGeometry.color,
         connectorSelected,
         {
-          metalness: 0.78,
-          roughness: 0.22,
+          metalness:
+            connector.category === "keypad"
+              ? 0.05
+              : connector.category === "indicator"
+                ? 0.58
+                : 0.78,
+          roughness:
+            connector.category === "keypad"
+              ? 0.72
+              : connector.category === "indicator"
+                ? 0.28
+                : 0.22,
         },
       );
       const visualGeometry =
@@ -3425,6 +3589,35 @@ export function buildPreviewModel(
       );
       connectorMesh.name = placement.id;
       connectorMesh.userData.featureId = placement.id;
+      if (!throughPanelCutout) {
+        const hitbox = addMesh(
+          connectorGroup,
+          createFaceBoxGeometry(
+            quarterTurn
+              ? connector.visualGeometry.height + 1.2
+              : connector.visualGeometry.width + 1.2,
+            quarterTurn
+              ? connector.visualGeometry.width + 1.2
+              : connector.visualGeometry.height + 1.2,
+            Math.max(2, connector.visualGeometry.depth + 1),
+            face,
+          ),
+          new THREE.MeshBasicMaterial({
+            color: 0xffffff,
+            transparent: true,
+            opacity: 0.001,
+            depthWrite: false,
+            depthTest: false,
+          }),
+          "connector",
+          [0, 0, 0],
+          false,
+          undefined,
+          false,
+        );
+        hitbox.name = `${placement.id}-hitbox`;
+        hitbox.userData.featureId = placement.id;
+      }
     }
 
     const openingGeometry =

@@ -78,6 +78,26 @@ describe("panel DXF exporter", () => {
     expect(dxf.match(/\r\nCIRCLE\r\n/g)).toHaveLength(5);
   });
 
+  it("omits surface-mounted keypad footprints from the CUT layer", () => {
+    const connector = DEFAULT_PARAMETERS.connectorPlacements[0];
+    const dxf = createPanelDxf({
+      ...DEFAULT_PARAMETERS,
+      connectorPlacements: [
+        {
+          ...connector,
+          definitionId: "membrane-switch-1key",
+          surface: "panel",
+          panelId: "panel-1",
+          cutoutWidth: 20,
+          cutoutHeight: 23,
+        },
+      ],
+    });
+
+    expect(dxf.match(/\r\nLWPOLYLINE\r\n/g)).toHaveLength(1);
+    expect(dxf.match(/\r\nCIRCLE\r\n/g)).toHaveLength(4);
+  });
+
   it("includes physical antenna cutouts mounted to the panel", () => {
     const dxf = createPanelDxf({
       ...DEFAULT_PARAMETERS,

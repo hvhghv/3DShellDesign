@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import * as THREE from "three";
-import { DEFAULT_PARAMETERS } from "../domain/enclosure";
+import { DEFAULT_PARAMETERS, deriveEnclosureDimensions } from "../domain/enclosure";
 import type { MagnetSupportType, SelectablePart, StepPreview } from "../domain/model";
 import { PARAMETRIC_PCB_FEATURE_ID } from "../domain/pcbMounting";
 import { buildPreviewModel, disposePreviewModel } from "./buildPreviewModel";
@@ -1329,6 +1329,43 @@ describe("surface placement preview", () => {
     disposePreviewModel(model);
   });
 
+  it("places surface-mounted keypad previews outside the face with a hit target", () => {
+    const model = buildPreviewModel(
+      {
+        ...DEFAULT_PARAMETERS,
+        connectorPlacements: [
+          {
+            ...DEFAULT_PARAMETERS.connectorPlacements[0],
+            id: "membrane-1",
+            definitionId: "membrane-switch-1key",
+            surface: "front",
+            panelId: null,
+            offsetU: 0,
+            offsetV: 0,
+            rotation: 0,
+            cutoutWidth: 20,
+            cutoutHeight: 23,
+          },
+        ],
+      },
+      "connector",
+      false,
+      null,
+      null,
+      null,
+      "membrane-1",
+    );
+
+    const group = model.getObjectByName("connector-transform-membrane-1");
+    const hitbox = group?.getObjectByName("membrane-1-hitbox");
+    const dimensions = deriveEnclosureDimensions(DEFAULT_PARAMETERS);
+    expect(group).toBeDefined();
+    expect(group?.position.z).toBeGreaterThan(dimensions.outsideWidth / 2);
+    expect(hitbox).toBeInstanceOf(THREE.Mesh);
+    expect(hitbox?.userData.featureId).toBe("membrane-1");
+    disposePreviewModel(model);
+  });
+
   it("renders FPC connectors with a dedicated low-overlap preview", () => {
     const model = buildPreviewModel(
       {
@@ -1436,6 +1473,56 @@ describe("surface placement preview", () => {
     expect((mountHole as THREE.Object3D).position.y).toBeLessThan(
       (activeArea as THREE.Object3D).position.y,
     );
+    disposePreviewModel(model);
+  });
+
+  it("renders bare OLED display devices with a flex tail and solder pads", () => {
+    const model = buildPreviewModel(
+      {
+        ...DEFAULT_PARAMETERS,
+        connectorPlacements: [
+          {
+            id: "oled-1",
+            definitionId: "generic-oled-091-128x32-bare-solder-14p",
+            surface: "top",
+            panelId: null,
+            offsetU: 0,
+            offsetV: 0,
+            rotation: 0,
+            cutoutWidth: 25.08,
+            cutoutHeight: 8.28,
+            displayMountingType: "screw",
+          },
+        ],
+      },
+      "connector",
+      false,
+      null,
+      null,
+      null,
+      "oled-1",
+    );
+
+    const group = model.getObjectByName("connector-transform-oled-1");
+    expect(group).toBeDefined();
+    expect(group?.getObjectByName("oled-1-display-oled-glass")).toBeInstanceOf(
+      THREE.Mesh,
+    );
+    expect(group?.getObjectByName("oled-1-display-active-area")).toBeInstanceOf(
+      THREE.Mesh,
+    );
+    expect(group?.getObjectByName("oled-1-display-flex-tail")).toBeInstanceOf(
+      THREE.Mesh,
+    );
+    expect(group?.getObjectByName("oled-1-display-flex-pad-14")).toBeInstanceOf(
+      THREE.Mesh,
+    );
+    expect(group?.getObjectByName("oled-1-display-window-outline")).toBeInstanceOf(
+      THREE.LineSegments,
+    );
+    expect(group?.getObjectByName("oled-1-display-header-pin-1")).toBeUndefined();
+    expect(group?.getObjectByName("oled-1-display-mount-hole-1")).toBeUndefined();
+    expect(group?.getObjectByName("oled-1-display-screw-1")).toBeUndefined();
     disposePreviewModel(model);
   });
 

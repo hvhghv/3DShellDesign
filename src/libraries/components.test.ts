@@ -5,10 +5,15 @@ import {
   FASTENER_DEFINITIONS,
   FPC_CONNECTOR_DEFINITIONS,
   LCDWIKI_DISPLAY_DEFINITIONS,
+  MEMBRANE_SWITCH_DEFINITIONS,
+  METAL_POWER_BUTTON_DEFINITIONS,
+  OLED_DISPLAY_DEFINITIONS,
   TERMINAL_CONNECTOR_DEFINITIONS,
+  WIRED_LED_INDICATOR_DEFINITIONS,
   getAntennaDefinition,
   getConnectorDefinition,
   getFastenerDefinition,
+  hasThroughPanelCutout,
 } from "./components";
 
 describe("component library", () => {
@@ -24,6 +29,9 @@ describe("component library", () => {
         "terminal",
         "fpc",
         "display",
+        "keypad",
+        "switch",
+        "indicator",
       ]),
     );
     for (const definition of CONNECTOR_DEFINITIONS) {
@@ -111,6 +119,102 @@ describe("component library", () => {
         }),
       }),
     );
+  });
+
+  it("provides generic OLED display devices from screenshot specs", () => {
+    expect(OLED_DISPLAY_DEFINITIONS).toHaveLength(2);
+    expect(OLED_DISPLAY_DEFINITIONS.map((definition) => definition.id)).toEqual([
+      "generic-oled-091-128x32-module-4p",
+      "generic-oled-091-128x32-bare-solder-14p",
+    ]);
+    expect(
+      OLED_DISPLAY_DEFINITIONS.map(
+        (definition) => definition.displaySpec?.source,
+      ),
+    ).toEqual(Array(2).fill("catalog-screenshot"));
+    expect(getConnectorDefinition("generic-oled-091-128x32-module-4p")).toEqual(
+      expect.objectContaining({
+        category: "display",
+        panelCutout: expect.objectContaining({
+          width: 25.08,
+          height: 8.28,
+        }),
+        displaySpec: expect.objectContaining({
+          packageStyle: "oled-module",
+          connectorStyle: "side-pads",
+          interfaceMode: "I2C",
+          pcbWidth: 38,
+          pcbHeight: 12,
+          panelWidth: 30,
+          panelHeight: 11.5,
+          activeAreaWidth: 22.38,
+          activeAreaHeight: 5.58,
+          headerPins: 4,
+        }),
+      }),
+    );
+    expect(getConnectorDefinition("generic-oled-091-128x32-bare-solder-14p")).toEqual(
+      expect.objectContaining({
+        category: "display",
+        displaySpec: expect.objectContaining({
+          packageStyle: "bare-oled",
+          connectorStyle: "fpc-solder",
+          pcbWidth: 30,
+          pcbHeight: 11.5,
+          fpcWidth: 9,
+          fpcTailLength: 10.54,
+          headerPins: 14,
+        }),
+      }),
+    );
+  });
+
+  it("provides panel controls and indicators from screenshot specs", () => {
+    expect(MEMBRANE_SWITCH_DEFINITIONS).toHaveLength(4);
+    expect(MEMBRANE_SWITCH_DEFINITIONS.map((definition) => definition.id)).toEqual([
+      "membrane-switch-1key",
+      "membrane-switch-2key",
+      "membrane-switch-3key",
+      "membrane-switch-4key",
+    ]);
+    expect(getConnectorDefinition("membrane-switch-1key")).toEqual(
+      expect.objectContaining({
+        category: "keypad",
+        panelCutout: expect.objectContaining({
+          width: 20,
+          height: 23,
+          mode: "surface",
+        }),
+      }),
+    );
+    expect(
+      hasThroughPanelCutout(getConnectorDefinition("membrane-switch-1key")),
+    ).toBe(false);
+
+    expect(METAL_POWER_BUTTON_DEFINITIONS.map((definition) => definition.id)).toEqual([
+      "metal-power-button-12mm",
+      "metal-power-button-16mm",
+      "metal-power-button-19mm",
+      "metal-power-button-22mm",
+    ]);
+    expect(
+      METAL_POWER_BUTTON_DEFINITIONS.map(
+        (definition) => definition.panelCutout.width,
+      ),
+    ).toEqual([12.4, 16.4, 19.4, 22.4]);
+
+    expect(WIRED_LED_INDICATOR_DEFINITIONS.map((definition) => definition.id)).toEqual([
+      "wired-metal-led-3mm",
+      "wired-metal-led-5mm",
+    ]);
+    expect(
+      WIRED_LED_INDICATOR_DEFINITIONS.map(
+        (definition) => definition.panelCutout.width,
+      ),
+    ).toEqual([6.3, 8.3]);
+    expect(
+      hasThroughPanelCutout(getConnectorDefinition("wired-metal-led-3mm")),
+    ).toBe(true);
   });
 
   it("provides screw, heat-set insert and hex nut closure recipes", () => {

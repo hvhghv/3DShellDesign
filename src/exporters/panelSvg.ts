@@ -15,6 +15,7 @@ import { getPanelPlacement, getRotatedCutoutSize } from "../domain/placements";
 import {
   getAntennaDefinition,
   getConnectorDefinition,
+  hasThroughPanelCutout,
 } from "../libraries/components";
 
 function format(value: number): string {
@@ -83,15 +84,20 @@ export function createPanelSvg(
       (placement) =>
         placement.surface === "panel" && placement.panelId === panel.id,
     )
-    .map((placement) => {
+    .flatMap((placement) => {
       const definition = getConnectorDefinition(placement.definitionId);
+      if (!hasThroughPanelCutout(definition)) return [];
       const [cutoutWidth, cutoutHeight] = getRotatedCutoutSize(placement);
       const centerX = placement.offsetU + width / 2;
       const centerY = height / 2 - placement.offsetV;
       if (definition.panelCutout.shape === "circle") {
-        return `  <circle cx="${format(centerX)}" cy="${format(centerY)}" r="${format(cutoutWidth / 2)}" fill="none" stroke="#000000" stroke-width="0.1" vector-effect="non-scaling-stroke"/>`;
+        return [
+          `  <circle cx="${format(centerX)}" cy="${format(centerY)}" r="${format(cutoutWidth / 2)}" fill="none" stroke="#000000" stroke-width="0.1" vector-effect="non-scaling-stroke"/>`,
+        ];
       }
-      return `  <rect x="${format(centerX - cutoutWidth / 2)}" y="${format(centerY - cutoutHeight / 2)}" width="${format(cutoutWidth)}" height="${format(cutoutHeight)}" rx="${format(Math.min(definition.panelCutout.cornerRadius, cutoutWidth / 2, cutoutHeight / 2))}" fill="none" stroke="#000000" stroke-width="0.1" vector-effect="non-scaling-stroke"/>`;
+      return [
+        `  <rect x="${format(centerX - cutoutWidth / 2)}" y="${format(centerY - cutoutHeight / 2)}" width="${format(cutoutWidth)}" height="${format(cutoutHeight)}" rx="${format(Math.min(definition.panelCutout.cornerRadius, cutoutWidth / 2, cutoutHeight / 2))}" fill="none" stroke="#000000" stroke-width="0.1" vector-effect="non-scaling-stroke"/>`,
+      ];
     });
   const antennaCutouts = parameters.antennaPlacements
     .filter(

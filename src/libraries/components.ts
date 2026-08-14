@@ -1,9 +1,20 @@
 export type CutoutShape = "rounded-rectangle" | "circle";
+export type ConnectorCategory =
+  | "usb"
+  | "power"
+  | "network"
+  | "terminal"
+  | "fpc"
+  | "display"
+  | "keypad"
+  | "switch"
+  | "indicator";
+export type PanelCutoutMode = "through" | "surface";
 
 export interface ConnectorDefinition {
   id: string;
   name: string;
-  category: "usb" | "power" | "network" | "terminal" | "fpc" | "display";
+  category: ConnectorCategory;
   visualGeometry: {
     shape: CutoutShape;
     width: number;
@@ -16,6 +27,7 @@ export interface ConnectorDefinition {
     width: number;
     height: number;
     cornerRadius: number;
+    mode?: PanelCutoutMode;
   };
   boardAlignment: {
     heightAboveBoardCenter: number;
@@ -39,24 +51,42 @@ export interface ConnectorDefinition {
     positions: number;
   };
   displaySpec?: {
-    source: "LCDWIKI";
+    source: "LCDWIKI" | "catalog-screenshot";
     diagonalInch: number;
     moduleSku: string;
     drawingSku: string;
     resolution: string;
     driveIc: string;
+    interfaceMode?: string;
+    panelKind?: "tft" | "oled";
+    packageStyle?: "pcb-module" | "oled-module" | "bare-oled";
+    connectorStyle?: "pin-header" | "side-pads" | "fpc-solder";
     touch: "none" | "resistive";
     pcbWidth: number;
     pcbHeight: number;
+    panelWidth?: number;
+    panelHeight?: number;
     windowWidth: number;
     windowHeight: number;
     activeAreaWidth: number;
     activeAreaHeight: number;
+    displayOffsetU?: number;
+    displayOffsetV?: number;
     totalThicknessWithoutHeader: number;
     totalThicknessWithHeader: number;
     headerPins: number;
+    fpcWidth?: number;
+    fpcTailLength?: number;
+    activeColor?: string;
+    hasMountingHoles?: boolean;
     sourceDrawing: string;
   };
+}
+
+export function hasThroughPanelCutout(
+  definition: Pick<ConnectorDefinition, "panelCutout">,
+): boolean {
+  return definition.panelCutout.mode !== "surface";
 }
 
 export type AntennaPlacement = "rear-bulkhead" | "inner-rear-wall" | "pcb-rear-edge";
@@ -485,6 +515,10 @@ function createLcdwikiDisplayDefinition(spec: LcdwikiDisplaySpec): ConnectorDefi
       drawingSku: spec.drawingSku,
       resolution: spec.resolution,
       driveIc: spec.driveIc,
+      interfaceMode: "SPI",
+      panelKind: "tft",
+      packageStyle: "pcb-module",
+      connectorStyle: "pin-header",
       touch: spec.touch,
       pcbWidth: spec.pcbWidth,
       pcbHeight: spec.pcbHeight,
@@ -495,6 +529,7 @@ function createLcdwikiDisplayDefinition(spec: LcdwikiDisplaySpec): ConnectorDefi
       totalThicknessWithoutHeader: spec.totalThicknessWithoutHeader,
       totalThicknessWithHeader: spec.totalThicknessWithHeader,
       headerPins: spec.headerPins,
+      hasMountingHoles: true,
       sourceDrawing: spec.sourceDrawing,
     },
   };
@@ -502,6 +537,357 @@ function createLcdwikiDisplayDefinition(spec: LcdwikiDisplaySpec): ConnectorDefi
 
 export const LCDWIKI_DISPLAY_DEFINITIONS: ConnectorDefinition[] =
   LCDWIKI_DISPLAY_SPECS.map((spec) => createLcdwikiDisplayDefinition(spec));
+
+interface OledDisplaySpec {
+  id: string;
+  name: string;
+  diagonalInch: number;
+  moduleSku: string;
+  drawingSku: string;
+  resolution: string;
+  driveIc: string;
+  interfaceMode: string;
+  packageStyle: "oled-module" | "bare-oled";
+  connectorStyle: "side-pads" | "fpc-solder";
+  pcbWidth: number;
+  pcbHeight: number;
+  panelWidth: number;
+  panelHeight: number;
+  windowWidth: number;
+  windowHeight: number;
+  activeAreaWidth: number;
+  activeAreaHeight: number;
+  displayOffsetU: number;
+  displayOffsetV: number;
+  totalThicknessWithoutHeader: number;
+  totalThicknessWithHeader: number;
+  headerPins: number;
+  fpcWidth?: number;
+  fpcTailLength?: number;
+  activeColor: string;
+  sourceDrawing: string;
+  notes: string;
+}
+
+const OLED_DISPLAY_SPECS: readonly OledDisplaySpec[] = [
+  {
+    id: "generic-oled-091-128x32-module-4p",
+    name: "0.91寸 OLED 显示模块 128×32 4Pin",
+    diagonalInch: 0.91,
+    moduleSku: "OLED-091-MOD-4P",
+    drawingSku: "0.91-12832-4P",
+    resolution: "128x32",
+    driveIc: "SSD1306",
+    interfaceMode: "I2C",
+    packageStyle: "oled-module",
+    connectorStyle: "side-pads",
+    pcbWidth: 38,
+    pcbHeight: 12,
+    panelWidth: 30,
+    panelHeight: 11.5,
+    windowWidth: 24.38,
+    windowHeight: 7.58,
+    activeAreaWidth: 22.38,
+    activeAreaHeight: 5.58,
+    displayOffsetU: 3.6,
+    displayOffsetV: 0,
+    totalThicknessWithoutHeader: 2.95,
+    totalThicknessWithHeader: 2.95,
+    headerPins: 4,
+    activeColor: "#f0d34a",
+    sourceDrawing: "截图规格标注：0.91 OLED 128×32 模块 4Pin",
+    notes:
+      "截图规格标注 PCB 38.00 × 12.00 mm、面板 30.00 × 11.50 mm、AA 22.38 × 5.58 mm、总厚 2.95 mm max；4Pin 焊盘在模块短边，具体针序和焊盘位置需按实物复核。",
+  },
+  {
+    id: "generic-oled-091-128x32-bare-solder-14p",
+    name: "0.91寸 OLED 裸屏 128×32 焊接 14Pin",
+    diagonalInch: 0.91,
+    moduleSku: "OLED-091-BARE-14P",
+    drawingSku: "0.91-12832-SOLDER-14P",
+    resolution: "128x32",
+    driveIc: "SSD1306",
+    interfaceMode: "I2C",
+    packageStyle: "bare-oled",
+    connectorStyle: "fpc-solder",
+    pcbWidth: 30,
+    pcbHeight: 11.5,
+    panelWidth: 30,
+    panelHeight: 11.5,
+    windowWidth: 24.38,
+    windowHeight: 7.58,
+    activeAreaWidth: 22.38,
+    activeAreaHeight: 5.58,
+    displayOffsetU: 0,
+    displayOffsetV: 0,
+    totalThicknessWithoutHeader: 1.45,
+    totalThicknessWithHeader: 1.45,
+    headerPins: 14,
+    fpcWidth: 9,
+    fpcTailLength: 10.54,
+    activeColor: "#f0d34a",
+    sourceDrawing: "截图规格标注：0.91 OLED 128×32 焊接 14Pin",
+    notes:
+      "截图规格标注面板 30.00 × 11.50 mm、VA 24.38 × 7.58 mm、AA 22.38 × 5.58 mm、焊接排线 14Pin；柔性排线与补强片轮廓需按实物装配方向复核。",
+  },
+];
+
+function createOledDisplayDefinition(spec: OledDisplaySpec): ConnectorDefinition {
+  const cutoutWidth = Number((spec.windowWidth + 0.7).toFixed(2));
+  const cutoutHeight = Number((spec.windowHeight + 0.7).toFixed(2));
+  const packageLabel =
+    spec.packageStyle === "bare-oled" ? "裸屏焊接" : "模块焊盘";
+  return {
+    id: spec.id,
+    name: spec.name,
+    category: "display",
+    visualGeometry: {
+      shape: "rounded-rectangle",
+      width: spec.pcbWidth,
+      height: spec.pcbHeight,
+      depth: spec.totalThicknessWithoutHeader,
+      color: spec.packageStyle === "bare-oled" ? "#111615" : "#155c78",
+    },
+    panelCutout: {
+      shape: "rounded-rectangle",
+      width: cutoutWidth,
+      height: cutoutHeight,
+      cornerRadius: 0.45,
+    },
+    boardAlignment: {
+      heightAboveBoardCenter: spec.totalThicknessWithoutHeader / 2,
+    },
+    keepoutVolumes: [
+      {
+        role: "wiring",
+        width: spec.pcbWidth + (spec.fpcTailLength ?? 0) + 6,
+        height: Math.max(spec.pcbHeight, spec.fpcWidth ?? 0) + 6,
+        depth: Math.max(18, spec.totalThicknessWithHeader + 10),
+      },
+    ],
+    toleranceRules: {
+      xyClearance: 0.35,
+      description: `0.91寸 OLED ${packageLabel}窗口，开窗按 VA ${spec.windowWidth.toFixed(2)} × ${spec.windowHeight.toFixed(2)} mm 加余量`,
+    },
+    metadata: {
+      bomName: `${spec.diagonalInch.toFixed(2)} inch OLED display ${spec.resolution} ${spec.connectorStyle}`,
+      notes: spec.notes,
+    },
+    displaySpec: {
+      source: "catalog-screenshot",
+      diagonalInch: spec.diagonalInch,
+      moduleSku: spec.moduleSku,
+      drawingSku: spec.drawingSku,
+      resolution: spec.resolution,
+      driveIc: spec.driveIc,
+      interfaceMode: spec.interfaceMode,
+      panelKind: "oled",
+      packageStyle: spec.packageStyle,
+      connectorStyle: spec.connectorStyle,
+      touch: "none",
+      pcbWidth: spec.pcbWidth,
+      pcbHeight: spec.pcbHeight,
+      panelWidth: spec.panelWidth,
+      panelHeight: spec.panelHeight,
+      windowWidth: spec.windowWidth,
+      windowHeight: spec.windowHeight,
+      activeAreaWidth: spec.activeAreaWidth,
+      activeAreaHeight: spec.activeAreaHeight,
+      displayOffsetU: spec.displayOffsetU,
+      displayOffsetV: spec.displayOffsetV,
+      totalThicknessWithoutHeader: spec.totalThicknessWithoutHeader,
+      totalThicknessWithHeader: spec.totalThicknessWithHeader,
+      headerPins: spec.headerPins,
+      fpcWidth: spec.fpcWidth,
+      fpcTailLength: spec.fpcTailLength,
+      activeColor: spec.activeColor,
+      hasMountingHoles: false,
+      sourceDrawing: spec.sourceDrawing,
+    },
+  };
+}
+
+export const OLED_DISPLAY_DEFINITIONS: ConnectorDefinition[] =
+  OLED_DISPLAY_SPECS.map((spec) => createOledDisplayDefinition(spec));
+
+interface MembraneSwitchSpec {
+  keys: 1 | 2 | 3 | 4;
+  model: string;
+  width: number;
+  height: number;
+  thickness: number;
+}
+
+const MEMBRANE_SWITCH_SPECS: readonly MembraneSwitchSpec[] = [
+  { keys: 1, model: "MGG01A", width: 20, height: 23, thickness: 1 },
+  { keys: 2, model: "MGG01F", width: 40, height: 20, thickness: 0.8 },
+  { keys: 3, model: "MGG01Y", width: 57, height: 20, thickness: 0.8 },
+  { keys: 4, model: "MGG192B", width: 76, height: 20, thickness: 0.8 },
+];
+
+function createMembraneSwitchDefinition(
+  spec: MembraneSwitchSpec,
+): ConnectorDefinition {
+  return {
+    id: `membrane-switch-${spec.keys}key`,
+    name: `${spec.keys}键薄膜开关 ${spec.model}`,
+    category: "keypad",
+    visualGeometry: {
+      shape: "rounded-rectangle",
+      width: spec.width,
+      height: spec.height,
+      depth: spec.thickness,
+      color: "#222629",
+    },
+    panelCutout: {
+      shape: "rounded-rectangle",
+      width: spec.width,
+      height: spec.height,
+      cornerRadius: 2.2,
+      mode: "surface",
+    },
+    boardAlignment: { heightAboveBoardCenter: spec.thickness / 2 },
+    keepoutVolumes: [
+      {
+        role: "wiring",
+        width: spec.width + 8,
+        height: spec.height + 8,
+        depth: 18,
+      },
+    ],
+    toleranceRules: {
+      xyClearance: 0.15,
+      description: "薄膜开关为表面贴装足迹，不生成整块穿板开孔",
+    },
+    metadata: {
+      bomName: `${spec.keys}-key membrane switch ${spec.model}`,
+      notes:
+        "截图规格标注 1/2/3/4 键、多色可选、PC 砂面、背胶、PET 透明尾带、2.54 方孔带保护套、排线约 90 mm；双键等线路定义需按实物和器件图纸复核。",
+    },
+  };
+}
+
+export const MEMBRANE_SWITCH_DEFINITIONS: ConnectorDefinition[] =
+  MEMBRANE_SWITCH_SPECS.map((spec) => createMembraneSwitchDefinition(spec));
+
+interface MetalPowerButtonSpec {
+  holeDiameter: 12 | 16 | 19 | 22;
+  bodyDepth: number;
+}
+
+const METAL_POWER_BUTTON_SPECS: readonly MetalPowerButtonSpec[] = [
+  { holeDiameter: 12, bodyDepth: 24 },
+  { holeDiameter: 16, bodyDepth: 28 },
+  { holeDiameter: 19, bodyDepth: 31 },
+  { holeDiameter: 22, bodyDepth: 34 },
+];
+
+function createMetalPowerButtonDefinition(
+  spec: MetalPowerButtonSpec,
+): ConnectorDefinition {
+  const cutout = spec.holeDiameter + 0.4;
+  const bezel = spec.holeDiameter + 3.2;
+  return {
+    id: `metal-power-button-${spec.holeDiameter}mm`,
+    name: `${spec.holeDiameter} mm 金属带灯开机按钮`,
+    category: "switch",
+    visualGeometry: {
+      shape: "circle",
+      width: bezel,
+      height: bezel,
+      depth: spec.bodyDepth,
+      color: "#c5c9c6",
+    },
+    panelCutout: {
+      shape: "circle",
+      width: cutout,
+      height: cutout,
+      cornerRadius: cutout / 2,
+    },
+    boardAlignment: { heightAboveBoardCenter: bezel / 2 },
+    keepoutVolumes: [
+      {
+        role: "wiring",
+        width: spec.holeDiameter + 12,
+        height: spec.holeDiameter + 12,
+        depth: spec.bodyDepth + 35,
+      },
+    ],
+    toleranceRules: {
+      xyClearance: 0.2,
+      description: `按 ${spec.holeDiameter} mm 面板开孔加 0.4 mm 装配余量`,
+    },
+    metadata: {
+      bomName: `${spec.holeDiameter} mm illuminated metal PC power switch`,
+      notes:
+        "截图规格标注电脑金属按钮开关、IP66、红/黄/蓝/绿/白灯色可选、铜镀镍或可定制氧化黑、线长约 50 mm、灯珠寿命约 40000 小时；端子接线和实际螺纹长度需按所选规格复核。",
+    },
+  };
+}
+
+export const METAL_POWER_BUTTON_DEFINITIONS: ConnectorDefinition[] =
+  METAL_POWER_BUTTON_SPECS.map((spec) =>
+    createMetalPowerButtonDefinition(spec),
+  );
+
+interface WiredLedIndicatorSpec {
+  ledDiameter: 3 | 5;
+  panelHole: 6 | 8;
+  bodyDepth: number;
+}
+
+const WIRED_LED_INDICATOR_SPECS: readonly WiredLedIndicatorSpec[] = [
+  { ledDiameter: 3, panelHole: 6, bodyDepth: 11 },
+  { ledDiameter: 5, panelHole: 8, bodyDepth: 13 },
+];
+
+function createWiredLedIndicatorDefinition(
+  spec: WiredLedIndicatorSpec,
+): ConnectorDefinition {
+  const cutout = spec.panelHole + 0.3;
+  const bezel = spec.panelHole + 1.5;
+  return {
+    id: `wired-metal-led-${spec.ledDiameter}mm`,
+    name: `${spec.ledDiameter} mm 金属 LED 指示灯（带线）`,
+    category: "indicator",
+    visualGeometry: {
+      shape: "circle",
+      width: bezel,
+      height: bezel,
+      depth: spec.bodyDepth,
+      color: "#bcc4c1",
+    },
+    panelCutout: {
+      shape: "circle",
+      width: cutout,
+      height: cutout,
+      cornerRadius: cutout / 2,
+    },
+    boardAlignment: { heightAboveBoardCenter: bezel / 2 },
+    keepoutVolumes: [
+      {
+        role: "wiring",
+        width: spec.panelHole + 10,
+        height: spec.panelHole + 10,
+        depth: 230,
+      },
+    ],
+    toleranceRules: {
+      xyClearance: 0.15,
+      description: `截图标称 ${spec.panelHole} mm 开孔，已加 0.3 mm 装配余量`,
+    },
+    metadata: {
+      bomName: `${spec.ledDiameter} mm wired metal LED indicator`,
+      notes:
+        "截图规格标注 20 cm 线长，XH2.54、PH2.0、杜邦、公母头、SM/JST 等带线插头可选；3 mm 灯珠带座开孔 6 mm，5 mm 灯珠带座开孔 8 mm；红/蓝/绿/黄/白和七彩选项需按实物规格复核。",
+    },
+  };
+}
+
+export const WIRED_LED_INDICATOR_DEFINITIONS: ConnectorDefinition[] =
+  WIRED_LED_INDICATOR_SPECS.map((spec) =>
+    createWiredLedIndicatorDefinition(spec),
+  );
 
 export const CONNECTOR_DEFINITIONS: ConnectorDefinition[] = [
   {
@@ -562,6 +948,10 @@ export const CONNECTOR_DEFINITIONS: ConnectorDefinition[] = [
   ...TERMINAL_CONNECTOR_DEFINITIONS,
   ...FPC_CONNECTOR_DEFINITIONS,
   ...LCDWIKI_DISPLAY_DEFINITIONS,
+  ...OLED_DISPLAY_DEFINITIONS,
+  ...MEMBRANE_SWITCH_DEFINITIONS,
+  ...METAL_POWER_BUTTON_DEFINITIONS,
+  ...WIRED_LED_INDICATOR_DEFINITIONS,
 ];
 
 export const ANTENNA_DEFINITIONS: AntennaDefinition[] = [

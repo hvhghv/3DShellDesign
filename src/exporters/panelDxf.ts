@@ -12,6 +12,7 @@ import { getPanelPlacement, getRotatedCutoutSize } from "../domain/placements";
 import {
   getAntennaDefinition,
   getConnectorDefinition,
+  hasThroughPanelCutout,
 } from "../libraries/components";
 
 function format(value: number): string {
@@ -106,6 +107,7 @@ export function createPanelDxf(
   for (const placement of parameters.connectorPlacements) {
     if (placement.surface !== "panel" || placement.panelId !== panel.id) continue;
     const definition = getConnectorDefinition(placement.definitionId);
+    if (!hasThroughPanelCutout(definition)) continue;
     const [cutoutWidth, cutoutHeight] = getRotatedCutoutSize(placement);
     const centerX = placement.offsetU + width / 2;
     const centerY = placement.offsetV + height / 2;

@@ -83,6 +83,26 @@ describe("panel SVG exporter", () => {
     expect(svg).toContain('width="7" height="12"');
   });
 
+  it("omits surface-mounted keypad footprints from cut exports", () => {
+    const connector = DEFAULT_PARAMETERS.connectorPlacements[0];
+    const svg = createPanelSvg({
+      ...DEFAULT_PARAMETERS,
+      connectorPlacements: [
+        {
+          ...connector,
+          definitionId: "membrane-switch-1key",
+          surface: "panel",
+          panelId: "panel-1",
+          cutoutWidth: 20,
+          cutoutHeight: 23,
+        },
+      ],
+    });
+
+    expect(svg.match(/<rect /g)).toBeNull();
+    expect(svg.match(/<circle /g)).toHaveLength(4);
+  });
+
   it("includes only physical antenna cutouts mounted to the panel", () => {
     const svg = createPanelSvg({
       ...DEFAULT_PARAMETERS,

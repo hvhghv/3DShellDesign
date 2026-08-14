@@ -53,6 +53,7 @@ import {
   CONNECTOR_DEFINITIONS,
   getAntennaDefinition,
   getConnectorDefinition,
+  hasThroughPanelCutout,
 } from "../libraries/components";
 
 const CLOSURE_LABELS: Record<ClosureType, string> = {
@@ -80,6 +81,9 @@ const CONNECTOR_CATEGORY_LABELS = {
   terminal: "端子",
   fpc: "FPC",
   display: "显示屏",
+  keypad: "薄膜按键",
+  switch: "按键开关",
+  indicator: "指示灯",
 } as const;
 
 interface PickerItem {
@@ -675,24 +679,32 @@ export function AssemblyTree({ onRequestClose, onImportPcb }: AssemblyTreeProps)
   };
   const connectorPickerItems = useMemo<PickerItem[]>(
     () =>
-      CONNECTOR_DEFINITIONS.map((definition) => ({
-        id: definition.id,
-        name: definition.name,
-        group: CONNECTOR_CATEGORY_LABELS[definition.category],
-        detail: definition.terminalSpec
-          ? `${definition.terminalSpec.pitch.toFixed(2)} mm · ${definition.terminalSpec.positions}P · 开孔 ${definition.panelCutout.width.toFixed(1)} × ${definition.panelCutout.height.toFixed(1)} mm`
-          : definition.displaySpec
-            ? `${definition.displaySpec.resolution} · ${definition.displaySpec.touch === "resistive" ? "电阻触摸" : "无触摸"} · PCB ${definition.displaySpec.pcbWidth.toFixed(1)} × ${definition.displaySpec.pcbHeight.toFixed(1)} mm · 开窗 ${definition.panelCutout.width.toFixed(1)} × ${definition.panelCutout.height.toFixed(1)} mm`
-          : `开孔 ${definition.panelCutout.width.toFixed(1)} × ${definition.panelCutout.height.toFixed(1)} mm`,
-        icon:
-          definition.category === "display" ? (
-            <PanelTop size={15} />
-          ) : (
-            <Cable size={15} />
-          ),
-        terminalPitch: definition.terminalSpec?.pitch,
-        terminalPositions: definition.terminalSpec?.positions,
-      })),
+      CONNECTOR_DEFINITIONS.map((definition) => {
+        const cutoutLabel = hasThroughPanelCutout(definition) ? "开孔" : "贴装";
+        return {
+          id: definition.id,
+          name: definition.name,
+          group: CONNECTOR_CATEGORY_LABELS[definition.category],
+          detail: definition.terminalSpec
+            ? `${definition.terminalSpec.pitch.toFixed(2)} mm · ${definition.terminalSpec.positions}P · ${cutoutLabel} ${definition.panelCutout.width.toFixed(1)} × ${definition.panelCutout.height.toFixed(1)} mm`
+            : definition.displaySpec
+              ? `${definition.displaySpec.resolution} · ${definition.displaySpec.interfaceMode ?? "SPI"} · ${definition.displaySpec.touch === "resistive" ? "电阻触摸" : "无触摸"} · ${definition.displaySpec.packageStyle === "bare-oled" ? "外形" : "PCB"} ${definition.displaySpec.pcbWidth.toFixed(1)} × ${definition.displaySpec.pcbHeight.toFixed(1)} mm · 开窗 ${definition.panelCutout.width.toFixed(1)} × ${definition.panelCutout.height.toFixed(1)} mm`
+            : `${cutoutLabel} ${definition.panelCutout.width.toFixed(1)} × ${definition.panelCutout.height.toFixed(1)} mm`,
+          icon:
+            definition.category === "display" ? (
+              <PanelTop size={15} />
+            ) : definition.category === "keypad" ? (
+              <SquareStack size={15} />
+            ) : definition.category === "switch" ||
+              definition.category === "indicator" ? (
+              <Cylinder size={15} />
+            ) : (
+              <Cable size={15} />
+            ),
+          terminalPitch: definition.terminalSpec?.pitch,
+          terminalPositions: definition.terminalSpec?.positions,
+        };
+      }),
     [],
   );
   const antennaPickerItems = useMemo<PickerItem[]>(

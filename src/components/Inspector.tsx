@@ -68,6 +68,7 @@ import {
   getAntennaDefinition,
   getConnectorDefinition,
   getFastenerDefinition,
+  hasThroughPanelCutout,
 } from "../libraries/components";
 import { ENCLOSURE_TEMPLATES, getEnclosureTemplate } from "../libraries/templates";
 import { useDesignerStore } from "../store/designerStore";
@@ -309,6 +310,9 @@ const CONNECTOR_CATEGORY_LABELS = {
   terminal: "端子",
   fpc: "FPC",
   display: "显示屏",
+  keypad: "薄膜按键",
+  switch: "按键开关",
+  indicator: "指示灯",
 } as const;
 
 const DISPLAY_MOUNTING_OPTIONS: ReadonlyArray<{
@@ -335,8 +339,28 @@ function ConnectorDefinitionOptions() {
   });
 }
 
+function getConnectorDimensionLabels(definition: ConnectorDefinition): {
+  diameter: string;
+  width: string;
+  height: string;
+} {
+  if (definition.displaySpec) {
+    return { diameter: "开窗直径", width: "开窗宽度", height: "开窗高度" };
+  }
+  if (!hasThroughPanelCutout(definition)) {
+    return { diameter: "贴装直径", width: "贴装宽度", height: "贴装高度" };
+  }
+  return { diameter: "孔径", width: "开孔宽度", height: "开孔高度" };
+}
+
 function getShortDrawingSource(source: string): string {
   return source.split(/[\\/]/).pop() || source;
+}
+
+function formatDisplayInch(value: number): string {
+  return value < 1
+    ? value.toFixed(2).replace(/0$/, "")
+    : value.toFixed(1);
 }
 
 function DisplaySpecSummary({
@@ -349,15 +373,19 @@ function DisplaySpecSummary({
     return <p className="material-note">{definition.metadata.notes}</p>;
   }
 
+  const displayKind = spec.panelKind === "oled" ? "OLED" : "TFT";
+  const interfaceMode = spec.interfaceMode ?? "SPI";
+  const bodyLabel = spec.packageStyle === "bare-oled" ? "外形" : "PCB";
+
   return (
     <div className="display-spec-card" aria-label="显示屏规格摘要">
       <div className="display-spec-card-heading">
-        <strong>{spec.diagonalInch.toFixed(1)}寸 SPI 屏</strong>
-        <span>{spec.resolution} · {spec.touch === "resistive" ? "电阻触摸" : "无触摸"}</span>
+        <strong>{formatDisplayInch(spec.diagonalInch)}寸 {displayKind}</strong>
+        <span>{spec.resolution} · {interfaceMode} · {spec.touch === "resistive" ? "电阻触摸" : "无触摸"}</span>
       </div>
       <div className="display-spec-grid">
         <span>
-          <small>PCB</small>
+          <small>{bodyLabel}</small>
           <strong>{spec.pcbWidth.toFixed(2)} × {spec.pcbHeight.toFixed(2)}</strong>
         </span>
         <span>
@@ -1234,6 +1262,7 @@ export function Inspector() {
   if (selectedPart === "connector" && selectedConnector) {
     const placement = selectedConnector;
     const definition = getConnectorDefinition(placement.definitionId);
+    const dimensionLabels = getConnectorDimensionLabels(definition);
     const surfaceValue =
       placement.surface === "panel" && placement.panelId
         ? `panel:${placement.panelId}`
@@ -1350,7 +1379,7 @@ export function Inspector() {
             </label>
             {definition.panelCutout.shape === "circle" ? (
               <NumberField
-                label="孔径"
+                label={dimensionLabels.diameter}
                 value={placement.cutoutWidth}
                 min={1}
                 max={120}
@@ -1363,8 +1392,8 @@ export function Inspector() {
               />
             ) : (
               <>
-                <NumberField label={definition.displaySpec ? "开窗宽度" : "开孔宽度"} value={placement.cutoutWidth} min={1} max={220} onChange={(value) => updateConnectorPlacement(placement.id, { cutoutWidth: value })} />
-                <NumberField label={definition.displaySpec ? "开窗高度" : "开孔高度"} value={placement.cutoutHeight} min={1} max={220} onChange={(value) => updateConnectorPlacement(placement.id, { cutoutHeight: value })} />
+                <NumberField label={dimensionLabels.width} value={placement.cutoutWidth} min={1} max={220} onChange={(value) => updateConnectorPlacement(placement.id, { cutoutWidth: value })} />
+                <NumberField label={dimensionLabels.height} value={placement.cutoutHeight} min={1} max={220} onChange={(value) => updateConnectorPlacement(placement.id, { cutoutHeight: value })} />
               </>
             )}
             <NumberField label="横向偏移" value={placement.offsetU} min={-300} max={300} step={1} onChange={(value) => updateConnectorPlacement(placement.id, { offsetU: value })} />
@@ -1849,6 +1878,7 @@ export function Inspector() {
                 const placement = selectedConnector;
                 const index = selectedConnectorIndex;
                 const definition = getConnectorDefinition(placement.definitionId);
+                const dimensionLabels = getConnectorDimensionLabels(definition);
                 const surfaceValue =
                   placement.surface === "panel" && placement.panelId
                     ? `panel:${placement.panelId}`
@@ -1910,7 +1940,7 @@ export function Inspector() {
                   </label>
                   {definition.panelCutout.shape === "circle" ? (
                     <NumberField
-                      label="孔径"
+                      label={dimensionLabels.diameter}
                       value={placement.cutoutWidth}
                       min={1}
                       max={120}
@@ -1923,8 +1953,8 @@ export function Inspector() {
                     />
                   ) : (
                     <>
-                      <NumberField label={definition.displaySpec ? "开窗宽度" : "开孔宽度"} value={placement.cutoutWidth} min={1} max={220} onChange={(value) => updateConnectorPlacement(placement.id, { cutoutWidth: value })} />
-                      <NumberField label={definition.displaySpec ? "开窗高度" : "开孔高度"} value={placement.cutoutHeight} min={1} max={220} onChange={(value) => updateConnectorPlacement(placement.id, { cutoutHeight: value })} />
+                      <NumberField label={dimensionLabels.width} value={placement.cutoutWidth} min={1} max={220} onChange={(value) => updateConnectorPlacement(placement.id, { cutoutWidth: value })} />
+                      <NumberField label={dimensionLabels.height} value={placement.cutoutHeight} min={1} max={220} onChange={(value) => updateConnectorPlacement(placement.id, { cutoutHeight: value })} />
                     </>
                   )}
                   <NumberField label="横向偏移" value={placement.offsetU} min={-300} max={300} step={1} onChange={(value) => updateConnectorPlacement(placement.id, { offsetU: value })} />

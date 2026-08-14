@@ -56,6 +56,7 @@ import {
   getAntennaDefinition,
   getConnectorDefinition,
   getFastenerDefinition,
+  hasThroughPanelCutout,
 } from "../libraries/components";
 
 export type SolidPart = "base" | "lid" | "panel";
@@ -1427,6 +1428,7 @@ function applyFixedTopFaceFeatures(
     if (placement.surface === "panel") continue;
     if (resolveConnectorFace(placement, parameters) !== "top") continue;
     const connector = getConnectorDefinition(placement.definitionId);
+    if (!hasThroughPanelCutout(connector)) continue;
     const [width, height] = getRotatedCutoutSize(placement);
     result = subtractAndDispose(
       result,
@@ -1816,6 +1818,7 @@ function buildBase(
     const face = resolveConnectorFace(placement, parameters);
     if (face === "top" || isRemovableFace(face)) continue;
     const connector = getConnectorDefinition(placement.definitionId);
+    if (!hasThroughPanelCutout(connector)) continue;
     const [width, height] = getRotatedCutoutSize(placement);
     base = subtractAndDispose(
       base,
@@ -1883,6 +1886,7 @@ function buildFlatLidFace(
     if (placement.surface === "panel") continue;
     if (resolveConnectorFace(placement, parameters) !== face) continue;
     const connector = getConnectorDefinition(placement.definitionId);
+    if (!hasThroughPanelCutout(connector)) continue;
     const [width, height] = getRotatedCutoutSize(placement);
     lid = subtractAndDispose(
       lid,
@@ -2318,6 +2322,7 @@ function buildLid(
     if (placement.surface === "panel") continue;
     if (resolveConnectorFace(placement, parameters) !== "top") continue;
     const connector = getConnectorDefinition(placement.definitionId);
+    if (!hasThroughPanelCutout(connector)) continue;
     const [width, height] = getRotatedCutoutSize(placement);
     lid = subtractAndDispose(
       lid,
@@ -2449,6 +2454,7 @@ function buildPanel(
       placement.panelId !== selectedPanel.id
     ) continue;
     const connector = getConnectorDefinition(placement.definitionId);
+    if (!hasThroughPanelCutout(connector)) continue;
     const [width, height] = getRotatedCutoutSize(placement);
     let cutter =
       connector.panelCutout.shape === "circle"

@@ -89,6 +89,14 @@ export function hasThroughPanelCutout(
   return definition.panelCutout.mode !== "surface";
 }
 
+export function supportsDisplayScrewMounting(
+  definition: Pick<ConnectorDefinition, "displaySpec">,
+): boolean {
+  return Boolean(
+    definition.displaySpec && definition.displaySpec.hasMountingHoles !== false,
+  );
+}
+
 export type AntennaPlacement = "rear-bulkhead" | "inner-rear-wall" | "pcb-rear-edge";
 
 export interface AntennaDefinition {

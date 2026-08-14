@@ -62,6 +62,7 @@ import {
   getConnectorDefinition,
   getFastenerDefinition,
   hasThroughPanelCutout,
+  supportsDisplayScrewMounting,
 } from "../libraries/components";
 
 const EDGE_COLOR = 0x333936;
@@ -3509,6 +3510,13 @@ export function buildPreviewModel(
     root.add(connectorGroup);
     connectorGroup.name = `connector-transform-${placement.id}`;
     if (connector.category === "display") {
+      const displayMountingType =
+        placement.displayMountingType === "screw" &&
+        placement.surface === "panel" &&
+        targetPanel &&
+        supportsDisplayScrewMounting(connector)
+          ? "screw"
+          : "none";
       addLcdwikiDisplayPreview(
         connectorGroup,
         connector,
@@ -3523,7 +3531,7 @@ export function buildPreviewModel(
         dimensions,
         lidY,
         placement.surface !== "panel" && isFaceRemovable(face),
-        placement.displayMountingType,
+        displayMountingType,
         connectorSelected,
       );
     } else if (isFpcConnectorDefinition(connector)) {

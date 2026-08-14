@@ -57,6 +57,7 @@ import {
   getConnectorDefinition,
   getFastenerDefinition,
   hasThroughPanelCutout,
+  supportsDisplayScrewMounting,
 } from "../libraries/components";
 
 export type SolidPart = "base" | "lid" | "panel";
@@ -575,6 +576,32 @@ function addSolidBoss(
     source,
     cylinderAt(module, outerRadius, height, x, y, z),
   );
+}
+
+function rotateLocalPoint(
+  u: number,
+  v: number,
+  rotation: 0 | 90 | 180 | 270,
+): readonly [number, number] {
+  if (rotation === 90) return [-v, u];
+  if (rotation === 180) return [-u, -v];
+  if (rotation === 270) return [v, -u];
+  return [u, v];
+}
+
+function getDisplayMountingPoints(
+  pcbWidth: number,
+  pcbHeight: number,
+): ReadonlyArray<readonly [number, number]> {
+  const inset = Math.min(3, Math.max(1.4, Math.min(pcbWidth, pcbHeight) * 0.18));
+  const u = Math.max(1.2, pcbWidth / 2 - inset);
+  const v = Math.max(1.2, pcbHeight / 2 - inset);
+  return [
+    [-u, -v],
+    [u, -v],
+    [-u, v],
+    [u, v],
+  ];
 }
 
 function addMagnetSupports(
@@ -2483,6 +2510,44 @@ function buildPanel(
       );
     }
     panel = subtractAndDispose(panel, cutter);
+  }
+  for (const placement of parameters.connectorPlacements) {
+    if (
+      placement.surface !== "panel" ||
+      placement.panelId !== selectedPanel.id ||
+      placement.displayMountingType !== "screw"
+    ) continue;
+    const connector = getConnectorDefinition(placement.definitionId);
+    if (!connector.displaySpec || !supportsDisplayScrewMounting(connector)) {
+      continue;
+    }
+    const bossRadius = 2.55;
+    const bossDepth = Math.max(2.8, Math.min(5, connector.visualGeometry.depth - 0.6));
+    const safeU = selectedPanel.width / 2 - bossRadius - 0.4;
+    const safeV = selectedPanel.height / 2 - bossRadius - 0.4;
+    for (const [localU, localV] of getDisplayMountingPoints(
+      connector.displaySpec.pcbWidth,
+      connector.displaySpec.pcbHeight,
+    )) {
+      const [rotatedU, rotatedV] = rotateLocalPoint(
+        localU,
+        localV,
+        placement.rotation,
+      );
+      const x = placement.offsetU + rotatedU;
+      const y = placement.offsetV + rotatedV;
+      if (Math.abs(x) > safeU || Math.abs(y) > safeV) continue;
+      panel = addBossWithPilotHole(
+        module,
+        panel,
+        x,
+        y,
+        -bossDepth,
+        bossDepth,
+        bossRadius,
+        PANEL_SCREW_PILOT_RADIUS,
+      );
+    }
   }
   for (const placement of parameters.antennaPlacements) {
     if (placement.surface !== "panel" || placement.panelId !== selectedPanel.id) {

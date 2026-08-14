@@ -49,7 +49,11 @@ import {
   getDefaultPanelSize,
 } from "../domain/placements";
 import { normalizeRemovableFaces } from "../domain/removableFaces";
-import { getAntennaDefinition, getConnectorDefinition } from "../libraries/components";
+import {
+  getAntennaDefinition,
+  getConnectorDefinition,
+  supportsDisplayScrewMounting,
+} from "../libraries/components";
 import { getEnclosureTemplate } from "../libraries/templates";
 import { queueProjectCache, readProjectCache } from "./projectCache";
 
@@ -531,10 +535,30 @@ let cachedPcbPreviews: Record<string, StepPreview> = {};
 let cachedCustomComponentPreviews: Record<string, StepPreview> = {};
 
 function constrainParameters(parameters: DesignerParameters): DesignerParameters {
-  return constrainSurfacePlacements(
+  const constrained = constrainSurfacePlacements(
     parameters,
     deriveEnclosureDimensions(parameters),
   );
+  return {
+    ...constrained,
+    connectorPlacements: constrained.connectorPlacements.map((placement) => {
+      const definition = getConnectorDefinition(placement.definitionId);
+      if (!definition.displaySpec) {
+        return { ...placement, displayMountingType: undefined };
+      }
+      const canUseScrew =
+        placement.surface === "panel" &&
+        placement.panelId !== null &&
+        supportsDisplayScrewMounting(definition);
+      return {
+        ...placement,
+        displayMountingType:
+          placement.displayMountingType === "screw" && canUseScrew
+            ? "screw"
+            : "none",
+      };
+    }),
+  };
 }
 
 function clampPcbPlanarOffset(value: number): number {

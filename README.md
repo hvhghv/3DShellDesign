@@ -16,7 +16,7 @@
 - 创建多个独立亚克力、PC、ABS 或金属面板，每个面板可选择螺丝、双侧盲孔磁吸、弹性柱卡扣或滑轨，并分别设置尺寸、圆角、嵌入深度及边框；螺丝通过与壳壁同厚的一体平面舌片固定，不生成悬空支柱，并支持齐平沉孔。
 - 从 AAA、AA、18650、软包锂电和自定义规格添加多槽电池仓，可调整槽数、仓体尺寸、壁厚、间隙、位置和方向；仓壁与隔板作为下壳一体制造实体导出。
 - 添加可自由定位、旋转和缩放的自定义长方体、圆柱体，或导入 STEP/STL/OBJ 机械包络模型。
-- 从数据驱动库选择 USB-A、Micro USB、Type-C、DC、RJ45、`0.5/1.0 mm` 间距且覆盖 `5P–40P` 的 FPC、1.0/1.25/2.54/5.08 mm 间距的 2P/4P/5P 端子，以及 `lcdwiki_downloads.zip` 中 2.2/2.4/2.8/3.2/3.5/4.0 寸 LCDWIKI SPI 屏幕。
+- 从数据驱动库选择 USB-A、Micro USB、Type-C、DC、RJ45、`0.5/1.0 mm` 间距且覆盖 `5P–40P` 的 FPC、1.0/1.25/2.54/5.08 mm 间距的 2P/4P/5P 端子、0.91 寸 OLED 模块/裸屏、薄膜按键、金属带灯按钮、带线 LED 指示灯，以及 `lcdwiki_downloads.zip` 中 2.2/2.4/2.8/3.2/3.5/4.0 寸 LCDWIKI SPI 屏幕。
 - 添加多个 SMA、RP-SMA、内贴 FPC 或 PCB 板边天线；每个实例可选择六个壳体面或可更换面板，并生成穿板孔、射频禁入区和 BOM。
 - 在对象树中分别显示或隐藏顶盖、底板、前后壁和左右壁；显隐只影响检查视图，不改变 STL、3MF 等制造导出。
 - 面板、PCB、接口、天线、自定义组件和电池仓可独立隐藏或锁定；隐藏对象仍保留在制造模型中，锁定对象不可拖动、改参或误删，并可从检查器直接恢复。
@@ -86,7 +86,7 @@ npm run check
 
 ## GitHub Pages
 
-推送 `main` 后，[pages.yml](.github/workflows/pages.yml) 会并行执行静态检查/单元测试/生产构建和 3 项关键 Playwright 烟测；两者通过后发布 `dist/`，不再让完整 STL/3MF 制造回归阻塞 Pages。完整 21 项浏览器回归由 [regression.yml](.github/workflows/regression.yml) 每天北京时间 02:00 或手动触发，并拆成两个单 worker 分片。CI 成功用例不生成非必要全页截图，失败时保留 Playwright 截图、上下文和 trace artifact。
+推送 `main` 后，[pages.yml](.github/workflows/pages.yml) 会并行执行静态检查/单元测试/生产构建和 3 项关键 Playwright 烟测；两者通过后发布 `dist/`，不再让完整 STL/3MF 制造回归阻塞 Pages。完整浏览器回归由 [regression.yml](.github/workflows/regression.yml) 每天北京时间 02:00 或手动触发，并拆成 4 个单 worker 分片。CI 成功用例不生成非必要全页截图，失败时保留 Playwright 截图、上下文和 trace artifact。
 
 仓库名称为 `3DShellDesign`，Actions 构建时 Vite 基础路径自动切换为 `/3DShellDesign/`。GitHub 仓库的 Pages Source 需要设置为 `GitHub Actions`。
 

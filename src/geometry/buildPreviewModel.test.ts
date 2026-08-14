@@ -1423,8 +1423,8 @@ describe("surface placement preview", () => {
           {
             id: "display-1",
             definitionId: "lcdwiki-msp2807",
-            surface: "top",
-            panelId: null,
+            surface: "panel",
+            panelId: "panel-1",
             offsetU: 0,
             offsetV: 0,
             rotation: 0,

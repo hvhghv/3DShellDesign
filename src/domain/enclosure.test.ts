@@ -456,6 +456,79 @@ describe("enclosure domain", () => {
     expect(parameters).not.toHaveProperty("typeCPortEnabled");
   });
 
+  it("normalizes display screw mounting to supported panel modules only", () => {
+    const baseConnector = DEFAULT_PARAMETERS.connectorPlacements[0];
+    const parameters = normalizeDesignerParameters({
+      ...DEFAULT_PARAMETERS,
+      connectorPlacements: [
+        {
+          ...baseConnector,
+          id: "oled",
+          definitionId: "generic-oled-091-128x32-bare-solder-14p",
+          surface: "panel",
+          panelId: "panel-1",
+          displayMountingType: "screw",
+        },
+        {
+          ...baseConnector,
+          id: "lcd-on-shell",
+          definitionId: "lcdwiki-msp2807",
+          surface: "top",
+          panelId: null,
+          displayMountingType: "screw",
+        },
+        {
+          ...baseConnector,
+          id: "lcd-on-panel",
+          definitionId: "lcdwiki-msp2807",
+          surface: "panel",
+          panelId: "panel-1",
+          displayMountingType: "screw",
+        },
+      ],
+    });
+
+    expect(parameters.connectorPlacements).toEqual([
+      expect.objectContaining({ id: "oled", displayMountingType: "none" }),
+      expect.objectContaining({
+        id: "lcd-on-shell",
+        displayMountingType: "none",
+      }),
+      expect.objectContaining({
+        id: "lcd-on-panel",
+        displayMountingType: "screw",
+      }),
+    ]);
+  });
+
+  it("reports display screw mounts that do not fit on the target panel", () => {
+    const connector = DEFAULT_PARAMETERS.connectorPlacements[0];
+    const issues = validateDesign({
+      ...DEFAULT_PARAMETERS,
+      connectorPlacements: [
+        {
+          ...connector,
+          id: "panel-display",
+          definitionId: "lcdwiki-msp2807",
+          surface: "panel",
+          panelId: "panel-1",
+          displayMountingType: "screw",
+          cutoutWidth: 46.2,
+          cutoutHeight: 67.2,
+        },
+      ],
+    });
+
+    expect(issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "display-screw-mount-outside-panel-panel-display",
+          level: "error",
+        }),
+      ]),
+    );
+  });
+
   it("detects overlapping connectors on the same face", () => {
     const first = DEFAULT_PARAMETERS.connectorPlacements[0];
     const issues = validateDesign({

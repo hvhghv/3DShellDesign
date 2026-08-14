@@ -722,6 +722,60 @@ describe("designer store", () => {
     expect(useDesignerStore.getState().transformAxisConstraint).toBe("all");
   });
 
+  it("allows display screw mounting only for mountable panel displays", () => {
+    const connector = {
+      ...DEFAULT_PARAMETERS.connectorPlacements[0],
+      id: "oled",
+      definitionId: "generic-oled-091-128x32-bare-solder-14p",
+      surface: "panel" as const,
+      panelId: "panel-1",
+      displayMountingType: "none" as const,
+    };
+    useDesignerStore.setState({
+      ...originalState,
+      parameters: {
+        ...DEFAULT_PARAMETERS,
+        connectorPlacements: [connector],
+      },
+      selectedPart: "connector",
+      selectedFeatureId: connector.id,
+    });
+
+    useDesignerStore.getState().updateConnectorPlacement(connector.id, {
+      displayMountingType: "screw",
+    });
+    expect(
+      useDesignerStore.getState().parameters.connectorPlacements[0]
+        .displayMountingType,
+    ).toBe("none");
+
+    useDesignerStore
+      .getState()
+      .setConnectorDefinition(connector.id, "lcdwiki-msp2807");
+    useDesignerStore.getState().updateConnectorPlacement(connector.id, {
+      displayMountingType: "screw",
+    });
+    expect(
+      useDesignerStore.getState().parameters.connectorPlacements[0],
+    ).toEqual(
+      expect.objectContaining({
+        definitionId: "lcdwiki-msp2807",
+        surface: "panel",
+        panelId: "panel-1",
+        displayMountingType: "screw",
+      }),
+    );
+
+    useDesignerStore.getState().updateConnectorPlacement(connector.id, {
+      surface: "top",
+      panelId: null,
+    });
+    expect(
+      useDesignerStore.getState().parameters.connectorPlacements[0]
+        .displayMountingType,
+    ).toBe("none");
+  });
+
   it("drops transparent state for removed feature ids", () => {
     const connector = DEFAULT_PARAMETERS.connectorPlacements[0];
     useDesignerStore.setState({

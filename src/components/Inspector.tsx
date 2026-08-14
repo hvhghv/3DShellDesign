@@ -38,6 +38,7 @@ import type {
   BatteryInsertionSide,
   BatteryMountFace,
   BatteryRetentionType,
+  ConnectorSurface,
   DisplayMountingType,
   EnclosureFace,
   InspectorTab,
@@ -69,6 +70,7 @@ import {
   getConnectorDefinition,
   getFastenerDefinition,
   hasThroughPanelCutout,
+  supportsDisplayScrewMounting,
 } from "../libraries/components";
 import { ENCLOSURE_TEMPLATES, getEnclosureTemplate } from "../libraries/templates";
 import { useDesignerStore } from "../store/designerStore";
@@ -322,6 +324,37 @@ const DISPLAY_MOUNTING_OPTIONS: ReadonlyArray<{
   { id: "none", name: "无" },
   { id: "screw", name: "螺丝" },
 ];
+
+function getDisplayMountingOptions(
+  definition: ConnectorDefinition,
+  placement: { surface: ConnectorSurface; panelId: string | null },
+): ReadonlyArray<{
+  id: DisplayMountingType;
+  name: string;
+}> {
+  if (
+    placement.surface === "panel" &&
+    placement.panelId &&
+    supportsDisplayScrewMounting(definition)
+  ) {
+    return DISPLAY_MOUNTING_OPTIONS;
+  }
+  return DISPLAY_MOUNTING_OPTIONS.filter((option) => option.id === "none");
+}
+
+function getDisplayMountingNotice(
+  definition: ConnectorDefinition,
+  placement: { surface: ConnectorSurface; panelId: string | null },
+): string | null {
+  if (!definition.displaySpec) return null;
+  if (!supportsDisplayScrewMounting(definition)) {
+    return "当前显示屏规格未提供安装孔，固定方式保持为无；建议使用压框、背胶、胶垫或自定义固定件。";
+  }
+  if (placement.surface !== "panel" || !placement.panelId) {
+    return "显示屏螺丝固定目前只对可更换面板生成制造结构；壳体面直装请先放到面板或使用自定义固定件。";
+  }
+  return null;
+}
 
 function ConnectorDefinitionOptions() {
   return Object.entries(CONNECTOR_CATEGORY_LABELS).map(([category, label]) => {
@@ -1263,6 +1296,14 @@ export function Inspector() {
     const placement = selectedConnector;
     const definition = getConnectorDefinition(placement.definitionId);
     const dimensionLabels = getConnectorDimensionLabels(definition);
+    const displayMountingOptions = getDisplayMountingOptions(
+      definition,
+      placement,
+    );
+    const displayMountingNotice = getDisplayMountingNotice(
+      definition,
+      placement,
+    );
     const surfaceValue =
       placement.surface === "panel" && placement.panelId
         ? `panel:${placement.panelId}`
@@ -1410,10 +1451,13 @@ export function Inspector() {
                     })
                   }
                 >
-                  {DISPLAY_MOUNTING_OPTIONS.map((option) => (
+                  {displayMountingOptions.map((option) => (
                     <option key={option.id} value={option.id}>{option.name}</option>
                   ))}
                 </select>
+                {displayMountingNotice ? (
+                  <small>{displayMountingNotice}</small>
+                ) : null}
               </label>
             ) : null}
             <DisplaySpecSummary definition={definition} />
@@ -1879,6 +1923,14 @@ export function Inspector() {
                 const index = selectedConnectorIndex;
                 const definition = getConnectorDefinition(placement.definitionId);
                 const dimensionLabels = getConnectorDimensionLabels(definition);
+                const displayMountingOptions = getDisplayMountingOptions(
+                  definition,
+                  placement,
+                );
+                const displayMountingNotice = getDisplayMountingNotice(
+                  definition,
+                  placement,
+                );
                 const surfaceValue =
                   placement.surface === "panel" && placement.panelId
                     ? `panel:${placement.panelId}`
@@ -1971,10 +2023,13 @@ export function Inspector() {
                           })
                         }
                       >
-                        {DISPLAY_MOUNTING_OPTIONS.map((option) => (
+                        {displayMountingOptions.map((option) => (
                           <option key={option.id} value={option.id}>{option.name}</option>
                         ))}
                       </select>
+                      {displayMountingNotice ? (
+                        <small>{displayMountingNotice}</small>
+                      ) : null}
                     </label>
                   ) : null}
                   <DisplaySpecSummary definition={definition} />

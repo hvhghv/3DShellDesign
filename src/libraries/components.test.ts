@@ -14,6 +14,7 @@ import {
   getConnectorDefinition,
   getFastenerDefinition,
   hasThroughPanelCutout,
+  supportsDisplayScrewMounting,
 } from "./components";
 
 describe("component library", () => {
@@ -167,6 +168,14 @@ describe("component library", () => {
         }),
       }),
     );
+    expect(
+      supportsDisplayScrewMounting(getConnectorDefinition("lcdwiki-msp2807")),
+    ).toBe(true);
+    expect(
+      supportsDisplayScrewMounting(
+        getConnectorDefinition("generic-oled-091-128x32-bare-solder-14p"),
+      ),
+    ).toBe(false);
   });
 
   it("provides panel controls and indicators from screenshot specs", () => {

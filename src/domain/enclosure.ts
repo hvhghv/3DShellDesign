@@ -1,5 +1,9 @@
 import { getMaterial } from "./materials";
-import { getAntennaDefinition, getConnectorDefinition } from "../libraries/components";
+import {
+  getAntennaDefinition,
+  getConnectorDefinition,
+  supportsDisplayScrewMounting,
+} from "../libraries/components";
 import { getVentPatternPoints } from "./patterns";
 import { MAGNET_GEOMETRY } from "./magnetSupport";
 import {
@@ -49,6 +53,7 @@ import type {
   PcbReference,
   PcbReferencePlacement,
   PanelPlacement,
+  PlacementRotation,
   ValidationIssue,
 } from "./model";
 
@@ -171,6 +176,32 @@ export function deriveEnclosureDimensions(
       parameters.pcbThickness,
     mountingInset: Math.max(4, parameters.boardClearance + 1.5),
   };
+}
+
+function rotateLocalPoint(
+  u: number,
+  v: number,
+  rotation: PlacementRotation,
+): readonly [number, number] {
+  if (rotation === 90) return [-v, u];
+  if (rotation === 180) return [-u, -v];
+  if (rotation === 270) return [v, -u];
+  return [u, v];
+}
+
+function getDisplayMountingPoints(
+  pcbWidth: number,
+  pcbHeight: number,
+): ReadonlyArray<readonly [number, number]> {
+  const inset = Math.min(3, Math.max(1.4, Math.min(pcbWidth, pcbHeight) * 0.18));
+  const u = Math.max(1.2, pcbWidth / 2 - inset);
+  const v = Math.max(1.2, pcbHeight / 2 - inset);
+  return [
+    [-u, -v],
+    [u, -v],
+    [-u, v],
+    [u, v],
+  ];
 }
 
 export function getPanelMountingPoints(
@@ -326,26 +357,35 @@ export function normalizeDesignerParameters(value: unknown): DesignerParameters 
       const definition = getConnectorDefinition(
         typeof raw.definitionId === "string" ? raw.definitionId : "usb-c-receptacle",
       );
+      const surface = isConnectorSurface(raw.surface) ? raw.surface : "front";
+      const panelId =
+        surface === "panel"
+          ? panelPlacements.some((panel) => panel.id === raw.panelId)
+            ? raw.panelId ?? null
+            : panelPlacements[0]?.id ?? null
+          : null;
+      const displayMountingType =
+        definition.displaySpec &&
+        isDisplayMountingType(raw.displayMountingType) &&
+        raw.displayMountingType === "screw" &&
+        surface === "panel" &&
+        panelId !== null &&
+        supportsDisplayScrewMounting(definition)
+          ? "screw"
+          : definition.displaySpec
+            ? "none"
+            : undefined;
       return {
         id: typeof raw.id === "string" && raw.id ? raw.id : `connector-${index + 1}`,
         definitionId: definition.id,
-        surface: isConnectorSurface(raw.surface) ? raw.surface : "front",
-        panelId:
-          raw.surface === "panel"
-            ? panelPlacements.some((panel) => panel.id === raw.panelId)
-              ? raw.panelId ?? null
-              : panelPlacements[0]?.id ?? null
-            : null,
+        surface,
+        panelId,
         offsetU: finiteOr(raw.offsetU, 0),
         offsetV: finiteOr(raw.offsetV, -3),
         rotation: isPlacementRotation(raw.rotation) ? raw.rotation : 0,
         cutoutWidth: finiteOr(raw.cutoutWidth, definition.panelCutout.width),
         cutoutHeight: finiteOr(raw.cutoutHeight, definition.panelCutout.height),
-        displayMountingType: definition.displaySpec
-          ? isDisplayMountingType(raw.displayMountingType)
-            ? raw.displayMountingType
-            : "none"
-          : undefined,
+        displayMountingType,
       };
     });
   } else if (candidate.typeCPortEnabled === false) {
@@ -904,6 +944,41 @@ export function validateDesign(
         detail: `接口 ${index + 1} 距安装面边缘至少保留 ${edgeMargin.toFixed(1)} mm`,
         part: "connector",
       });
+    }
+
+    if (
+      placement.displayMountingType === "screw" &&
+      targetPanel &&
+      connector.displaySpec &&
+      supportsDisplayScrewMounting(connector)
+    ) {
+      const bossRadius = 2.55;
+      const safeU = targetPanel.width / 2 - bossRadius - 0.4;
+      const safeV = targetPanel.height / 2 - bossRadius - 0.4;
+      const mountingPoints = getDisplayMountingPoints(
+        connector.displaySpec.pcbWidth,
+        connector.displaySpec.pcbHeight,
+      );
+      const outsidePanel = mountingPoints.some(([localU, localV]) => {
+        const [rotatedU, rotatedV] = rotateLocalPoint(
+          localU,
+          localV,
+          placement.rotation,
+        );
+        return (
+          Math.abs(placement.offsetU + rotatedU) > safeU ||
+          Math.abs(placement.offsetV + rotatedV) > safeV
+        );
+      });
+      if (outsidePanel) {
+        issues.push({
+          id: `display-screw-mount-outside-panel-${placement.id}`,
+          level: "error",
+          title: `${connector.name}螺丝固定点超出面板`,
+          detail: "扩大面板、移动显示屏，或将显示屏固定方式改为无",
+          part: "connector",
+        });
+      }
     }
 
     if (placement.surface !== "panel") {

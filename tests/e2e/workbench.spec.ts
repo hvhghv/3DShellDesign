@@ -985,10 +985,20 @@ test("device pickers create only the selected connector and antenna @smoke", asy
   await connectorPicker
     .getByRole("searchbox", { name: "搜索添加接口/器件" })
     .fill("1.25");
-  await expect(connectorPicker.locator(".device-picker-item")).toHaveCount(3);
+  await expect(connectorPicker.locator(".device-picker-item")).toHaveCount(5);
   await expect(connectorPicker.getByText("1.25 mm 2P 线对板端子", { exact: true })).toBeVisible();
   await expect(connectorPicker.getByText("1.25 mm 4P 线对板端子", { exact: true })).toBeVisible();
   await expect(connectorPicker.getByText("1.25 mm 5P 线对板端子", { exact: true })).toBeVisible();
+  await expect(
+    connectorPicker.getByText("Φ4.0 mm 防水驻极体麦克风（1.25 mm 2P）", {
+      exact: true,
+    }),
+  ).toBeVisible();
+  await expect(
+    connectorPicker.getByText("12×17 mm 方形腔体扬声器（1.25 mm 2P）", {
+      exact: true,
+    }),
+  ).toBeVisible();
   expect(
     await connectorPicker.evaluate(
       (element) => element.scrollWidth - element.clientWidth,

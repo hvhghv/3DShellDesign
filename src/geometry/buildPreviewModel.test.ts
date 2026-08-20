@@ -1415,6 +1415,115 @@ describe("surface placement preview", () => {
     disposePreviewModel(model);
   });
 
+  it("renders waterproof microphone devices with cable and 2P plug details", () => {
+    const model = buildPreviewModel(
+      {
+        ...DEFAULT_PARAMETERS,
+        connectorPlacements: [
+          {
+            ...DEFAULT_PARAMETERS.connectorPlacements[0],
+            id: "mic-1",
+            definitionId: "waterproof-microphone-4015-2p-125",
+            surface: "front",
+            panelId: null,
+            offsetU: 0,
+            offsetV: -3,
+            rotation: 0,
+            cutoutWidth: 4.9,
+            cutoutHeight: 4.9,
+          },
+        ],
+      },
+      "connector",
+      false,
+      null,
+      null,
+      null,
+      "mic-1",
+    );
+
+    const group = model.getObjectByName("connector-transform-mic-1");
+    expect(group).toBeDefined();
+    expect(group?.getObjectByName("mic-1")).toBeInstanceOf(THREE.Mesh);
+    expect(group?.getObjectByName("mic-1-silicone-seal")).toBeInstanceOf(
+      THREE.Mesh,
+    );
+    expect(group?.getObjectByName("mic-1-sound-port")).toBeInstanceOf(
+      THREE.Mesh,
+    );
+    expect(group?.getObjectByName("mic-1-wire-red")).toBeInstanceOf(THREE.Mesh);
+    expect(group?.getObjectByName("mic-1-wire-black")).toBeInstanceOf(
+      THREE.Mesh,
+    );
+    expect(group?.getObjectByName("mic-1-connector-body")).toBeInstanceOf(
+      THREE.Mesh,
+    );
+    expect(group?.getObjectByName("mic-1-opening")).toBeInstanceOf(
+      THREE.LineSegments,
+    );
+    expect(group?.getObjectByName("mic-1-keepout")).toBeInstanceOf(
+      THREE.LineSegments,
+    );
+    disposePreviewModel(model);
+  });
+
+  it("renders rectangular speakers with diaphragm, rear cavity and 2P plug details", () => {
+    const model = buildPreviewModel(
+      {
+        ...DEFAULT_PARAMETERS,
+        connectorPlacements: [
+          {
+            ...DEFAULT_PARAMETERS.connectorPlacements[0],
+            id: "speaker-1",
+            definitionId: "rectangular-speaker-1217-2p-125",
+            surface: "front",
+            panelId: null,
+            offsetU: 0,
+            offsetV: -3,
+            rotation: 0,
+            cutoutWidth: 18,
+            cutoutHeight: 13,
+          },
+        ],
+      },
+      "connector",
+      false,
+      null,
+      null,
+      null,
+      "speaker-1",
+    );
+
+    const group = model.getObjectByName("connector-transform-speaker-1");
+    expect(group).toBeDefined();
+    expect(group?.getObjectByName("speaker-1")).toBeInstanceOf(THREE.Mesh);
+    expect(group?.getObjectByName("speaker-1-diaphragm")).toBeInstanceOf(
+      THREE.Mesh,
+    );
+    expect(group?.getObjectByName("speaker-1-rear-cavity")).toBeInstanceOf(
+      THREE.Mesh,
+    );
+    expect(group?.getObjectByName("speaker-1-strain-relief")).toBeInstanceOf(
+      THREE.Mesh,
+    );
+    expect(group?.getObjectByName("speaker-1-wire-red")).toBeInstanceOf(
+      THREE.Mesh,
+    );
+    expect(group?.getObjectByName("speaker-1-wire-black")).toBeInstanceOf(
+      THREE.Mesh,
+    );
+    expect(group?.getObjectByName("speaker-1-connector-body")).toBeInstanceOf(
+      THREE.Mesh,
+    );
+    expect(group?.getObjectByName("speaker-1-opening")).toBeInstanceOf(
+      THREE.LineSegments,
+    );
+    expect(group?.getObjectByName("speaker-1-keepout")).toBeInstanceOf(
+      THREE.LineSegments,
+    );
+    disposePreviewModel(model);
+  });
+
   it("renders LCDWIKI display devices with a visible screen window", () => {
     const model = buildPreviewModel(
       {

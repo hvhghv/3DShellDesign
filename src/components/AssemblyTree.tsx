@@ -14,6 +14,7 @@ import {
   FolderKanban,
   Lock,
   LockOpen,
+  Mic,
   PanelTop,
   Plus,
   Search,
@@ -84,6 +85,8 @@ const CONNECTOR_CATEGORY_LABELS = {
   keypad: "薄膜按键",
   switch: "按键开关",
   indicator: "指示灯",
+  sensor: "传感器",
+  speaker: "扬声器",
 } as const;
 
 interface PickerItem {
@@ -698,6 +701,10 @@ export function AssemblyTree({ onRequestClose, onImportPcb }: AssemblyTreeProps)
             ) : definition.category === "switch" ||
               definition.category === "indicator" ? (
               <Cylinder size={15} />
+            ) : definition.category === "sensor" ? (
+              <Mic size={15} />
+            ) : definition.category === "speaker" ? (
+              <Cuboid size={15} />
             ) : (
               <Cable size={15} />
             ),

@@ -9,6 +9,8 @@ import {
   METAL_POWER_BUTTON_DEFINITIONS,
   OLED_DISPLAY_DEFINITIONS,
   TERMINAL_CONNECTOR_DEFINITIONS,
+  WATERPROOF_MICROPHONE_DEFINITIONS,
+  WIRED_SPEAKER_DEFINITIONS,
   WIRED_LED_INDICATOR_DEFINITIONS,
   getAntennaDefinition,
   getConnectorDefinition,
@@ -33,6 +35,8 @@ describe("component library", () => {
         "keypad",
         "switch",
         "indicator",
+        "sensor",
+        "speaker",
       ]),
     );
     for (const definition of CONNECTOR_DEFINITIONS) {
@@ -224,6 +228,67 @@ describe("component library", () => {
     expect(
       hasThroughPanelCutout(getConnectorDefinition("wired-metal-led-3mm")),
     ).toBe(true);
+  });
+
+  it("provides waterproof electret microphone devices from screenshot specs", () => {
+    expect(WATERPROOF_MICROPHONE_DEFINITIONS).toHaveLength(1);
+    expect(getConnectorDefinition("waterproof-microphone-4015-2p-125")).toEqual(
+      expect.objectContaining({
+        name: "Φ4.0 mm 防水驻极体麦克风（1.25 mm 2P）",
+        category: "sensor",
+        panelCutout: expect.objectContaining({
+          shape: "circle",
+          width: 4.9,
+          height: 4.9,
+        }),
+        microphoneSpec: expect.objectContaining({
+          source: "catalog-screenshot",
+          capsuleDiameter: 4,
+          sealDiameter: 4.6,
+          cableLength: 100,
+          connectorPitch: 1.25,
+          connectorPins: 2,
+          frequencyRange: "50-16000 Hz",
+        }),
+      }),
+    );
+    expect(
+      hasThroughPanelCutout(
+        getConnectorDefinition("waterproof-microphone-4015-2p-125"),
+      ),
+    ).toBe(true);
+  });
+
+  it("provides wired rectangular speaker devices from screenshot specs", () => {
+    expect(WIRED_SPEAKER_DEFINITIONS).toHaveLength(1);
+    expect(getConnectorDefinition("rectangular-speaker-1217-2p-125")).toEqual(
+      expect.objectContaining({
+        name: "12×17 mm 方形腔体扬声器（1.25 mm 2P）",
+        category: "speaker",
+        panelCutout: expect.objectContaining({
+          width: 18,
+          height: 13,
+          mode: "surface",
+        }),
+        speakerSpec: expect.objectContaining({
+          source: "catalog-screenshot",
+          kind: "rectangular-cavity-speaker",
+          bodyWidth: 17,
+          bodyHeight: 12,
+          bodyDepth: 2.2,
+          cableLength: 30,
+          connectorPitch: 1.25,
+          connectorPins: 2,
+          impedanceOhms: 8,
+          ratedPowerWatts: 1,
+        }),
+      }),
+    );
+    expect(
+      hasThroughPanelCutout(
+        getConnectorDefinition("rectangular-speaker-1217-2p-125"),
+      ),
+    ).toBe(false);
   });
 
   it("provides screw, heat-set insert and hex nut closure recipes", () => {

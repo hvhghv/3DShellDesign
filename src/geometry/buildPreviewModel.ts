@@ -459,6 +459,18 @@ function isFpcConnectorDefinition(connector: ConnectorDefinition): boolean {
   return connector.category === "fpc";
 }
 
+function isWaterproofMicrophoneDefinition(
+  connector: ConnectorDefinition,
+): boolean {
+  return Boolean(connector.microphoneSpec);
+}
+
+function isRectangularSpeakerDefinition(
+  connector: ConnectorDefinition,
+): boolean {
+  return connector.speakerSpec?.kind === "rectangular-cavity-speaker";
+}
+
 function addFpcConnectorPreview(
   group: THREE.Group,
   connector: ConnectorDefinition,
@@ -611,6 +623,408 @@ function addFpcConnectorPreview(
       keepoutOutline.name = `${featureId}-keepout`;
       keepoutOutline.renderOrder = 5;
     }
+  }
+}
+
+function addWaterproofMicrophonePreview(
+  group: THREE.Group,
+  connector: ConnectorDefinition,
+  featureId: string,
+  rotation: number,
+  face: EnclosureFace,
+  connectorSelected: boolean,
+  surfaceOutset: number,
+  surfaceU: number,
+  surfaceV: number,
+  origin: readonly [number, number, number],
+  parameters: DesignerParameters,
+  dimensions: EnclosureDimensions,
+  lidY: number,
+  followRemovableFace: boolean,
+): void {
+  const spec = connector.microphoneSpec;
+  if (!spec) return;
+
+  const normalOffset = (u: number, v: number, offset: number) => {
+    const [rotatedU, rotatedV] = rotateSurfaceOffset(u, v, rotation);
+    return relativePosition(
+      getPreviewFacePosition(
+        face,
+        surfaceU + rotatedU,
+        surfaceV + rotatedV,
+        offset,
+        parameters,
+        dimensions,
+        lidY,
+        followRemovableFace,
+      ),
+      origin,
+    );
+  };
+  const faceBox = (width: number, height: number, depth: number) => {
+    const [rotatedWidth, rotatedHeight] = getRotatedSurfaceSize(
+      width,
+      height,
+      rotation,
+    );
+    return createFaceBoxGeometry(rotatedWidth, rotatedHeight, depth, face);
+  };
+  const addMicrophoneMesh = (
+    name: string,
+    geometry: THREE.BufferGeometry,
+    material: THREE.Material,
+    u: number,
+    v: number,
+    offset: number,
+    showEdges = true,
+  ) => {
+    const mesh = addMesh(
+      group,
+      geometry,
+      material,
+      "connector",
+      normalOffset(u, v, offset),
+      showEdges,
+    );
+    mesh.name = `${featureId}-${name}`;
+    mesh.userData.featureId = featureId;
+    mesh.userData.featureKind = "connector";
+    return mesh;
+  };
+
+  const capsuleDepth = Math.max(1.4, spec.capsuleHeight);
+  const capsuleCenterOffset = surfaceOutset - capsuleDepth / 2 + 0.34;
+  const wireDiameter = 0.34;
+  const visibleCableLength = Math.min(24, Math.max(14, spec.cableLength * 0.22));
+  const wireStartU = spec.sealDiameter / 2 + 0.45;
+  const wireCenterU = wireStartU + visibleCableLength / 2;
+  const plugCenterU = wireStartU + visibleCableLength + 1.5;
+  const wireOffset = surfaceOutset - capsuleDepth - 0.2;
+
+  const capsule = addMicrophoneMesh(
+    "capsule",
+    createFaceCylinderGeometry(spec.capsuleDiameter / 2, capsuleDepth, face, 40),
+    standardMaterial(connector.visualGeometry.color, connectorSelected, {
+      metalness: 0.18,
+      roughness: 0.5,
+    }),
+    0,
+    0,
+    capsuleCenterOffset,
+  );
+  capsule.name = featureId;
+
+  addMicrophoneMesh(
+    "silicone-seal",
+    createFaceCylinderGeometry(spec.sealDiameter / 2, 0.58, face, 40),
+    standardMaterial(0x111817, connectorSelected, {
+      metalness: 0.04,
+      roughness: 0.76,
+    }),
+    0,
+    0,
+    surfaceOutset + 0.03,
+  );
+  addMicrophoneMesh(
+    "sound-port",
+    createFaceDiskGeometry(Math.max(0.65, spec.capsuleDiameter * 0.28), face),
+    standardMaterial(0x050707, connectorSelected, {
+      metalness: 0.02,
+      roughness: 0.82,
+    }),
+    0,
+    0,
+    surfaceOutset + 0.36,
+    false,
+  );
+
+  for (const offsetV of [-0.48, 0, 0.48]) {
+    addMicrophoneMesh(
+      `grille-${offsetV.toFixed(2)}`,
+      faceBox(spec.capsuleDiameter * 0.7, 0.08, 0.06),
+      standardMaterial(0x6a706b, connectorSelected, {
+        metalness: 0.34,
+        roughness: 0.42,
+      }),
+      0,
+      offsetV,
+      surfaceOutset + 0.42,
+      false,
+    );
+  }
+
+  addMicrophoneMesh(
+    "potting-back",
+    createFaceCylinderGeometry(spec.capsuleDiameter / 2, 0.62, face, 36),
+    standardMaterial(0x6f3d2f, connectorSelected, {
+      metalness: 0.04,
+      roughness: 0.64,
+    }),
+    0,
+    0,
+    surfaceOutset - capsuleDepth - 0.05,
+  );
+  addMicrophoneMesh(
+    "wire-red",
+    faceBox(visibleCableLength, wireDiameter, wireDiameter),
+    standardMaterial(0xd4483d, connectorSelected, {
+      metalness: 0.06,
+      roughness: 0.5,
+    }),
+    wireCenterU,
+    0.36,
+    wireOffset,
+    false,
+  );
+  addMicrophoneMesh(
+    "wire-black",
+    faceBox(visibleCableLength, wireDiameter, wireDiameter),
+    standardMaterial(0x1b2021, connectorSelected, {
+      metalness: 0.08,
+      roughness: 0.5,
+    }),
+    wireCenterU,
+    -0.36,
+    wireOffset,
+    false,
+  );
+  addMicrophoneMesh(
+    "twist-marker",
+    faceBox(visibleCableLength * 0.82, 0.08, 0.08),
+    standardMaterial(0x9aa0a0, connectorSelected, {
+      metalness: 0.02,
+      roughness: 0.7,
+    }),
+    wireCenterU,
+    0,
+    wireOffset + 0.08,
+    false,
+  );
+  addMicrophoneMesh(
+    "connector-body",
+    faceBox(2.8, 2.1, 1.35),
+    standardMaterial(0xf4f0e9, connectorSelected, {
+      metalness: 0.02,
+      roughness: 0.54,
+    }),
+    plugCenterU,
+    0,
+    wireOffset,
+  );
+  for (const pinV of [-0.42, 0.42]) {
+    addMicrophoneMesh(
+      `connector-pin-${pinV.toFixed(2)}`,
+      faceBox(0.54, 0.32, 0.08),
+      standardMaterial(0xd7b24a, connectorSelected, {
+        metalness: 0.74,
+        roughness: 0.28,
+      }),
+      plugCenterU + 0.96,
+      pinV,
+      wireOffset + 0.72,
+      false,
+    );
+  }
+}
+
+function addRectangularSpeakerPreview(
+  group: THREE.Group,
+  connector: ConnectorDefinition,
+  featureId: string,
+  rotation: number,
+  face: EnclosureFace,
+  connectorSelected: boolean,
+  surfaceOutset: number,
+  surfaceU: number,
+  surfaceV: number,
+  origin: readonly [number, number, number],
+  parameters: DesignerParameters,
+  dimensions: EnclosureDimensions,
+  lidY: number,
+  followRemovableFace: boolean,
+): void {
+  const spec = connector.speakerSpec;
+  if (!spec) return;
+
+  const normalOffset = (u: number, v: number, offset: number) => {
+    const [rotatedU, rotatedV] = rotateSurfaceOffset(u, v, rotation);
+    return relativePosition(
+      getPreviewFacePosition(
+        face,
+        surfaceU + rotatedU,
+        surfaceV + rotatedV,
+        offset,
+        parameters,
+        dimensions,
+        lidY,
+        followRemovableFace,
+      ),
+      origin,
+    );
+  };
+  const faceBox = (width: number, height: number, depth: number) => {
+    const [rotatedWidth, rotatedHeight] = getRotatedSurfaceSize(
+      width,
+      height,
+      rotation,
+    );
+    return createFaceBoxGeometry(rotatedWidth, rotatedHeight, depth, face);
+  };
+  const addSpeakerMesh = (
+    name: string,
+    geometry: THREE.BufferGeometry,
+    material: THREE.Material,
+    u: number,
+    v: number,
+    offset: number,
+    showEdges = true,
+  ) => {
+    const mesh = addMesh(
+      group,
+      geometry,
+      material,
+      "connector",
+      normalOffset(u, v, offset),
+      showEdges,
+    );
+    mesh.name = `${featureId}-${name}`;
+    mesh.userData.featureId = featureId;
+    mesh.userData.featureKind = "connector";
+    return mesh;
+  };
+
+  const bodyCenterOffset = surfaceOutset - spec.bodyDepth / 2 - 0.12;
+  const faceDetailOffset = surfaceOutset + 0.04;
+  const backDetailOffset = surfaceOutset - spec.bodyDepth - 0.08;
+  const visibleCableLength = Math.min(
+    22,
+    Math.max(12, spec.cableLength * 0.58),
+  );
+  const wireDiameter = 0.38;
+  const wireStartU = spec.bodyWidth / 2 - 1.2;
+  const wireCenterU = wireStartU + visibleCableLength / 2 + 0.25;
+  const plugCenterU = wireStartU + visibleCableLength + 2.3;
+  const wireOffset = surfaceOutset - spec.bodyDepth - 0.35;
+
+  const body = addSpeakerMesh(
+    "body",
+    faceBox(spec.bodyWidth, spec.bodyHeight, spec.bodyDepth),
+    standardMaterial(connector.visualGeometry.color, connectorSelected, {
+      metalness: 0.18,
+      roughness: 0.5,
+    }),
+    0,
+    0,
+    bodyCenterOffset,
+  );
+  body.name = featureId;
+
+  addSpeakerMesh(
+    "diaphragm",
+    faceBox(spec.bodyWidth - 3.4, spec.bodyHeight - 3.2, 0.12),
+    standardMaterial(0xb9b5a8, connectorSelected, {
+      metalness: 0.62,
+      roughness: 0.34,
+    }),
+    0,
+    0,
+    faceDetailOffset,
+  );
+  addSpeakerMesh(
+    "front-gasket",
+    faceBox(spec.bodyWidth - 1.4, 1.05, 0.16),
+    standardMaterial(0x111719, connectorSelected, {
+      metalness: 0.08,
+      roughness: 0.58,
+    }),
+    0,
+    spec.bodyHeight / 2 - 1.0,
+    faceDetailOffset + 0.05,
+  );
+  addSpeakerMesh(
+    "impedance-label",
+    faceBox(5.2, 2.2, 0.08),
+    standardMaterial(0x2f3638, connectorSelected, {
+      metalness: 0.12,
+      roughness: 0.52,
+    }),
+    0,
+    0,
+    faceDetailOffset + 0.12,
+    false,
+  );
+  addSpeakerMesh(
+    "rear-cavity",
+    faceBox(spec.bodyWidth - 2.6, spec.bodyHeight - 2.6, 0.18),
+    standardMaterial(0xe7dec8, connectorSelected, {
+      metalness: 0.02,
+      roughness: 0.8,
+      transparent: true,
+      opacity: connectorSelected ? 0.84 : 0.68,
+    }),
+    0,
+    0,
+    backDetailOffset,
+  );
+  addSpeakerMesh(
+    "wire-red",
+    faceBox(visibleCableLength, wireDiameter, wireDiameter),
+    standardMaterial(0xd4483d, connectorSelected, {
+      metalness: 0.06,
+      roughness: 0.5,
+    }),
+    wireCenterU,
+    0.52,
+    wireOffset,
+    false,
+  );
+  addSpeakerMesh(
+    "wire-black",
+    faceBox(visibleCableLength, wireDiameter, wireDiameter),
+    standardMaterial(0x171c1d, connectorSelected, {
+      metalness: 0.08,
+      roughness: 0.5,
+    }),
+    wireCenterU,
+    -0.52,
+    wireOffset,
+    false,
+  );
+  addSpeakerMesh(
+    "strain-relief",
+    faceBox(2.3, 2.5, 0.7),
+    standardMaterial(0x121819, connectorSelected, {
+      metalness: 0.06,
+      roughness: 0.58,
+    }),
+    wireStartU,
+    0,
+    wireOffset + 0.02,
+  );
+  addSpeakerMesh(
+    "connector-body",
+    faceBox(3.1, 2.2, 1.28),
+    standardMaterial(0xf4f0e9, connectorSelected, {
+      metalness: 0.02,
+      roughness: 0.54,
+    }),
+    plugCenterU,
+    0,
+    wireOffset,
+  );
+  for (const pinV of [-0.44, 0.44]) {
+    addSpeakerMesh(
+      `connector-pin-${pinV.toFixed(2)}`,
+      faceBox(0.56, 0.34, 0.08),
+      standardMaterial(0xd7b24a, connectorSelected, {
+        metalness: 0.74,
+        roughness: 0.28,
+      }),
+      plugCenterU + 1.08,
+      pinV,
+      wireOffset + 0.69,
+      false,
+    );
   }
 }
 
@@ -3542,6 +3956,40 @@ export function buildPreviewModel(
         face,
         connectorSelected,
         quarterTurn,
+        surfaceOutset,
+        surfaceU,
+        surfaceV,
+        connectorPosition,
+        parameters,
+        dimensions,
+        lidY,
+        placement.surface !== "panel" && isFaceRemovable(face),
+      );
+    } else if (isWaterproofMicrophoneDefinition(connector)) {
+      addWaterproofMicrophonePreview(
+        connectorGroup,
+        connector,
+        placement.id,
+        placement.rotation,
+        face,
+        connectorSelected,
+        surfaceOutset,
+        surfaceU,
+        surfaceV,
+        connectorPosition,
+        parameters,
+        dimensions,
+        lidY,
+        placement.surface !== "panel" && isFaceRemovable(face),
+      );
+    } else if (isRectangularSpeakerDefinition(connector)) {
+      addRectangularSpeakerPreview(
+        connectorGroup,
+        connector,
+        placement.id,
+        placement.rotation,
+        face,
+        connectorSelected,
         surfaceOutset,
         surfaceU,
         surfaceV,

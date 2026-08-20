@@ -8,7 +8,9 @@ export type ConnectorCategory =
   | "display"
   | "keypad"
   | "switch"
-  | "indicator";
+  | "indicator"
+  | "sensor"
+  | "speaker";
 export type PanelCutoutMode = "through" | "surface";
 
 export interface ConnectorDefinition {
@@ -79,6 +81,35 @@ export interface ConnectorDefinition {
     fpcTailLength?: number;
     activeColor?: string;
     hasMountingHoles?: boolean;
+    sourceDrawing: string;
+  };
+  microphoneSpec?: {
+    source: "catalog-screenshot";
+    capsuleDiameter: number;
+    sealDiameter: number;
+    capsuleHeight: number;
+    cableLength: number;
+    connectorPitch: number;
+    connectorPins: number;
+    impedanceOhms: number;
+    standardPowerSupply: number;
+    operatingVoltage: string;
+    frequencyRange: string;
+    sensitivity: string;
+    signalToNoiseRatio: string;
+    sourceDrawing: string;
+  };
+  speakerSpec?: {
+    source: "catalog-screenshot";
+    kind: "rectangular-cavity-speaker";
+    bodyWidth: number;
+    bodyHeight: number;
+    bodyDepth: number;
+    cableLength: number;
+    connectorPitch: number;
+    connectorPins: number;
+    impedanceOhms: number;
+    ratedPowerWatts: number;
     sourceDrawing: string;
   };
 }
@@ -897,6 +928,118 @@ export const WIRED_LED_INDICATOR_DEFINITIONS: ConnectorDefinition[] =
     createWiredLedIndicatorDefinition(spec),
   );
 
+export const WATERPROOF_MICROPHONE_DEFINITIONS: ConnectorDefinition[] = [
+  {
+    id: "waterproof-microphone-4015-2p-125",
+    name: "Φ4.0 mm 防水驻极体麦克风（1.25 mm 2P）",
+    category: "sensor",
+    visualGeometry: {
+      shape: "circle",
+      width: 4.6,
+      height: 4.6,
+      depth: 2.1,
+      color: "#252b2c",
+    },
+    panelCutout: {
+      shape: "circle",
+      width: 4.9,
+      height: 4.9,
+      cornerRadius: 2.45,
+    },
+    boardAlignment: { heightAboveBoardCenter: 2.3 },
+    keepoutVolumes: [
+      {
+        role: "wiring",
+        width: 7,
+        height: 7,
+        depth: 105,
+      },
+    ],
+    toleranceRules: {
+      xyClearance: 0.15,
+      description:
+        "截图标称 Φ4.6 mm 硅胶套外径，默认按 4.9 mm 穿板孔预留；若只开声孔，应改小孔径并增加内部压环/胶垫固定",
+    },
+    metadata: {
+      bomName:
+        "4.0 mm waterproof electret microphone with 1.25 mm 2-pin cable",
+      notes:
+        "截图规格标注 Φ4.0±0.1 × 1.75±0.2 mm 胶封驻极体麦克风，100 mm±1 双绞线，1.25 mm 2P 插头，2.2 kΩ，2.0 V 标准供电，DC 1-10 V，50-16000 Hz，最大 0.5 mA，灵敏度 -42±3 dB，信噪比大于 58 dB；极性、端子线序和防水压紧方式需按实物复核。",
+    },
+    microphoneSpec: {
+      source: "catalog-screenshot",
+      capsuleDiameter: 4.0,
+      sealDiameter: 4.6,
+      capsuleHeight: 1.75,
+      cableLength: 100,
+      connectorPitch: 1.25,
+      connectorPins: 2,
+      impedanceOhms: 2200,
+      standardPowerSupply: 2.0,
+      operatingVoltage: "DC 1-10 V",
+      frequencyRange: "50-16000 Hz",
+      sensitivity: "-42±3 dB",
+      signalToNoiseRatio: ">58 dB",
+      sourceDrawing: "截图规格标注：防水 4015 带线 2P 1.25 麦克风",
+    },
+  },
+];
+
+export const WIRED_SPEAKER_DEFINITIONS: ConnectorDefinition[] = [
+  {
+    id: "rectangular-speaker-1217-2p-125",
+    name: "12×17 mm 方形腔体扬声器（1.25 mm 2P）",
+    category: "speaker",
+    visualGeometry: {
+      shape: "rounded-rectangle",
+      width: 17,
+      height: 12,
+      depth: 2.2,
+      color: "#1f2528",
+    },
+    panelCutout: {
+      shape: "rounded-rectangle",
+      width: 18,
+      height: 13,
+      cornerRadius: 1.1,
+      mode: "surface",
+    },
+    boardAlignment: { heightAboveBoardCenter: 1.1 },
+    keepoutVolumes: [
+      {
+        role: "wiring",
+        width: 22,
+        height: 16,
+        depth: 38,
+      },
+    ],
+    toleranceRules: {
+      xyClearance: 0.2,
+      description:
+        "截图标称 12 × 17 × 2.2 mm 方形腔体扬声器，默认作为内部贴装包络，不生成穿板开孔",
+    },
+    metadata: {
+      bomName:
+        "12 x 17 x 2.2 mm rectangular cavity speaker with 1.25 mm 2-pin cable",
+      notes:
+        "截图规格标注长 17 mm、宽 12 mm、厚 2.2 mm，约 30 mm 红黑线，1.25 mm 2P 插头，8 Ω、1 W；声孔、腔体密封、固定胶垫、极性和插头线序需按实物复核。",
+    },
+    speakerSpec: {
+      source: "catalog-screenshot",
+      kind: "rectangular-cavity-speaker",
+      bodyWidth: 17,
+      bodyHeight: 12,
+      bodyDepth: 2.2,
+      cableLength: 30,
+      connectorPitch: 1.25,
+      connectorPins: 2,
+      impedanceOhms: 8,
+      ratedPowerWatts: 1,
+      sourceDrawing: "截图规格标注：1217 方形腔体扬声器 1.25 2P 30 mm",
+    },
+  },
+];
+
 export const CONNECTOR_DEFINITIONS: ConnectorDefinition[] = [
   {
     id: "usb-c-receptacle",
@@ -960,6 +1103,8 @@ export const CONNECTOR_DEFINITIONS: ConnectorDefinition[] = [
   ...MEMBRANE_SWITCH_DEFINITIONS,
   ...METAL_POWER_BUTTON_DEFINITIONS,
   ...WIRED_LED_INDICATOR_DEFINITIONS,
+  ...WATERPROOF_MICROPHONE_DEFINITIONS,
+  ...WIRED_SPEAKER_DEFINITIONS,
 ];
 
 export const ANTENNA_DEFINITIONS: AntennaDefinition[] = [

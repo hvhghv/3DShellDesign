@@ -315,6 +315,8 @@ const CONNECTOR_CATEGORY_LABELS = {
   keypad: "薄膜按键",
   switch: "按键开关",
   indicator: "指示灯",
+  sensor: "传感器",
+  speaker: "扬声器",
 } as const;
 
 const DISPLAY_MOUNTING_OPTIONS: ReadonlyArray<{
@@ -396,12 +398,83 @@ function formatDisplayInch(value: number): string {
     : value.toFixed(1);
 }
 
+function getConnectorInspectorTitle(definition: ConnectorDefinition): string {
+  if (definition.displaySpec) return "显示屏参数";
+  if (definition.microphoneSpec) return "传感器参数";
+  if (definition.speakerSpec) return "扬声器参数";
+  return "接口参数";
+}
+
 function DisplaySpecSummary({
   definition,
 }: {
   definition: ConnectorDefinition;
 }) {
   const spec = definition.displaySpec;
+  const microphoneSpec = definition.microphoneSpec;
+  const speakerSpec = definition.speakerSpec;
+  if (speakerSpec) {
+    return (
+      <div className="display-spec-card" aria-label="扬声器规格摘要">
+        <div className="display-spec-card-heading">
+          <strong>方形腔体扬声器</strong>
+          <span>{speakerSpec.bodyWidth.toFixed(0)} × {speakerSpec.bodyHeight.toFixed(0)} × {speakerSpec.bodyDepth.toFixed(1)} mm · {speakerSpec.impedanceOhms} Ω · {speakerSpec.ratedPowerWatts} W</span>
+        </div>
+        <div className="display-spec-grid">
+          <span>
+            <small>本体</small>
+            <strong>{speakerSpec.bodyWidth.toFixed(0)} × {speakerSpec.bodyHeight.toFixed(0)}</strong>
+          </span>
+          <span>
+            <small>厚度</small>
+            <strong>{speakerSpec.bodyDepth.toFixed(1)} mm</strong>
+          </span>
+          <span>
+            <small>线束</small>
+            <strong>{speakerSpec.cableLength.toFixed(0)} mm</strong>
+          </span>
+          <span>
+            <small>端子</small>
+            <strong>{speakerSpec.connectorPitch.toFixed(2)} mm {speakerSpec.connectorPins}P</strong>
+          </span>
+        </div>
+        <p>
+          {speakerSpec.impedanceOhms} Ω / {speakerSpec.ratedPowerWatts} W · {getShortDrawingSource(speakerSpec.sourceDrawing)}
+        </p>
+      </div>
+    );
+  }
+  if (microphoneSpec) {
+    return (
+      <div className="display-spec-card" aria-label="麦克风规格摘要">
+        <div className="display-spec-card-heading">
+          <strong>防水驻极体麦克风</strong>
+          <span>{microphoneSpec.frequencyRange} · {microphoneSpec.sensitivity} · {microphoneSpec.signalToNoiseRatio}</span>
+        </div>
+        <div className="display-spec-grid">
+          <span>
+            <small>咪头</small>
+            <strong>Φ{microphoneSpec.capsuleDiameter.toFixed(1)} × {microphoneSpec.capsuleHeight.toFixed(2)}</strong>
+          </span>
+          <span>
+            <small>胶套</small>
+            <strong>Φ{microphoneSpec.sealDiameter.toFixed(1)} mm</strong>
+          </span>
+          <span>
+            <small>线束</small>
+            <strong>{microphoneSpec.cableLength.toFixed(0)} mm · {microphoneSpec.connectorPins}P</strong>
+          </span>
+          <span>
+            <small>端子</small>
+            <strong>{microphoneSpec.connectorPitch.toFixed(2)} mm</strong>
+          </span>
+        </div>
+        <p>
+          {microphoneSpec.operatingVoltage} · {microphoneSpec.standardPowerSupply.toFixed(1)} V 标准供电 · {getShortDrawingSource(microphoneSpec.sourceDrawing)}
+        </p>
+      </div>
+    );
+  }
   if (!spec) {
     return <p className="material-note">{definition.metadata.notes}</p>;
   }
@@ -1318,7 +1391,7 @@ export function Inspector() {
           {featureStateBanner}
           <section className="inspector-section connector-placement">
             <div className="section-heading-row">
-              <h2>{definition.displaySpec ? "显示屏参数" : "接口参数"}</h2>
+              <h2>{getConnectorInspectorTitle(definition)}</h2>
               <span className="section-heading-actions">
                 <button
                   className="icon-section-button is-visibility"
@@ -1882,7 +1955,13 @@ export function Inspector() {
             </section>
             <section className="inspector-section">
               <div className="section-heading-row">
-                <h2>{selectedConnector && getConnectorDefinition(selectedConnector.definitionId).displaySpec ? "显示屏参数" : "接口参数"}</h2>
+                <h2>
+                  {selectedConnector
+                    ? getConnectorInspectorTitle(
+                        getConnectorDefinition(selectedConnector.definitionId),
+                      )
+                    : "接口参数"}
+                </h2>
                 {selectedConnector ? (
                   <span className="section-heading-actions">
                     <button
